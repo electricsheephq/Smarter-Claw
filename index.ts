@@ -20,6 +20,13 @@ import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { buildArchetypePromptResult } from "./src/archetype-hook.js";
 import { isPlanModeDebugEnabled, logPlanModeDebug, setPlanModeDebugEnabled } from "./src/debug-log.js";
 import { buildInjectionDrainResult } from "./src/injection-drain-hook.js";
+import {
+  handleAgentEnd,
+  handleGatewayStart,
+  handleSessionStart,
+  handleSubagentEnded,
+  handleSubagentSpawning,
+} from "./src/lifecycle-hooks.js";
 import { shouldBlockMutation } from "./src/mutation-gate.js";
 import { buildSlashCommandDeps } from "./src/slash-command-deps.js";
 import { createPlanCommandHandler } from "./src/slash-commands.js";
@@ -350,6 +357,47 @@ export default definePluginEntry({
     // write into the transcript, so we get a second chance there. The
     // handler short-circuits unless the message is a tool result for
     // update_plan / exit_plan_mode and isn't a no-op.
+    // Phase A5: gateway_start cron registration. The handler probes
+    // ctx.getCron() — when the host doesn't expose it we log + skip.
+    api.on("gateway_start", (_event, ctx) => {
+      void handleGatewayStart({
+        getCron: (ctx as { getCron?: () => unknown }).getCron as Parameters<typeof handleGatewayStart>[0]["getCron"],
+      });
+    });
+
+    // Phase A6: session_start fires the one-shot [PLAN_MODE_INTRO]
+    // injection when first entering plan mode for a session.
+    api.on("session_start", (_event, ctx) => {
+      void handleSessionStart({ agentId: ctx.agentId, sessionKey: ctx.sessionKey });
+    });
+
+    // Phase #34: subagent gate — track openSubagentRunIds in session
+    // state via subagent_spawning + subagent_ended hooks. exit_plan_mode
+    // tool body checks the count and refuses to submit while subagents
+    // are in flight (research investigations must complete first).
+    api.on("subagent_spawning", (event, ctx) => {
+      void handleSubagentSpawning(event as Parameters<typeof handleSubagentSpawning>[0], {
+        agentId: (ctx as { agentId?: string }).agentId,
+        sessionKey: (ctx as { sessionKey?: string }).sessionKey,
+      });
+    });
+    api.on("subagent_ended", (event, ctx) => {
+      void handleSubagentEnded(event as Parameters<typeof handleSubagentEnded>[0], {
+        agentId: (ctx as { agentId?: string }).agentId,
+        sessionKey: (ctx as { sessionKey?: string }).sessionKey,
+      });
+    });
+
+    // Phase #37: ack-only retry. Detects when an agent ends a turn in
+    // plan mode without calling exit_plan_mode and queues a
+    // [PLANNING_RETRY] injection for the next turn.
+    api.on("agent_end", (event, ctx) => {
+      void handleAgentEnd(event as Parameters<typeof handleAgentEnd>[0], {
+        agentId: ctx.agentId,
+        sessionKey: ctx.sessionKey,
+      });
+    });
+
     api.on("before_message_write", (event, ctx) => {
       const msg = event.message as { toolName?: string; type?: string };
       const toolName = msg?.toolName;
