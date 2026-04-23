@@ -204,6 +204,12 @@
       "relPath": "ui/src/ui/views/chat.ts",
       "patchRelPath": "patches/ui/anchor-patches/ui-src-ui-views-chat.ts.diff",
       "expectedOriginalSha256": "610ce97effaeb01372433922420be0eef7b8fad98c66296beb25170faec583ab"
+    },
+    {
+      "type": "diff",
+      "relPath": "src/plugin-sdk/session-store-runtime.ts",
+      "patchRelPath": "patches/core/session-store-runtime-write-api.diff",
+      "expectedOriginalSha256": "716b63766ebf0dad56d772f70d7f08a0d07cfbaeff01c7800e826c1d81147dbd"
     }
   ]
 }

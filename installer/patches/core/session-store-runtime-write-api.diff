@@ -1,0 +1,13 @@
+@@ -1,6 +1,11 @@
+-// Narrow session-store read helpers for channel hot paths.
++// Narrow session-store read + write helpers for channel hot paths and
++// plugin-owned session-state mutation. Smarter-Claw installer adds the
++// `update*` exports so external plugins can flip plugin-namespaced
++// SessionEntry metadata (planMode, planApproval, etc) without reaching
++// into private session-store internals.
+ 
+ export { loadSessionStore } from "../config/sessions/store-load.js";
+ export { resolveSessionStoreEntry } from "../config/sessions/store-entry.js";
+ export { resolveStorePath } from "../config/sessions/paths.js";
+ export { readSessionUpdatedAt } from "../config/sessions/store.js";
++export { updateSessionStore, updateSessionStoreEntry } from "../config/sessions/store.js";
