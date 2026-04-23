@@ -23,6 +23,7 @@ import { buildInjectionDrainResult } from "./src/injection-drain-hook.js";
 import { shouldBlockMutation } from "./src/mutation-gate.js";
 import { buildSlashCommandDeps } from "./src/slash-command-deps.js";
 import { createPlanCommandHandler } from "./src/slash-commands.js";
+import { handleToolResultPersist } from "./src/tool-result-persist-hook.js";
 import { createAskUserQuestionTool } from "./src/tools/ask-user-question-tool.js";
 import { createEnterPlanModeTool } from "./src/tools/enter-plan-mode-tool.js";
 import { createExitPlanModeTool } from "./src/tools/exit-plan-mode-tool.js";
@@ -322,6 +323,51 @@ export default definePluginEntry({
           `unhandled-throw:${(err as Error)?.message ?? String(err)}`,
         );
       }
+    });
+
+    // Phase A3+A4: tool_result_persist hook handles two side-effects
+    // that the tool body itself can't do (because the tool body returns
+    // BEFORE the result is durable):
+    //   - update_plan: mirror new step list into lastPlanSteps so /plan
+    //     restate + UI sidebar stay live when only update_plan was called
+    //   - exit_plan_mode: write plan-YYYY-MM-DD-<slug>.md to disk under
+    //     ~/.openclaw/agents/<id>/plans/ for operator audit trail
+    api.on("tool_result_persist", (event, ctx) => {
+      // Returns void per the SDK contract — the hook is fire-and-forget
+      // for our purposes (we never replace the persisted message).
+      // Caught + logged inside the handler so any failure here doesn't
+      // bubble to the host.
+      void handleToolResultPersist(event as unknown as Parameters<typeof handleToolResultPersist>[0], {
+        agentId: (ctx as { agentId?: string }).agentId,
+        sessionKey: (ctx as { sessionKey?: string }).sessionKey,
+      });
+    });
+
+    // Belt-and-suspenders fallback: tool_result_persist doesn't fire for
+    // every plugin-registered tool path in Pi (only when the
+    // session-tool-result-guard wrapper is installed AROUND the active
+    // session manager). before_message_write IS fired for every message
+    // write into the transcript, so we get a second chance there. The
+    // handler short-circuits unless the message is a tool result for
+    // update_plan / exit_plan_mode and isn't a no-op.
+    api.on("before_message_write", (event, ctx) => {
+      const msg = event.message as { toolName?: string; type?: string };
+      const toolName = msg?.toolName;
+      if (toolName !== "update_plan" && toolName !== "exit_plan_mode") {
+        return undefined;
+      }
+      void handleToolResultPersist(
+        {
+          toolName,
+          message: event.message as Parameters<typeof handleToolResultPersist>[0]["message"],
+          isSynthetic: false,
+        },
+        {
+          agentId: (ctx as { agentId?: string }).agentId,
+          sessionKey: (ctx as { sessionKey?: string }).sessionKey,
+        },
+      );
+      return undefined;
     });
   },
 });

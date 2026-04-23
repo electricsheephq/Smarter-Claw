@@ -6,6 +6,8 @@ import {
   EXIT_PLAN_MODE_TOOL_DISPLAY_SUMMARY,
 } from "../tool-descriptions.js";
 import { readStringParam, ToolInputError } from "../tool-helpers.js";
+import { persistPlanArchetypeMarkdown } from "../archetype-persist.js";
+import { renderFullPlanArchetypeMarkdown } from "../plan-render.js";
 import type { PlanProposal, PlanStep } from "../types.js";
 import { PLAN_STEP_STATUSES, stringEnum, type PlanStepStatus } from "../typebox-helpers.js";
 import { exitPlanModeStateUpdate, persistFromTool } from "./tool-state-helpers.js";
@@ -275,6 +277,45 @@ export function createExitPlanModeTool(options?: CreateExitPlanModeToolOptions):
         "exit_plan_mode",
         exitPlanModeStateUpdate(proposal),
       );
+
+      // Audit-trail markdown — write right here in the tool body since
+      // tool_result_persist / before_message_write don't fire for our
+      // plugin-registered tools through Pi (verified via tracer
+      // logging during Stream A3 smoke). Failure is logged + ignored
+      // so the agent still gets a successful tool result; the markdown
+      // is a "nice to have" diagnostic / audit artifact, not a hard
+      // success criterion for the approval flow.
+      if (persistCtx.agentId) {
+        try {
+          const markdown = renderFullPlanArchetypeMarkdown({
+            title,
+            summary,
+            analysis: archetype.analysis,
+            plan,
+            assumptions: archetype.assumptions,
+            risks: archetype.risks,
+            verification: archetype.verification,
+            references: archetype.references,
+          });
+          const mdResult = await persistPlanArchetypeMarkdown({
+            agentId: persistCtx.agentId,
+            title,
+            markdown,
+          });
+          logPlanModeDebug({
+            kind: "tool_call",
+            sessionKey: sessionKey ?? "unknown",
+            tool: `exit_plan_mode:archetype-md:${mdResult.filename}`,
+          });
+        } catch (err) {
+          logPlanModeDebug({
+            kind: "tool_call",
+            sessionKey: sessionKey ?? "unknown",
+            tool: `exit_plan_mode:archetype-md:failed`,
+            details: { reason: (err as Error)?.message ?? String(err) },
+          });
+        }
+      }
 
       const text = headlineLabel
         ? `Plan submitted for approval — ${headlineLabel} (${stepCount} ${stepCount === 1 ? "step" : "steps"}).${persist.persisted ? "" : " (Note: state persistence skipped — UI may not render the approval card.)"}`
