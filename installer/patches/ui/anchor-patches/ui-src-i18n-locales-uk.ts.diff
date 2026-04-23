@@ -1,0 +1,16 @@
+@@ -659,6 +659,7 @@ export const uk: TranslationMap = {
+   chat: {
+     disconnected: "Відключено від шлюзу.",
+     refreshTitle: "Оновити дані чату",
++    planViewToggle: "Toggle plan view sidebar",
+     thinkingToggle: "Перемкнути показ мислення/роботи асистента",
+     toolCallsToggle: "Перемкнути виклики інструментів і результати інструментів",
+     focusToggle: "Перемкнути режим фокусу (сховати бічну панель і заголовок сторінки)",
+@@ -681,7 +682,6 @@ export const uk: TranslationMap = {
+     uk: "Українська (українська)",
+     id: "Bahasa Indonesia (індонезійська)",
+     pl: "Polski (польська)",
+-    th: "ไทย (тайська)",
+   },
+   cron: {
+     summary: {

@@ -3,5 +3,207 @@
   "expectedHostVersion": "2026.4.22",
   "smarterClawTargetVersion": "0.1.0",
   "_comment": "patches[] is populated as the UI/core patch authoring lands. install.mjs reads this file and dispatches each entry to applyNewFilePatch or applyDiffPatch. Each entry shape: { type: 'new-file', relPath, sourceRelPath } OR { type: 'diff', relPath, patchRelPath, expectedOriginalSha256 }.",
-  "patches": []
+  "patches": [
+    {
+      "type": "new-file",
+      "relPath": "ui/src/styles/chat/plan-cards.css",
+      "sourceRelPath": "patches/ui/new-files/ui/src/styles/chat/plan-cards.css"
+    },
+    {
+      "type": "new-file",
+      "relPath": "ui/src/ui/chat/mode-switcher.test.ts",
+      "sourceRelPath": "patches/ui/new-files/ui/src/ui/chat/mode-switcher.test.ts"
+    },
+    {
+      "type": "new-file",
+      "relPath": "ui/src/ui/chat/mode-switcher.ts",
+      "sourceRelPath": "patches/ui/new-files/ui/src/ui/chat/mode-switcher.ts"
+    },
+    {
+      "type": "new-file",
+      "relPath": "ui/src/ui/chat/plan-cards.test.ts",
+      "sourceRelPath": "patches/ui/new-files/ui/src/ui/chat/plan-cards.test.ts"
+    },
+    {
+      "type": "new-file",
+      "relPath": "ui/src/ui/chat/plan-cards.ts",
+      "sourceRelPath": "patches/ui/new-files/ui/src/ui/chat/plan-cards.ts"
+    },
+    {
+      "type": "new-file",
+      "relPath": "ui/src/ui/chat/plan-resume.node.test.ts",
+      "sourceRelPath": "patches/ui/new-files/ui/src/ui/chat/plan-resume.node.test.ts"
+    },
+    {
+      "type": "new-file",
+      "relPath": "ui/src/ui/chat/plan-resume.ts",
+      "sourceRelPath": "patches/ui/new-files/ui/src/ui/chat/plan-resume.ts"
+    },
+    {
+      "type": "new-file",
+      "relPath": "ui/src/ui/views/plan-approval-inline.test.ts",
+      "sourceRelPath": "patches/ui/new-files/ui/src/ui/views/plan-approval-inline.test.ts"
+    },
+    {
+      "type": "new-file",
+      "relPath": "ui/src/ui/views/plan-approval-inline.ts",
+      "sourceRelPath": "patches/ui/new-files/ui/src/ui/views/plan-approval-inline.ts"
+    },
+    {
+      "type": "diff",
+      "relPath": "ui/src/i18n/locales/de.ts",
+      "patchRelPath": "patches/ui/anchor-patches/ui-src-i18n-locales-de.ts.diff",
+      "expectedOriginalSha256": "561c088d6e0d9573fa2458115733b33248d7e69f3798a515d57d8888113836a8"
+    },
+    {
+      "type": "diff",
+      "relPath": "ui/src/i18n/locales/en.ts",
+      "patchRelPath": "patches/ui/anchor-patches/ui-src-i18n-locales-en.ts.diff",
+      "expectedOriginalSha256": "33cba33627744c6bb03182f53b02a9a2640272ef0fa3d039ce52723a96f5099e"
+    },
+    {
+      "type": "diff",
+      "relPath": "ui/src/i18n/locales/es.ts",
+      "patchRelPath": "patches/ui/anchor-patches/ui-src-i18n-locales-es.ts.diff",
+      "expectedOriginalSha256": "400f8ea6617faba1f7e7d75c1f4bf34c40e9dee5b32e4046c56d89cf3d6d9714"
+    },
+    {
+      "type": "diff",
+      "relPath": "ui/src/i18n/locales/fr.ts",
+      "patchRelPath": "patches/ui/anchor-patches/ui-src-i18n-locales-fr.ts.diff",
+      "expectedOriginalSha256": "382d015111e51ff7c4417eba3dad87b915b1585a63bdd424ace135251c63eb39"
+    },
+    {
+      "type": "diff",
+      "relPath": "ui/src/i18n/locales/id.ts",
+      "patchRelPath": "patches/ui/anchor-patches/ui-src-i18n-locales-id.ts.diff",
+      "expectedOriginalSha256": "241a5062b643c2557d1cbf77a961fc7313a7364c6da53ffd264ffa60a8fac271"
+    },
+    {
+      "type": "diff",
+      "relPath": "ui/src/i18n/locales/ja-JP.ts",
+      "patchRelPath": "patches/ui/anchor-patches/ui-src-i18n-locales-ja-JP.ts.diff",
+      "expectedOriginalSha256": "675819c096e7146e3b2595e32f931f21c4d1db38142c856ab3af38fccf51dd9d"
+    },
+    {
+      "type": "diff",
+      "relPath": "ui/src/i18n/locales/ko.ts",
+      "patchRelPath": "patches/ui/anchor-patches/ui-src-i18n-locales-ko.ts.diff",
+      "expectedOriginalSha256": "62fc423c86d04ef309b0996e1420e39b7dfb59a1af10a99c6d94dc310aa2c21f"
+    },
+    {
+      "type": "diff",
+      "relPath": "ui/src/i18n/locales/pl.ts",
+      "patchRelPath": "patches/ui/anchor-patches/ui-src-i18n-locales-pl.ts.diff",
+      "expectedOriginalSha256": "84ac3ff63d359d1059b860241f45f3340e2c676ddc3bf07e1c34c4ceae630289"
+    },
+    {
+      "type": "diff",
+      "relPath": "ui/src/i18n/locales/pt-BR.ts",
+      "patchRelPath": "patches/ui/anchor-patches/ui-src-i18n-locales-pt-BR.ts.diff",
+      "expectedOriginalSha256": "e3d1188ccb0feb04ce8a295eaa6ab04212f47094f8c30b625161c0aaf7aead1d"
+    },
+    {
+      "type": "diff",
+      "relPath": "ui/src/i18n/locales/tr.ts",
+      "patchRelPath": "patches/ui/anchor-patches/ui-src-i18n-locales-tr.ts.diff",
+      "expectedOriginalSha256": "1f569787fc1e989f31b7394d52696b3658d960c0f1e553da27f7e349ff771dbf"
+    },
+    {
+      "type": "diff",
+      "relPath": "ui/src/i18n/locales/uk.ts",
+      "patchRelPath": "patches/ui/anchor-patches/ui-src-i18n-locales-uk.ts.diff",
+      "expectedOriginalSha256": "ec9613acfa7c6a3ccb76ec1071a1a1614fbc3bb9ff1aafa938d36279a89491b8"
+    },
+    {
+      "type": "diff",
+      "relPath": "ui/src/i18n/locales/zh-CN.ts",
+      "patchRelPath": "patches/ui/anchor-patches/ui-src-i18n-locales-zh-CN.ts.diff",
+      "expectedOriginalSha256": "843e2297a432f7592c00fa5325a8de0d6147d72bac9001284cc1158ce0d94108"
+    },
+    {
+      "type": "diff",
+      "relPath": "ui/src/i18n/locales/zh-TW.ts",
+      "patchRelPath": "patches/ui/anchor-patches/ui-src-i18n-locales-zh-TW.ts.diff",
+      "expectedOriginalSha256": "f54c1f06225ee55e044990e12232e0e40c9a901b849b3267f949dd7d81fb4f10"
+    },
+    {
+      "type": "diff",
+      "relPath": "ui/src/styles/chat.css",
+      "patchRelPath": "patches/ui/anchor-patches/ui-src-styles-chat.css.diff",
+      "expectedOriginalSha256": "f1fb75db28e47070c42c0b401c9bdae5ac468bcd98550232038e409983691fad"
+    },
+    {
+      "type": "diff",
+      "relPath": "ui/src/styles/chat/layout.css",
+      "patchRelPath": "patches/ui/anchor-patches/ui-src-styles-chat-layout.css.diff",
+      "expectedOriginalSha256": "d02ffacd64d0de15e4440fe071ae09945998129bfc75bca00d386c6acb3415af"
+    },
+    {
+      "type": "diff",
+      "relPath": "ui/src/ui/app-chat.ts",
+      "patchRelPath": "patches/ui/anchor-patches/ui-src-ui-app-chat.ts.diff",
+      "expectedOriginalSha256": "e2653fa8c3afbb2c3b60bfa7012480c54c334df4d974db9cf355b4857c5c611b"
+    },
+    {
+      "type": "diff",
+      "relPath": "ui/src/ui/app-render.helpers.ts",
+      "patchRelPath": "patches/ui/anchor-patches/ui-src-ui-app-render.helpers.ts.diff",
+      "expectedOriginalSha256": "d059a52eefa629b7c078bdecd24fdf9b055bf948374da813e822e3233afdda94"
+    },
+    {
+      "type": "diff",
+      "relPath": "ui/src/ui/app-render.ts",
+      "patchRelPath": "patches/ui/anchor-patches/ui-src-ui-app-render.ts.diff",
+      "expectedOriginalSha256": "e582920754810b5b21468b54d07ae6ef098cc4f5a3a09f5c4905b9c5b1eec7b4"
+    },
+    {
+      "type": "diff",
+      "relPath": "ui/src/ui/app-tool-stream.ts",
+      "patchRelPath": "patches/ui/anchor-patches/ui-src-ui-app-tool-stream.ts.diff",
+      "expectedOriginalSha256": "809a41549471b8b1fd44918ba0ba7e3c6fca232c3297390a78e5775de17cf14d"
+    },
+    {
+      "type": "diff",
+      "relPath": "ui/src/ui/app-view-state.ts",
+      "patchRelPath": "patches/ui/anchor-patches/ui-src-ui-app-view-state.ts.diff",
+      "expectedOriginalSha256": "201fdf5c3e7a71f95e668e6b9442babdf6da905c7a0da150f32841aa536ec41a"
+    },
+    {
+      "type": "diff",
+      "relPath": "ui/src/ui/app.ts",
+      "patchRelPath": "patches/ui/anchor-patches/ui-src-ui-app.ts.diff",
+      "expectedOriginalSha256": "f6cd28bff39712c4e7134e4f0c0265b15c235ed9626cc4751bc3e923d036e5b5"
+    },
+    {
+      "type": "diff",
+      "relPath": "ui/src/ui/chat/slash-command-executor.node.test.ts",
+      "patchRelPath": "patches/ui/anchor-patches/ui-src-ui-chat-slash-command-executor.node.test.ts.diff",
+      "expectedOriginalSha256": "299c0c573123546a3a92c3e9f3b20d949f177ea5757664b523e157832f990366"
+    },
+    {
+      "type": "diff",
+      "relPath": "ui/src/ui/chat/slash-command-executor.ts",
+      "patchRelPath": "patches/ui/anchor-patches/ui-src-ui-chat-slash-command-executor.ts.diff",
+      "expectedOriginalSha256": "dd02f29151fba76c6c487138256d4c7ed68b3847b90bffa4f790b5c3fe7a6f15"
+    },
+    {
+      "type": "diff",
+      "relPath": "ui/src/ui/chat/slash-commands.ts",
+      "patchRelPath": "patches/ui/anchor-patches/ui-src-ui-chat-slash-commands.ts.diff",
+      "expectedOriginalSha256": "7acb6b5739577a54a61017ef5f0c6eab22747c128549e40f0dd5414d32511229"
+    },
+    {
+      "type": "diff",
+      "relPath": "ui/src/ui/types.ts",
+      "patchRelPath": "patches/ui/anchor-patches/ui-src-ui-types.ts.diff",
+      "expectedOriginalSha256": "5a353a66508532017b04e1aefef2a56b7303988faa8a1dc5d09a5089ba67e816"
+    },
+    {
+      "type": "diff",
+      "relPath": "ui/src/ui/views/chat.ts",
+      "patchRelPath": "patches/ui/anchor-patches/ui-src-ui-views-chat.ts.diff",
+      "expectedOriginalSha256": "610ce97effaeb01372433922420be0eef7b8fad98c66296beb25170faec583ab"
+    }
+  ]
 }

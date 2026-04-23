@@ -37,7 +37,7 @@
  * }
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const MANIFEST_FILENAME = ".smarter-claw-install-manifest.json";
@@ -68,8 +68,7 @@ export function writeManifest(hostPath, manifest) {
 export function deleteManifest(hostPath) {
   const p = manifestPathFor(hostPath);
   if (existsSync(p)) {
-    const fs = require("node:fs");
-    fs.unlinkSync(p);
+    unlinkSync(p);
   }
 }
 

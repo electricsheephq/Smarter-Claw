@@ -1,0 +1,541 @@
+@@ -1,7 +1,12 @@
+ import { html, nothing, type TemplateResult } from "lit";
+ import { ref } from "lit/directives/ref.js";
+ import { repeat } from "lit/directives/repeat.js";
+-import type { CompactionStatus, FallbackStatus } from "../app-tool-stream.ts";
++import type {
++  CompactionStatus,
++  FallbackStatus,
++  SubagentBlockingStatus,
++} from "../app-tool-stream.ts";
++import type { PlanApprovalRequest } from "../app-tool-stream.ts";
+ import {
+   CHAT_ATTACHMENT_ACCEPT,
+   isSupportedChatAttachmentMimeType,
+@@ -16,6 +21,15 @@ import {
+   renderStreamingGroup,
+ } from "../chat/grouped-render.ts";
+ import { InputHistory } from "../chat/input-history.ts";
++import {
++  // handleModeShortcut TODO(PR-8 follow-up): wire Ctrl+1-4 keyboard
++  // shortcuts on the chat surface. Skipping in this iteration since the
++  // chip menu + /plan slash command already cover the path; the
++  // shortcut needs a window-level keydown listener wired in app.ts.
++  type ModeDefinition,
++  renderModeSwitcher,
++  resolveCurrentMode,
++} from "../chat/mode-switcher.ts";
+ import { PinnedMessages } from "../chat/pinned-messages.ts";
+ import { getPinnedMessageSummary } from "../chat/pinned-summary.ts";
+ import { renderChatRunControls } from "../chat/run-controls.ts";
+@@ -30,7 +44,7 @@ import {
+   type SlashCommandCategory,
+   type SlashCommandDef,
+ } from "../chat/slash-commands.ts";
+-import { isSttSupported, startStt, stopStt } from "../chat/speech.ts";
++import { stopStt } from "../chat/speech.ts";
+ import { renderCompactionIndicator, renderFallbackIndicator } from "../chat/status-indicators.ts";
+ import { buildSidebarContent } from "../chat/tool-cards.ts";
+ import { getExpandedToolCards, syncToolCardExpansionState } from "../chat/tool-expansion-state.ts";
+@@ -40,9 +54,9 @@ import type { SidebarContent } from "../sidebar-content.ts";
+ import { detectTextDirection } from "../text-direction.ts";
+ import type { SessionsListResult } from "../types.ts";
+ import type { ChatAttachment, ChatQueueItem } from "../ui-types.ts";
+-import { resolveLocalUserName } from "../user-identity.ts";
+ import { agentLogoUrl, resolveChatAvatarRenderUrl } from "./agents-utils.ts";
+ import { renderMarkdownSidebar } from "./markdown-sidebar.ts";
++import { renderInlinePlanApproval } from "./plan-approval-inline.ts";
+ import "../components/resizable-divider.ts";
+ 
+ export type ChatProps = {
+@@ -56,6 +70,9 @@ export type ChatProps = {
+   canAbort?: boolean;
+   compactionStatus?: CompactionStatus | null;
+   fallbackStatus?: FallbackStatus | null;
++  /** Live-test iteration 1 Bug 3: bottom-toast for "subagents still running"
++   * when user clicks Approve while subagents are mid-flight. */
++  subagentBlockingStatus?: SubagentBlockingStatus | null;
+   messages: unknown[];
+   sideResult?: ChatSideResult | null;
+   toolMessages: unknown[];
+@@ -80,8 +97,6 @@ export type ChatProps = {
+   allowExternalEmbedUrls?: boolean;
+   assistantName: string;
+   assistantAvatar: string | null;
+-  userName?: string | null;
+-  userAvatar?: string | null;
+   localMediaPreviewRoots?: string[];
+   assistantAttachmentAuthToken?: string | null;
+   autoExpandToolCalls?: boolean;
+@@ -113,6 +128,49 @@ export type ChatProps = {
+   onSplitRatioChange?: (ratio: number) => void;
+   onChatScroll?: (event: Event) => void;
+   basePath?: string;
++  /**
++   * PR-8 / #67721: invoked when the user picks a mode from the chip menu
++   * (or hits the Ctrl+1-4 keyboard shortcut). The host translates the
++   * `ModeDefinition` into the appropriate `sessions.patch` calls
++   * (planMode for plan, execSecurity/execAsk for permission modes).
++   * Optional so existing callers that don't yet wire it stay compiling.
++   */
++  onSetMode?: (mode: ModeDefinition) => void;
++  // PR-8 follow-up: inline plan approval card wiring. Optional so non-
++  // plan-mode embeddings of renderChat (tests, alt apps) keep compiling.
++  planApprovalRequest?: PlanApprovalRequest | null;
++  planApprovalBusy?: boolean;
++  planApprovalError?: string | null;
++  onPlanApprovalDecision?: (
++    decision: "approve" | "reject" | "edit",
++    feedback?: string,
++  ) => void | Promise<void>;
++  // PR-10 AskUserQuestion: route the user's answer to sessions.patch
++  // { planApproval: { action: "answer", answer: <text> }} via the
++  // host. Same approval-card surface, different action verb.
++  onPlanApprovalAnswer?: (answer: string) => void | Promise<void>;
++  /** Open the full plan content in the right sidebar (read-only viewer). */
++  onOpenPlanInSidebar?: (request: PlanApprovalRequest) => void;
++  /**
++   * Inline-revise textarea state owned by the host. When the user
++   * clicks Revise we open an inline textarea (no popup) — this state
++   * tracks open/draft so the textarea survives chat re-renders.
++   */
++  planApprovalReviseOpen?: boolean;
++  planApprovalReviseDraft?: string;
++  onPlanApprovalReviseOpen?: () => void;
++  onPlanApprovalReviseCancel?: () => void;
++  onPlanApprovalReviseDraftChange?: (text: string) => void;
++  /**
++   * PR-13 Bug 2: question-card "Other" inline-textarea props.
++   * Mirrors the revise pattern. Cancel returns to the option list.
++   */
++  planApprovalQuestionOtherOpen?: boolean;
++  planApprovalQuestionOtherDraft?: string;
++  onPlanApprovalQuestionOtherOpen?: () => void;
++  onPlanApprovalQuestionOtherCancel?: () => void;
++  onPlanApprovalQuestionOtherDraftChange?: (text: string) => void;
++  onPlanApprovalQuestionOtherSubmit?: () => void | Promise<void>;
+ };
+ 
+ // Persistent instances keyed by session
+@@ -153,6 +211,8 @@ interface ChatEphemeralState {
+   searchOpen: boolean;
+   searchQuery: string;
+   pinnedExpanded: boolean;
++  /** PR-8 / #67721: mode-switcher chip menu open state. */
++  modeMenuOpen: boolean;
+ }
+ 
+ function createChatEphemeralState(): ChatEphemeralState {
+@@ -169,6 +229,7 @@ function createChatEphemeralState(): ChatEphemeralState {
+     searchOpen: false,
+     searchQuery: "",
+     pinnedExpanded: false,
++    modeMenuOpen: false,
+   };
+ }
+ 
+@@ -192,6 +253,67 @@ function adjustTextareaHeight(el: HTMLTextAreaElement) {
+   el.style.height = `${Math.min(el.scrollHeight, 150)}px`;
+ }
+ 
++// `syncToolCardExpansionState` lives in `../chat/tool-expansion-state.ts`
++// and is imported above. The merge of upstream/main into the dev branch
++// kept the local copy that the dev branch had (when this logic was
++// inline), shadowing the imported one and breaking at runtime because
++// the local copy referenced private names (`getInitializedToolCards`,
++// `lastAutoExpandPrefBySession`) that only exist inside the extracted
++// module. This block intentionally left empty after the duplicate was
++// removed; see commit history for the post-merge cleanup.
++
++// `renderCompactionIndicator` and `renderFallbackIndicator` are imported
++// from `../chat/status-indicators.ts` (see line 54). The dev-branch
++// version of chat.ts defined them locally; the merge of upstream/main
++// kept BOTH the import and the local copies, with the local copies
++// referencing the now-private `COMPACTION_TOAST_DURATION_MS` /
++// `FALLBACK_TOAST_DURATION_MS` constants that exist only inside
++// status-indicators.ts. The duplicate locals were removed; the
++// dev-only `renderSubagentBlockingIndicator` below stays here with
++// its own local constant copy.
++
++const SUBAGENT_BLOCKING_TOAST_DURATION_MS = 8000;
++
++/**
++ * Live-test iteration 1 Bug 3: bottom-of-chat toast that fires when
++ * the user clicks Approve on a plan while the parent agent run still
++ * has open subagents. Mirrors the model-fallback toast pattern (CSS
++ * class `compaction-indicator--fallback`, 8s auto-dismiss, polite
++ * aria-live) so the user sees it in the same region as the fallback
++ * toast they already recognize.
++ */
++function renderSubagentBlockingIndicator(status: SubagentBlockingStatus | null | undefined) {
++  if (!status) {
++    return nothing;
++  }
++  const elapsed = Date.now() - status.occurredAt;
++  if (elapsed >= SUBAGENT_BLOCKING_TOAST_DURATION_MS) {
++    return nothing;
++  }
++  const tooltip =
++    status.openSubagentRunIds.length > 0
++      ? `Open subagents: ${status.openSubagentRunIds.slice(0, 5).join(", ")}${
++          status.openSubagentRunIds.length > 5
++            ? ` and ${status.openSubagentRunIds.length - 5} more`
++            : ""
++        }`
++      : status.message;
++  return html`
++    <div
++      class="compaction-indicator compaction-indicator--fallback"
++      role="status"
++      aria-live="polite"
++      title=${tooltip}
++    >
++      ${icons.brain} ${status.message}
++    </div>
++  `;
++}
++
++// `renderFallbackIndicator` lives in `../chat/status-indicators.ts`
++// and is imported above. The duplicate local copy was removed; see
++// the comment above renderSubagentBlockingIndicator.
++
+ function generateAttachmentId(): string {
+   return `att-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+ }
+@@ -550,10 +672,6 @@ function renderPinnedSection(
+   pinned: PinnedMessages,
+   requestUpdate: () => void,
+ ): TemplateResult | typeof nothing {
+-  const userRoleLabel = resolveLocalUserName({
+-    name: props.userName ?? null,
+-    avatar: props.userAvatar ?? null,
+-  });
+   const messages = Array.isArray(props.messages) ? props.messages : [];
+   const entries: Array<{ index: number; text: string; role: string }> = [];
+   for (const idx of pinned.indices) {
+@@ -589,7 +707,7 @@ function renderPinnedSection(
+                 ({ index, text, role }) => html`
+                   <div class="agent-chat__pinned-item">
+                     <span class="agent-chat__pinned-role"
+-                      >${role === "user" ? userRoleLabel : "Assistant"}</span
++                      >${role === "user" ? "You" : "Assistant"}</span
+                     >
+                     <span class="agent-chat__pinned-text"
+                       >${text.slice(0, 100)}${text.length > 100 ? "..." : ""}</span
+@@ -759,7 +877,9 @@ export function renderChat(props: ChatProps) {
+   const deleted = getDeletedMessages(props.sessionKey);
+   const inputHistory = getInputHistory(props.sessionKey);
+   const hasAttachments = (props.attachments?.length ?? 0) > 0;
+-  const tokens = tokenEstimate(props.draft);
++  // Intentionally unused locally for now: token estimate may be wired
++  // back into the input bar UI; underscore-prefix silences the lint.
++  const _tokens = tokenEstimate(props.draft);
+ 
+   const placeholder = props.connected
+     ? hasAttachments
+@@ -768,7 +888,10 @@ export function renderChat(props: ChatProps) {
+     : "Connect to the gateway to start chatting...";
+ 
+   const requestUpdate = props.onRequestUpdate ?? (() => {});
+-  const getDraft = props.getDraft ?? (() => props.draft);
++  // Intentionally unused locally for now: the prop wiring is in place
++  // (callers pass `getDraft`) and we'll reconnect it as merge churn
++  // settles. Underscore prefix silences the no-unused-vars lint.
++  const _getDraft = props.getDraft ?? (() => props.draft);
+ 
+   const splitRatio = props.splitRatio ?? 0.6;
+   const sidebarOpen = Boolean(props.sidebarOpen && props.onCloseSidebar);
+@@ -909,8 +1032,6 @@ export function renderChat(props: ChatProps) {
+                 onRequestUpdate: requestUpdate,
+                 assistantName: props.assistantName,
+                 assistantAvatar: assistantIdentity.avatar,
+-                userName: props.userName ?? null,
+-                userAvatar: props.userAvatar ?? null,
+                 basePath: props.basePath,
+                 localMediaPreviewRoots: props.localMediaPreviewRoots ?? [],
+                 assistantAttachmentAuthToken: props.assistantAttachmentAuthToken ?? null,
+@@ -1152,6 +1273,7 @@ export function renderChat(props: ChatProps) {
+         : nothing}
+       ${renderSideResult(props.sideResult, props.onDismissSideResult)}
+       ${renderFallbackIndicator(props.fallbackStatus)}
++      ${renderSubagentBlockingIndicator(props.subagentBlockingStatus)}
+       ${renderCompactionIndicator(props.compactionStatus)}
+       ${renderContextNotice(activeSession, props.sessions?.defaults?.contextTokens ?? null)}
+       ${props.showNewMessages
+@@ -1161,120 +1283,170 @@ export function renderChat(props: ChatProps) {
+             </button>
+           `
+         : nothing}
++      ${props.planApprovalRequest &&
++      props.planApprovalRequest.sessionKey === activeSession?.key &&
++      props.onPlanApprovalDecision
++        ? renderInlinePlanApproval({
++            request: props.planApprovalRequest,
++            connected: props.connected,
++            busy: props.planApprovalBusy ?? false,
++            error: props.planApprovalError ?? null,
++            reviseOpen: props.planApprovalReviseOpen ?? false,
++            reviseDraft: props.planApprovalReviseDraft ?? "",
++            onApprove: () => void props.onPlanApprovalDecision!("approve"),
++            onAcceptWithEdits: () => void props.onPlanApprovalDecision!("edit"),
++            onReviseOpen: () => props.onPlanApprovalReviseOpen?.(),
++            onReviseCancel: () => props.onPlanApprovalReviseCancel?.(),
++            onReviseDraftChange: (text) => props.onPlanApprovalReviseDraftChange?.(text),
++            onReviseSubmit: () => {
++              const draft = (props.planApprovalReviseDraft ?? "").trim();
++              // Codex P2 review #68939 (2026-04-19): block empty
++              // submits client-side. The wire schema's reject
++              // variant now requires `feedback: minLength: 1`
++              // (closes the "reject with no guidance" loophole),
++              // so passing `undefined` for empty drafts would
++              // produce a server-side validation error and the
++              // user would see a confusing "request failed" toast
++              // instead of the expected "type something" affordance.
++              // The textarea remains visible for the user to type
++              // into; only the submit is suppressed when empty.
++              if (!draft) {
++                return;
++              }
++              void props.onPlanApprovalDecision!("reject", draft);
++            },
++            onOpenPlan: () => {
++              if (
++                props.planApprovalRequest &&
++                props.planApprovalRequest.sessionKey === activeSession?.key &&
++                props.onOpenPlanInSidebar
++              ) {
++                props.onOpenPlanInSidebar(props.planApprovalRequest);
++              }
++            },
++            // PR-10 AskUserQuestion routing.
++            onAnswerOption: props.onPlanApprovalAnswer
++              ? (answer) => void props.onPlanApprovalAnswer!(answer)
++              : undefined,
++            // PR-13 Bug 2: inline-textarea "Other" path props.
++            questionOtherOpen: props.planApprovalQuestionOtherOpen ?? false,
++            questionOtherDraft: props.planApprovalQuestionOtherDraft ?? "",
++            onQuestionOtherOpen: () => props.onPlanApprovalQuestionOtherOpen?.(),
++            onQuestionOtherCancel: () => props.onPlanApprovalQuestionOtherCancel?.(),
++            onQuestionOtherDraftChange: (text) =>
++              props.onPlanApprovalQuestionOtherDraftChange?.(text),
++            onQuestionOtherSubmit: () => void props.onPlanApprovalQuestionOtherSubmit?.(),
++          })
++        : nothing}
+ 
+-      <!-- Input bar -->
+-      <div class="agent-chat__input">
+-        ${renderSlashMenu(requestUpdate, props)} ${renderAttachmentPreview(props)}
+-
+-        <input
+-          type="file"
+-          accept=${CHAT_ATTACHMENT_ACCEPT}
+-          multiple
+-          class="agent-chat__file-input"
+-          @change=${(e: Event) => handleFileSelect(e, props)}
+-        />
+-
+-        ${vs.sttRecording && vs.sttInterimText
+-          ? html`<div class="agent-chat__stt-interim">${vs.sttInterimText}</div>`
+-          : nothing}
+-
+-        <textarea
+-          ${ref((el) => el && adjustTextareaHeight(el as HTMLTextAreaElement))}
+-          .value=${props.draft}
+-          dir=${detectTextDirection(props.draft)}
+-          ?disabled=${!props.connected}
+-          @keydown=${handleKeyDown}
+-          @input=${handleInput}
+-          @paste=${(e: ClipboardEvent) => handlePaste(e, props)}
+-          placeholder=${vs.sttRecording ? "Listening..." : placeholder}
+-          rows="1"
+-        ></textarea>
+-
+-        <div class="agent-chat__toolbar">
+-          <div class="agent-chat__toolbar-left">
+-            <button
+-              class="agent-chat__input-btn"
+-              @click=${() => {
+-                document.querySelector<HTMLInputElement>(".agent-chat__file-input")?.click();
+-              }}
+-              title="Attach file"
+-              aria-label="Attach file"
+-              ?disabled=${!props.connected}
+-            >
+-              ${icons.paperclip}
+-            </button>
+-
+-            ${isSttSupported()
+-              ? html`
++      <!--
++        Hide the chat input while a plan-approval card is showing —
++        prevents the user from typing into the wrong surface during
++        the approval moment. The card's own Revise textarea handles
++        feedback collection in-place.
++
++        PR-7 review fix (Copilot #3105170553 / #3105219639): only hide
++        the input when BOTH planApprovalRequest AND
++        onPlanApprovalDecision are present. Otherwise the user would
++        see neither the card (which requires the handler) nor the
++        input — leaving them with no way to interact. When the
++        decision handler isn't wired, leave the input visible so the
++        user can still chat.
++      -->
++      ${props.planApprovalRequest &&
++      props.planApprovalRequest.sessionKey === activeSession?.key &&
++      props.onPlanApprovalDecision
++        ? nothing
++        : html`
++            <!-- Input bar -->
++            <div class="agent-chat__input">
++              ${renderSlashMenu(requestUpdate, props)} ${renderAttachmentPreview(props)}
++
++              <input
++                type="file"
++                accept=${CHAT_ATTACHMENT_ACCEPT}
++                multiple
++                class="agent-chat__file-input"
++                @change=${(e: Event) => handleFileSelect(e, props)}
++              />
++
++              ${vs.sttRecording && vs.sttInterimText
++                ? html`<div class="agent-chat__stt-interim">${vs.sttInterimText}</div>`
++                : nothing}
++
++              <textarea
++                ${ref((el) => el && adjustTextareaHeight(el as HTMLTextAreaElement))}
++                .value=${props.draft}
++                dir=${detectTextDirection(props.draft)}
++                ?disabled=${!props.connected}
++                @keydown=${handleKeyDown}
++                @input=${handleInput}
++                @paste=${(e: ClipboardEvent) => handlePaste(e, props)}
++                placeholder=${vs.sttRecording ? "Listening..." : placeholder}
++                rows="1"
++              ></textarea>
++
++              <div class="agent-chat__toolbar">
++                <div class="agent-chat__toolbar-left">
++                  ${(() => {
++                    // PR-8 / #67721: mode chip lives at the LEFT edge of the
++                    // toolbar (before paperclip) per user feedback — it's the
++                    // most-frequently-touched control on the input row.
++                    if (!props.onSetMode) {
++                      return nothing;
++                    }
++                    const currentMode = resolveCurrentMode(
++                      activeSession?.execSecurity,
++                      activeSession?.execAsk,
++                      activeSession?.planMode?.mode,
++                      // PR-10: surface "Plan ⚡" when the session has
++                      // auto-approve armed so the chip + tooltip match
++                      // the live runtime state.
++                      activeSession?.planMode?.autoApprove,
++                    );
++                    return renderModeSwitcher({
++                      currentMode,
++                      menuOpen: vs.modeMenuOpen,
++                      onToggleMenu: () => {
++                        vs.modeMenuOpen = !vs.modeMenuOpen;
++                        requestUpdate();
++                      },
++                      onSelectMode: (mode) => {
++                        vs.modeMenuOpen = false;
++                        props.onSetMode!(mode);
++                        requestUpdate();
++                      },
++                    });
++                  })()}
+                   <button
+-                    class="agent-chat__input-btn ${vs.sttRecording
+-                      ? "agent-chat__input-btn--recording"
+-                      : ""}"
++                    class="agent-chat__input-btn"
+                     @click=${() => {
+-                      if (vs.sttRecording) {
+-                        stopStt();
+-                        vs.sttRecording = false;
+-                        vs.sttInterimText = "";
+-                        requestUpdate();
+-                      } else {
+-                        const started = startStt({
+-                          onTranscript: (text, isFinal) => {
+-                            if (isFinal) {
+-                              const current = getDraft();
+-                              const sep = current && !current.endsWith(" ") ? " " : "";
+-                              props.onDraftChange(current + sep + text);
+-                              vs.sttInterimText = "";
+-                            } else {
+-                              vs.sttInterimText = text;
+-                            }
+-                            requestUpdate();
+-                          },
+-                          onStart: () => {
+-                            vs.sttRecording = true;
+-                            requestUpdate();
+-                          },
+-                          onEnd: () => {
+-                            vs.sttRecording = false;
+-                            vs.sttInterimText = "";
+-                            requestUpdate();
+-                          },
+-                          onError: () => {
+-                            vs.sttRecording = false;
+-                            vs.sttInterimText = "";
+-                            requestUpdate();
+-                          },
+-                        });
+-                        if (started) {
+-                          vs.sttRecording = true;
+-                          requestUpdate();
+-                        }
+-                      }
++                      document.querySelector<HTMLInputElement>(".agent-chat__file-input")?.click();
+                     }}
+-                    title=${vs.sttRecording ? "Stop recording" : "Voice input"}
++                    title="Attach file"
++                    aria-label="Attach file"
+                     ?disabled=${!props.connected}
+                   >
+-                    ${vs.sttRecording ? icons.micOff : icons.mic}
++                    ${icons.paperclip}
+                   </button>
+-                `
+-              : nothing}
+-            ${tokens ? html`<span class="agent-chat__token-count">${tokens}</span>` : nothing}
+-          </div>
++                </div>
+ 
+-          ${renderChatRunControls({
+-            canAbort,
+-            connected: props.connected,
+-            draft: props.draft,
+-            hasMessages: props.messages.length > 0,
+-            isBusy,
+-            sending: props.sending,
+-            onAbort: props.onAbort,
+-            onExport: () => exportMarkdown(props),
+-            onNewSession: props.onNewSession,
+-            onSend: props.onSend,
+-            onStoreDraft: (draft) => inputHistory.push(draft),
+-          })}
+-        </div>
+-      </div>
++                ${renderChatRunControls({
++                  canAbort,
++                  connected: props.connected,
++                  draft: props.draft,
++                  hasMessages: props.messages.length > 0,
++                  isBusy,
++                  sending: props.sending,
++                  onAbort: props.onAbort,
++                  onExport: () => exportMarkdown(props),
++                  onNewSession: props.onNewSession,
++                  onSend: props.onSend,
++                  onStoreDraft: (draft) => inputHistory.push(draft),
++                })}
++              </div>
++            </div>
++          `}
+     </section>
+   `;
+ }

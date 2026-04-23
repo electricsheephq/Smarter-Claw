@@ -1,0 +1,16 @@
+@@ -655,6 +655,7 @@ export const id: TranslationMap = {
+   chat: {
+     disconnected: "Terputus dari gateway.",
+     refreshTitle: "Refresh data chat",
++    planViewToggle: "Toggle plan view sidebar",
+     thinkingToggle: "Alihkan output berpikir/bekerja asisten",
+     toolCallsToggle: "Alihkan panggilan alat dan hasil alat",
+     focusToggle: "Alihkan mode fokus (sembunyikan bilah samping + header halaman)",
+@@ -677,7 +678,6 @@ export const id: TranslationMap = {
+     uk: "Українська (Ukraina)",
+     id: "Bahasa Indonesia (Indonesia)",
+     pl: "Polski (Polandia)",
+-    th: "ไทย (Thai)",
+   },
+   cron: {
+     summary: {

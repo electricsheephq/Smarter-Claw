@@ -24,7 +24,7 @@
  * Returns the full PatchRecord written to the manifest.
  */
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { sha256OfFile } from "./host-fingerprint.mjs";
 
@@ -229,8 +229,7 @@ export function reverseNewFilePatch({ hostPath, record }) {
       `Cannot reverse new-file patch for ${record.relPath}: file SHA differs from manifest (expected ${record.newSha256}, found ${actualSha}). Manual cleanup required.`,
     );
   }
-  const fs = require("node:fs");
-  fs.unlinkSync(target);
+  unlinkSync(target);
   return { reversed: true };
 }
 

@@ -1,0 +1,16 @@
+@@ -660,6 +660,7 @@ export const es: TranslationMap = {
+   chat: {
+     disconnected: "Desconectado de la puerta de enlace.",
+     refreshTitle: "Actualizar datos del chat",
++    planViewToggle: "Toggle plan view sidebar",
+     thinkingToggle: "Alternar salida de pensamiento/trabajo del asistente",
+     toolCallsToggle: "Alternar llamadas a herramientas y resultados de herramientas",
+     focusToggle: "Alternar modo de enfoque (ocultar barra lateral + cabecera)",
+@@ -682,7 +683,6 @@ export const es: TranslationMap = {
+     uk: "Українська (ucraniano)",
+     id: "Bahasa Indonesia (indonesio)",
+     pl: "Polski (polaco)",
+-    th: "ไทย (tailandés)",
+   },
+   cron: {
+     summary: {
