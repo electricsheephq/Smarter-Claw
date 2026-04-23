@@ -228,7 +228,7 @@ export default definePluginEntry({
 
         let storePath: string | undefined;
         try {
-          storePath = resolveStorePath(agentId);
+          storePath = resolveStorePath(undefined, { agentId });
         } catch (err) {
           return gateFailureResult(
             sessionKey,
