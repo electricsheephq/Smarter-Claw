@@ -41,6 +41,24 @@ type SmarterClawConfig = {
   enabled?: boolean;
   debugLog?: boolean;
   archetype?: { enabled?: boolean; minStepCount?: number };
+  mutationGate?: {
+    enabled?: boolean;
+    blockedTools?: string[];
+    /**
+     * What to do when the mutation gate cannot determine session state
+     * (session store IO failure, parse error, missing storePath, etc.).
+     *
+     *   "closed" (default): block the tool call and surface a clear
+     *     reason. Right answer for a security gate — when in doubt,
+     *     refuse. Recommended for any plan-mode workflow where the
+     *     gate is the user's only fence against unintended mutations.
+     *
+     *   "open": let the tool call through. Use only for non-security-
+     *     critical setups where transient session-store hiccups would
+     *     produce annoying false-blocks and the user accepts the risk.
+     */
+    gateFailureMode?: "open" | "closed";
+  };
 };
 
 function readConfig(pluginConfig: unknown): SmarterClawConfig {
@@ -129,52 +147,149 @@ export default definePluginEntry({
     // already exposed by the host. Session state is read via the same
     // pattern as the archetype hook (loadSessionStore → resolve entry →
     // shouldBlockMutation reads via runtime-api.isInPlanMode).
-    api.on("before_tool_call", async (event, ctx) => {
-      const sessionKey = ctx.sessionKey;
-      const agentId = ctx.agentId;
-      if (!sessionKey || !agentId) {
-        return undefined;
-      }
-      let storePath: string | undefined;
-      try {
-        storePath = resolveStorePath(agentId);
-      } catch {
-        return undefined;
-      }
-      if (!storePath) return undefined;
+    // Default-closed: when state can't be determined, refuse the call.
+    // Users can opt out for non-security-critical setups via plugin
+    // config: `mutationGate.gateFailureMode = "open"`.
+    const gateFailureMode: "open" | "closed" =
+      config.mutationGate?.gateFailureMode === "open" ? "open" : "closed";
 
-      let entry: ReturnType<typeof resolveSessionStoreEntry>["existing"];
-      try {
-        const store = loadSessionStore(storePath, { skipCache: true });
-        entry = resolveSessionStoreEntry({ store: store ?? {}, sessionKey }).existing;
-      } catch {
-        return undefined;
-      }
-
-      // Pull command for exec/bash so the read-only allowlist applies.
-      const params = event.params ?? {};
-      const execCommand =
-        typeof (params as { command?: unknown }).command === "string"
-          ? (params as { command: string }).command
-          : typeof (params as { cmd?: unknown }).cmd === "string"
-            ? (params as { cmd: string }).cmd
-            : undefined;
-
-      const result = shouldBlockMutation({
-        toolName: event.toolName,
-        session: entry,
-        execCommand,
+    /**
+     * Build the fail-closed result for the in-flight tool call.
+     *
+     * Returns the right `block: true` shape (or undefined when the
+     * operator opted into fail-open). Logs every fail-closed event so
+     * operators can tune the failure rate from gateway logs.
+     */
+    function gateFailureResult(
+      sessionKey: string | undefined,
+      toolName: string,
+      cause: string,
+    ): { block: true; blockReason: string } | undefined {
+      logPlanModeDebug({
+        kind: "tool_call",
+        sessionKey: sessionKey ?? "",
+        tool: `before_tool_call:gate_failure:${cause}:${toolName}`,
       });
-
-      if (result.blocked) {
-        logPlanModeDebug({
-          kind: "tool_call",
-          sessionKey,
-          tool: `before_tool_call:blocked:${event.toolName}`,
-        });
-        return { block: true, blockReason: result.reason ?? "Blocked by Smarter-Claw plan-mode mutation gate." };
+      if (gateFailureMode === "open") {
+        return undefined;
       }
-      return undefined;
+      return {
+        block: true,
+        blockReason:
+          `Smarter-Claw plan-mode gate could not verify session state for tool "${toolName}" (${cause}); failing closed. ` +
+          "Restart the gateway, run smarter-claw verify, or set " +
+          "mutationGate.gateFailureMode=\"open\" in plugin config to opt out.",
+      };
+    }
+
+    api.on("before_tool_call", async (event, ctx) => {
+      // Wrap the entire body in try/catch — a bug anywhere downstream
+      // (e.g. unexpected throw from shouldBlockMutation) MUST honor the
+      // fail-closed policy rather than bubble out and let the host
+      // default-allow.
+      try {
+        const sessionKey = ctx.sessionKey;
+        const agentId = ctx.agentId;
+        if (!sessionKey || !agentId) {
+          return gateFailureResult(sessionKey, event.toolName, "missing-session-context");
+        }
+
+        let storePath: string | undefined;
+        try {
+          storePath = resolveStorePath(agentId);
+        } catch (err) {
+          return gateFailureResult(
+            sessionKey,
+            event.toolName,
+            `resolveStorePath-threw:${(err as Error)?.message ?? String(err)}`,
+          );
+        }
+        if (!storePath) {
+          return gateFailureResult(sessionKey, event.toolName, "missing-store-path");
+        }
+
+        let entry: ReturnType<typeof resolveSessionStoreEntry>["existing"];
+        try {
+          const store = loadSessionStore(storePath, { skipCache: true });
+          entry = resolveSessionStoreEntry({ store: store ?? {}, sessionKey }).existing;
+        } catch (err) {
+          return gateFailureResult(
+            sessionKey,
+            event.toolName,
+            `session-store-read-failed:${(err as Error)?.message ?? String(err)}`,
+          );
+        }
+
+        // Pull command for exec/bash so the read-only allowlist applies.
+        // Widened to cover every common shell-command param name an MCP
+        // plugin might use (script/code/bash_command/shell_command/cmdline/
+        // input/run/args). The mutation-gate inspects whichever is set.
+        const params = (event.params ?? {}) as Record<string, unknown>;
+        const COMMAND_PARAM_KEYS = [
+          "command",
+          "cmd",
+          "script",
+          "code",
+          "bash_command",
+          "shell_command",
+          "cmdline",
+          "input",
+          "run",
+          "execute",
+        ] as const;
+        let execCommand: string | undefined;
+        for (const key of COMMAND_PARAM_KEYS) {
+          const v = params[key];
+          if (typeof v === "string" && v.length > 0) {
+            execCommand = v;
+            break;
+          }
+        }
+        // Also consider an `args` param: an array of arg tokens (string or
+        // numeric) joined by spaces is a common alternative shape. Only
+        // used when no string-typed command param matched above.
+        if (execCommand === undefined && Array.isArray(params.args)) {
+          const joined = params.args
+            .map((x) => (typeof x === "string" || typeof x === "number" ? String(x) : ""))
+            .join(" ")
+            .trim();
+          if (joined.length > 0) execCommand = joined;
+        }
+
+        let result: ReturnType<typeof shouldBlockMutation>;
+        try {
+          result = shouldBlockMutation({
+            toolName: event.toolName,
+            session: entry,
+            execCommand,
+          });
+        } catch (err) {
+          return gateFailureResult(
+            sessionKey,
+            event.toolName,
+            `shouldBlockMutation-threw:${(err as Error)?.message ?? String(err)}`,
+          );
+        }
+
+        if (result.blocked) {
+          logPlanModeDebug({
+            kind: "tool_call",
+            sessionKey,
+            tool: `before_tool_call:blocked:${event.toolName}`,
+          });
+          return {
+            block: true,
+            blockReason: result.reason ?? "Blocked by Smarter-Claw plan-mode mutation gate.",
+          };
+        }
+        return undefined;
+      } catch (err) {
+        return gateFailureResult(
+          ctx.sessionKey,
+          event.toolName,
+          `unhandled-throw:${(err as Error)?.message ?? String(err)}`,
+        );
+      }
     });
   },
 });

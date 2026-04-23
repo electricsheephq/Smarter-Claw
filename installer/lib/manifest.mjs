@@ -41,9 +41,34 @@ import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const MANIFEST_FILENAME = ".smarter-claw-install-manifest.json";
+const MANIFEST_BACKUP_FILENAME = ".smarter-claw-install-manifest.backup.json";
 
 export function manifestPathFor(hostPath) {
   return path.join(hostPath, MANIFEST_FILENAME);
+}
+
+export function manifestBackupPathFor(hostPath) {
+  return path.join(hostPath, MANIFEST_BACKUP_FILENAME);
+}
+
+/**
+ * Atomically write the manifest backup. Used by `--force` reinstall to
+ * preserve a recovery file in case the new install fails partway through.
+ * The backup is the verbatim PRE-WIPE manifest so a user can manually
+ * `mv` it back to MANIFEST_FILENAME and run uninstall to restore the
+ * baseline if recovery is needed.
+ */
+export function writeManifestBackup(hostPath, manifest) {
+  const p = manifestBackupPathFor(hostPath);
+  writeFileSync(p, JSON.stringify(manifest, null, 2) + "\n", "utf8");
+  return p;
+}
+
+export function deleteManifestBackup(hostPath) {
+  const p = manifestBackupPathFor(hostPath);
+  if (existsSync(p)) {
+    unlinkSync(p);
+  }
 }
 
 export function readManifest(hostPath) {

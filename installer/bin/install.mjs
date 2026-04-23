@@ -37,7 +37,14 @@ import { fileURLToPath } from "node:url";
 
 import { applyDiffPatch, applyNewFilePatch, reverseDiffPatch, reverseNewFilePatch } from "../lib/apply-patch.mjs";
 import { locateHost } from "../lib/locate-host.mjs";
-import { manifestPathFor, newManifest, readManifest, writeManifest } from "../lib/manifest.mjs";
+import {
+  deleteManifestBackup,
+  manifestPathFor,
+  newManifest,
+  readManifest,
+  writeManifest,
+  writeManifestBackup,
+} from "../lib/manifest.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -106,9 +113,26 @@ async function main() {
     );
   }
 
+  // Track whether a backup manifest exists for this run so the rollback
+  // path can re-apply it on mid-install failure.
+  let backupPath = null;
   if (existingManifest && args.force) {
-    console.log(`\nForce reinstall: removing existing v${existingManifest.smarterClawVersion} install...`);
-    // Reverse all patches from the existing manifest (best-effort)
+    // Persist the OLD manifest to a backup file BEFORE any reverse work,
+    // so we can recover if anything below fails. The live manifest is
+    // intentionally left in place — it is only deleted after the new
+    // install successfully writes its replacement (atomic swap below).
+    // See issue #6 for the failure scenarios this prevents.
+    backupPath = writeManifestBackup(hostPath, existingManifest);
+    console.log(`\nForce reinstall: backed up v${existingManifest.smarterClawVersion} manifest to:`);
+    console.log(`  ${backupPath}`);
+    console.log(`\nReversing existing v${existingManifest.smarterClawVersion} install...`);
+
+    // Reverse all patches from the existing manifest. Track failures —
+    // unlike before, a single reverse failure aborts the reinstall to
+    // avoid stranding the host in a frankenstate where some old patches
+    // are partially applied AND the new install is partially applied
+    // with no clear way to recover.
+    let reverseFailures = 0;
     for (const record of [...existingManifest.patches].reverse()) {
       try {
         if (record.type === "new-file") {
@@ -117,8 +141,20 @@ async function main() {
           reverseDiffPatch({ hostPath, installerRoot: INSTALLER_ROOT, record });
         }
       } catch (err) {
+        reverseFailures++;
         console.warn(`  WARN reversing ${record.relPath}: ${err.message}`);
       }
+    }
+    if (reverseFailures > 0) {
+      console.error(
+        `\n${reverseFailures} patch(es) from the previous install could not be reversed.\n` +
+          "Refusing to proceed with --force reinstall to avoid stranding the host.\n" +
+          `\nThe pre-wipe manifest is preserved at: ${backupPath}\n` +
+          "  - Inspect the warnings above to find drifted files.\n" +
+          "  - Resolve the drift (restore the file, or accept that it's intentional and re-record its sha).\n" +
+          "  - Then re-run install --force.\n",
+      );
+      process.exit(1);
     }
   }
 
@@ -162,7 +198,7 @@ async function main() {
     }
   } catch (err) {
     console.error(`\nPATCH FAILED: ${err.message}`);
-    console.error("Rolling back...");
+    console.error("Rolling back new patches...");
     for (const record of [...completed].reverse()) {
       try {
         if (record.type === "new-file") reverseNewFilePatch({ hostPath, record });
@@ -171,6 +207,22 @@ async function main() {
       } catch (rbErr) {
         console.error(`  ROLLBACK FAILED for ${record.relPath}: ${rbErr.message}`);
       }
+    }
+    if (backupPath) {
+      // We were in --force-reinstall mode: the old install was reversed
+      // but the new install failed. Inform the operator how to recover.
+      // The live manifest still references the old install (we never
+      // deleted it — atomic swap was supposed to happen on success), so
+      // the simplest recovery is to leave both files in place and let
+      // the user decide whether to re-attempt or restore from backup.
+      console.error(`\nForce reinstall failed mid-stream.`);
+      console.error(`  - Backup manifest preserved at: ${backupPath}`);
+      console.error(`  - Live manifest still at:       ${manifestPathFor(hostPath)}`);
+      console.error(
+        `\nTo recover the previous install state, copy the backup over the live\n` +
+          `manifest, then run \`smarter-claw uninstall --force\` to walk the host\n` +
+          `back to baseline. (Or re-run install --force after fixing the cause.)`,
+      );
     }
     process.exit(1);
   }
@@ -181,7 +233,15 @@ async function main() {
   }
 
   manifest.patches = completed;
+  // Atomic-ish swap: write the new manifest (overwrites old in place; on
+  // POSIX writeFileSync is one syscall). Only after this succeeds do we
+  // delete the backup, so a crash between writeManifest and
+  // deleteManifestBackup leaves both files on disk — the live one is
+  // authoritative, the backup is harmless leftovers.
   writeManifest(hostPath, manifest);
+  if (backupPath) {
+    deleteManifestBackup(hostPath);
+  }
 
   console.log(`\nSmarter-Claw v${smarterClawVersion} installed.`);
   console.log(`Manifest: ${manifestPathFor(hostPath)}`);

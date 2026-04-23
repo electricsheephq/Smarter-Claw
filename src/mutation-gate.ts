@@ -40,7 +40,9 @@ import type { PlanMode } from "./types.js";
  * plan-mode gate if/when needed.
  */
 const MUTATION_TOOL_BLOCKLIST = new Set([
+  // Core mutation tools (host runtime)
   "apply_patch",
+  "apply_patch_via_tool",
   "bash",
   "edit",
   "exec",
@@ -51,6 +53,33 @@ const MUTATION_TOOL_BLOCKLIST = new Set([
   "sessions_send",
   "subagents",
   "write",
+  // v2026.4.22 catalog: side-effecting tools that schedule work, write
+  // media, spend API credits, or otherwise mutate state. Cross-checked
+  // against openclaw-2/src/agents/tools/* tool registrations to avoid
+  // drift; see issue #4 for the audit trail.
+  "canvas",
+  "cron",
+  "image",
+  "image_generate",
+  "music_generate",
+  "notify",
+  "pdf",
+  "tts",
+  "video_generate",
+  // Common shell aliases — not registered tools today, but defensively
+  // blocked in case an MCP plugin registers one. Without these entries
+  // the suffix/default-deny path could allow them through depending on
+  // exact name shape (see issue #5).
+  "csh",
+  "fish",
+  "nu",
+  "nushell",
+  "powershell",
+  "pwsh",
+  "sh",
+  "tcsh",
+  "zsh",
+  "cmd",
 ]);
 
 /** Suffix patterns that also indicate mutation tools. */
@@ -123,6 +152,95 @@ const READ_ONLY_EXEC_PREFIXES = [
   "hostname",
   "uname",
 ];
+
+/**
+ * Wrapper-prefix tokens we strip from a command before running the read-
+ * only-prefix match. Without this, `sudo cat /etc/shadow`, `env cat ...`,
+ * `nice cat ...` etc. would NOT match `cat` and would fall through to
+ * the blocklist (which catches them today only because exec/bash is in
+ * the blocklist) — but if the gate later allowlists more shells or the
+ * caller passes the command via a different tool name, the wrapper
+ * could smuggle through. Stripping wrappers up front is the
+ * defense-in-depth fix recommended in issue #5.
+ *
+ * Each wrapper may take its own flags before the actual command. We
+ * strip the wrapper token and any leading `-flag` / `--flag=value` /
+ * `--flag value` tokens that follow, then recurse: `sudo -u root nice
+ * -n 10 cat foo` → `cat foo`.
+ *
+ * `env` additionally accepts `KEY=VAL` tokens before the command — we
+ * strip those too.
+ */
+const EXEC_WRAPPER_TOKENS = new Set([
+  "sudo",
+  "doas",
+  "nohup",
+  "time",
+  "env",
+  "nice",
+  "ionice",
+  "caffeinate",
+  "stdbuf",
+  "unbuffer",
+  "chronic",
+  "timeout",
+]);
+
+function stripExecWrappers(cmd: string): string {
+  // Tokenize on whitespace. Cheap shell-lexer — sufficient because the
+  // metacharacter regex above already rejected anything with quotes,
+  // shell operators, command substitution, etc.
+  let tokens = cmd.split(/\s+/).filter(Boolean);
+  let changed = true;
+  while (changed && tokens.length > 0) {
+    changed = false;
+    const head = tokens[0];
+    if (!EXEC_WRAPPER_TOKENS.has(head)) break;
+    tokens = tokens.slice(1);
+    changed = true;
+    // Strip wrapper-specific flag tokens before the command.
+    while (tokens.length > 0) {
+      const t = tokens[0];
+      if (t.startsWith("-")) {
+        // -n 10, --user=root, --, etc. Stop on `--` (POSIX end-of-options).
+        if (t === "--") {
+          tokens = tokens.slice(1);
+          break;
+        }
+        tokens = tokens.slice(1);
+        // Some flags take a value as the next token. Be conservative: if
+        // the flag has no `=` and the next token doesn't start with `-`
+        // and doesn't look like a known wrapper or command, consume it
+        // as the flag's value. We keep this lenient — over-stripping a
+        // value is safer than under-stripping and letting a wrapper
+        // mask the actual command.
+        if (!t.includes("=") && tokens.length > 0 && !tokens[0].startsWith("-")) {
+          // But don't consume the token if it looks like the actual
+          // command we're trying to find (a recognized read-only
+          // prefix). Heuristic: stop consuming if the next token is a
+          // bare command name with no slash and is in the read-only
+          // prefix list.
+          const next = tokens[0];
+          const looksLikeCommand =
+            !next.includes("=") &&
+            (READ_ONLY_EXEC_PREFIXES.includes(next) ||
+              READ_ONLY_EXEC_PREFIXES.some((p) => p.startsWith(next + " ")));
+          if (!looksLikeCommand) {
+            tokens = tokens.slice(1);
+          }
+        }
+        continue;
+      }
+      // env-style KEY=VAL token (no leading dash, contains `=`).
+      if (head === "env" && /^[A-Za-z_][A-Za-z0-9_]*=/.test(t)) {
+        tokens = tokens.slice(1);
+        continue;
+      }
+      break;
+    }
+  }
+  return tokens.join(" ");
+}
 
 export interface MutationGateResult {
   blocked: boolean;
@@ -202,8 +320,42 @@ export function checkMutationGate(
         reason: `Tool "${toolName}" command contains a dangerous flag and is blocked in plan mode.`,
       };
     }
+    // Strip wrapper prefixes (sudo, env, nohup, time, nice, ionice,
+    // caffeinate, ...) before matching the read-only prefix list.
+    // `sudo cat /etc/passwd` becomes `cat /etc/passwd` and now matches
+    // the `cat` allowlist entry. WITHOUT this strip the command falls
+    // through to the blocklist check; today exec/bash is in the
+    // blocklist so it's blocked, but defense-in-depth: if a future tool
+    // takes a shell command under a different name and reaches this
+    // branch, the wrapper must not mask the actual command.
+    //
+    // We re-run the metacharacter and dangerous-flag checks against the
+    // stripped command too, in case the wrapper was hiding a value
+    // token that contains operators (e.g. `env FOO='a;b' cat foo` —
+    // already rejected above by the `;` check on the raw cmd, but
+    // belt-and-suspenders).
+    const stripped = stripExecWrappers(cmd);
+    if (stripped !== cmd) {
+      if (/[;|&`\n\r]|\$\(|>>?|<\(|>\(/.test(stripped)) {
+        return {
+          blocked: true,
+          reason:
+            `Tool "${toolName}" command (after wrapper strip) contains shell operators and is blocked in plan mode.`,
+        };
+      }
+      const stripHasFlag = DANGEROUS_FLAGS.some((f) => {
+        const escaped = f.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        return new RegExp(`(?:^|[\\s])${escaped}(?:[\\s=]|$)`, "i").test(stripped);
+      });
+      if (stripHasFlag) {
+        return {
+          blocked: true,
+          reason: `Tool "${toolName}" command (after wrapper strip) contains a dangerous flag and is blocked in plan mode.`,
+        };
+      }
+    }
     const isReadOnly = READ_ONLY_EXEC_PREFIXES.some(
-      (prefix) => cmd === prefix || cmd.startsWith(prefix + " "),
+      (prefix) => stripped === prefix || stripped.startsWith(prefix + " "),
     );
     if (isReadOnly) {
       return { blocked: false };

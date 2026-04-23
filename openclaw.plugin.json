@@ -47,6 +47,12 @@
             "type": "array",
             "items": { "type": "string" },
             "description": "Override the default mutating-tool list. Empty array uses the built-in default."
+          },
+          "gateFailureMode": {
+            "type": "string",
+            "enum": ["open", "closed"],
+            "default": "closed",
+            "description": "What to do when the mutation gate cannot determine session state (session-store IO failure, parse error, missing storePath). Default 'closed' refuses the tool call (recommended for security). Set to 'open' to let calls through on transient failures (lower-friction, lower-safety)."
           }
         }
       },
@@ -133,6 +139,10 @@
     },
     "mutationGate.blockedTools": {
       "label": "Blocked Tools Override",
+      "advanced": true
+    },
+    "mutationGate.gateFailureMode": {
+      "label": "Gate Failure Mode",
       "advanced": true
     },
     "retry": {

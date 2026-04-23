@@ -29,6 +29,55 @@ import path from "node:path";
 import { sha256OfFile } from "./host-fingerprint.mjs";
 
 /**
+ * Containment guard for every path the installer touches.
+ *
+ * Two levels of defense:
+ *   1. Reject relPaths that look obviously dangerous before we resolve
+ *      them — absolute paths, NUL bytes, backslash separators on POSIX
+ *      (Windows-style separators that path.posix won't normalize).
+ *   2. After resolving relPath against hostPath, refuse if the resulting
+ *      target is outside hostPath (path.relative starts with "..").
+ *
+ * This covers:
+ *   - "../escape.txt"        — climbs out via path.relative check
+ *   - "/etc/passwd"          — rejected by isAbsolute check
+ *   - "a/../../escape.txt"   — climbs out, caught after resolve
+ *   - "foo\0bar"             — rejected by NUL byte check
+ *
+ * Throws synchronously on violation so callers (apply + reverse) cannot
+ * accidentally write or unlink anything outside the host tree.
+ */
+function assertSafeRelPath(relPath) {
+  if (typeof relPath !== "string" || relPath.length === 0) {
+    throw new Error(`Refusing patch with invalid relPath: ${JSON.stringify(relPath)}`);
+  }
+  if (relPath.includes("\0")) {
+    throw new Error(`Refusing patch with NUL byte in relPath: ${JSON.stringify(relPath)}`);
+  }
+  if (path.isAbsolute(relPath) || relPath.startsWith("/") || relPath.startsWith("\\")) {
+    throw new Error(`Refusing patch with absolute relPath: ${JSON.stringify(relPath)}`);
+  }
+}
+
+function assertInsideHost(hostPath, target) {
+  const resolvedHost = path.resolve(hostPath);
+  const resolvedTarget = path.resolve(target);
+  const rel = path.relative(resolvedHost, resolvedTarget);
+  if (rel === "" || rel === ".") {
+    // target IS the host root — also disallow (no patches operate on the
+    // host directory itself).
+    throw new Error(
+      `Refusing to operate on hostPath itself: ${target} (hostPath=${hostPath})`,
+    );
+  }
+  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    throw new Error(
+      `Refusing to operate on path outside hostPath: ${target} (hostPath=${hostPath})`,
+    );
+  }
+}
+
+/**
  * Apply a single new-file patch.
  *
  * @param {object} args
@@ -40,7 +89,9 @@ import { sha256OfFile } from "./host-fingerprint.mjs";
  * @returns {object} PatchRecord
  */
 export function applyNewFilePatch({ hostPath, installerRoot, relPath, sourceRelPath, allowOverwrite = false }) {
+  assertSafeRelPath(relPath);
   const target = path.join(hostPath, relPath);
+  assertInsideHost(hostPath, target);
   const source = path.join(installerRoot, sourceRelPath);
 
   if (!existsSync(source)) {
@@ -100,7 +151,9 @@ export function applyNewFilePatch({ hostPath, installerRoot, relPath, sourceRelP
  * @returns {object} PatchRecord
  */
 export function applyDiffPatch({ hostPath, installerRoot, relPath, patchRelPath, expectedOriginalSha256 }) {
+  assertSafeRelPath(relPath);
   const target = path.join(hostPath, relPath);
+  assertInsideHost(hostPath, target);
   const patchSource = path.join(installerRoot, patchRelPath);
 
   if (!existsSync(patchSource)) {
@@ -160,9 +213,44 @@ function applyUnifiedDiff(original, patch, relPathForError) {
       throw new Error(`Bad hunk header in ${relPathForError}: ${line}`);
     }
     const oldStart = parseInt(match[1], 10) - 1; // unified diff is 1-indexed; we use 0-indexed
+    const oldLen = match[2] !== undefined ? parseInt(match[2], 10) : 1;
+
+    // Bounds-check the hunk header BEFORE the cursor-advance loop.
+    // If oldStart references a line past the end of the file, the
+    // advance loop would push `undefined` into output and silently
+    // synthesize blank lines (see issue #2). The only legal "past EOF"
+    // case is a pure-add hunk (oldLen === 0) appending after the last
+    // line, where oldStart === originalLines.length - 1 is OK.
+    const minRequiredLines = oldStart + (oldLen > 0 ? oldLen : 0);
+    if (oldStart < 0) {
+      throw new Error(
+        `Hunk header out-of-bounds in ${relPathForError}: oldStart=${oldStart + 1} is non-positive`,
+      );
+    }
+    if (oldStart > originalLines.length) {
+      throw new Error(
+        `Hunk header out-of-bounds in ${relPathForError}: oldStart=${oldStart + 1} exceeds file length ${originalLines.length}`,
+      );
+    }
+    if (minRequiredLines > originalLines.length) {
+      throw new Error(
+        `Hunk header out-of-bounds in ${relPathForError}: hunk references original lines ${oldStart + 1}..${minRequiredLines} but file has only ${originalLines.length} lines`,
+      );
+    }
+    if (cursor > oldStart) {
+      throw new Error(
+        `Hunk header out-of-order in ${relPathForError}: oldStart=${oldStart + 1} is before current cursor=${cursor + 1}`,
+      );
+    }
 
     // Copy any unchanged lines between cursor and oldStart into output.
+    // Bounded above by originalLines.length so we never push undefined.
     while (cursor < oldStart) {
+      if (cursor >= originalLines.length) {
+        throw new Error(
+          `Hunk header out-of-bounds in ${relPathForError}: cursor=${cursor + 1} ran past file length ${originalLines.length} while seeking oldStart=${oldStart + 1}`,
+        );
+      }
       output.push(originalLines[cursor]);
       cursor++;
     }
@@ -204,7 +292,7 @@ function applyUnifiedDiff(original, patch, relPathForError) {
     }
   }
 
-  // Copy any remaining original lines
+  // Copy any remaining original lines (bounded — never push undefined).
   while (cursor < originalLines.length) {
     output.push(originalLines[cursor]);
     cursor++;
@@ -213,13 +301,18 @@ function applyUnifiedDiff(original, patch, relPathForError) {
   return output.join("\n");
 }
 
+// Export internal helpers for unit testing.
+export const __test = { assertSafeRelPath, assertInsideHost, applyUnifiedDiff };
+
 /**
  * Reverse a single new-file patch by deleting the file (only if its
  * SHA still matches the manifest's newSha256 — refuse if user has
  * modified it).
  */
 export function reverseNewFilePatch({ hostPath, record }) {
+  assertSafeRelPath(record.relPath);
   const target = path.join(hostPath, record.relPath);
+  assertInsideHost(hostPath, target);
   if (!existsSync(target)) {
     return { skipped: "already-removed" };
   }
@@ -242,7 +335,9 @@ export function reverseNewFilePatch({ hostPath, record }) {
  * strict-context.
  */
 export function reverseDiffPatch({ hostPath, installerRoot, record }) {
+  assertSafeRelPath(record.relPath);
   const target = path.join(hostPath, record.relPath);
+  assertInsideHost(hostPath, target);
   const patchSource = path.join(installerRoot, record.patchRelPath);
 
   if (!existsSync(target)) {
