@@ -14,6 +14,7 @@
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { buildArchetypePromptResult } from "./src/archetype-hook.js";
 import { isPlanModeDebugEnabled, setPlanModeDebugEnabled } from "./src/debug-log.js";
+import { createPlanCommandHandler } from "./src/slash-commands.js";
 import { createAskUserQuestionTool } from "./src/tools/ask-user-question-tool.js";
 import { createEnterPlanModeTool } from "./src/tools/enter-plan-mode-tool.js";
 import { createExitPlanModeTool } from "./src/tools/exit-plan-mode-tool.js";
@@ -89,6 +90,27 @@ export default definePluginEntry({
         { enabled: archetypeEnabled },
         { agentId: ctx.agentId, sessionKey: ctx.sessionKey },
       );
+    });
+
+    // Phase 2.5: register the universal `/plan` slash command. The
+    // handler is wired with empty deps for now — the installer-side
+    // patch wave is responsible for injecting `applyPlanPatch` and
+    // `resolveSession` so the mutating subcommands actually flip
+    // session state. Until that lands, `/plan status`, `/plan view`,
+    // and `/plan restate` work read-only; `/plan accept` and
+    // friends return a friendly "wiring not installed" message
+    // (see slash-commands.ts).
+    //
+    // `nativeNames.discord = "plan"` keeps the command discoverable
+    // inside Discord's native slash menu without colliding with
+    // anything else (mirrors the talk-voice plugin's convention).
+    api.registerCommand({
+      name: "plan",
+      nativeNames: { default: "plan" },
+      description:
+        "Plan-mode controls: accept/revise plans, toggle mode, restate the active plan, or answer pending questions.",
+      acceptsArgs: true,
+      handler: createPlanCommandHandler(),
     });
   },
 });
