@@ -105,3 +105,92 @@ export function isInPlanMode(session: unknown): boolean {
 export function isAutoApproveEnabled(session: unknown): boolean {
   return readSmarterClawState(session)?.autoApprove === true;
 }
+
+/**
+ * Persist a Smarter-Claw state slice into the session store.
+ *
+ * Uses the host's `updateSessionStoreEntry` exposed by the installer's
+ * `session-store-runtime-write-api.diff` patch (which adds the export to
+ * `openclaw/plugin-sdk/session-store-runtime`). When the installer hasn't
+ * been run, the symbol won't exist and the helper returns
+ * `{ persisted: false, reason: "..." }` instead of throwing — slash
+ * commands surface this as a friendly "run smarter-claw install" message.
+ *
+ * Dynamic-imported on every call to keep the failure mode silent on
+ * vanilla hosts (loadSessionStoreModule resolves at first use).
+ *
+ * @param opts.agentId        Required — used to resolve the store path.
+ * @param opts.sessionKey     Required — identifies the session entry.
+ * @param opts.update         Pure function: takes current state (may be
+ *                            undefined for first write), returns next state.
+ *                            Return undefined to leave state unchanged.
+ *
+ * @returns `{ persisted: true, next }` on success, or
+ *   `{ persisted: false, reason }` when the install is missing the
+ *   write-API patch, the entry can't be loaded, or the update returns
+ *   undefined.
+ */
+export type PersistSmarterClawStateResult =
+  | { persisted: true; next: SmarterClawSessionState }
+  | { persisted: false; reason: string };
+
+export async function persistSmarterClawState(opts: {
+  agentId: string;
+  sessionKey: string;
+  update: (
+    current: SmarterClawSessionState | undefined,
+  ) => SmarterClawSessionState | undefined;
+}): Promise<PersistSmarterClawStateResult> {
+  let storeRuntime: typeof import("openclaw/plugin-sdk/session-store-runtime");
+  try {
+    storeRuntime = await import("openclaw/plugin-sdk/session-store-runtime");
+  } catch (err) {
+    return {
+      persisted: false,
+      reason: `openclaw/plugin-sdk/session-store-runtime is not loadable: ${(err as Error)?.message ?? err}`,
+    };
+  }
+  const updateSessionStoreEntry = (
+    storeRuntime as unknown as {
+      updateSessionStoreEntry?: (params: {
+        storePath: string;
+        sessionKey: string;
+        update: (entry: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
+      }) => Promise<Record<string, unknown> | null>;
+    }
+  ).updateSessionStoreEntry;
+  if (typeof updateSessionStoreEntry !== "function") {
+    return {
+      persisted: false,
+      reason:
+        "openclaw/plugin-sdk/session-store-runtime is missing updateSessionStoreEntry — Smarter-Claw installer has not been run against this OpenClaw install. Run `smarter-claw install` to enable plan-mode mutations.",
+    };
+  }
+  let storePath: string;
+  try {
+    storePath = storeRuntime.resolveStorePath(opts.agentId);
+  } catch (err) {
+    return { persisted: false, reason: `resolveStorePath failed: ${(err as Error)?.message ?? err}` };
+  }
+
+  let nextState: SmarterClawSessionState | undefined;
+  const result = await updateSessionStoreEntry({
+    storePath,
+    sessionKey: opts.sessionKey,
+    update: async (entry) => {
+      const current = readSmarterClawState(entry);
+      const next = opts.update(current);
+      if (!next) return null;
+      nextState = next;
+      const merged = writeSmarterClawState(entry, next);
+      // updateSessionStoreEntry merges the returned partial onto the
+      // existing entry; we're returning the full pluginMetadata bag so
+      // the merge replaces our slice without disturbing other plugins'.
+      return { pluginMetadata: (merged as { pluginMetadata?: unknown }).pluginMetadata };
+    },
+  });
+  if (!result || !nextState) {
+    return { persisted: false, reason: "session entry not found or no state change requested" };
+  }
+  return { persisted: true, next: nextState };
+}

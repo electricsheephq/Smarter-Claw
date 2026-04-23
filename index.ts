@@ -11,9 +11,15 @@
  * hints; this entry does the runtime wiring.
  */
 
+import {
+  loadSessionStore,
+  resolveSessionStoreEntry,
+  resolveStorePath,
+} from "openclaw/plugin-sdk/session-store-runtime";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { buildArchetypePromptResult } from "./src/archetype-hook.js";
-import { isPlanModeDebugEnabled, setPlanModeDebugEnabled } from "./src/debug-log.js";
+import { isPlanModeDebugEnabled, logPlanModeDebug, setPlanModeDebugEnabled } from "./src/debug-log.js";
+import { shouldBlockMutation } from "./src/mutation-gate.js";
 import { createPlanCommandHandler } from "./src/slash-commands.js";
 import { createAskUserQuestionTool } from "./src/tools/ask-user-question-tool.js";
 import { createEnterPlanModeTool } from "./src/tools/enter-plan-mode-tool.js";
@@ -111,6 +117,64 @@ export default definePluginEntry({
         "Plan-mode controls: accept/revise plans, toggle mode, restate the active plan, or answer pending questions.",
       acceptsArgs: true,
       handler: createPlanCommandHandler(),
+    });
+
+    // Phase 2.4: wire the mutation gate via the public `before_tool_call`
+    // hook. The hook is part of the v2026.4.22 PluginHookHandlerMap (see
+    // openclaw-2/src/plugins/hook-types.ts) and fires from
+    // pi-tool-definition-adapter.ts before each tool's `execute` callback,
+    // so we can short-circuit by returning `{ block: true, blockReason }`.
+    //
+    // No installer patch needed for activation — `before_tool_call` is
+    // already exposed by the host. Session state is read via the same
+    // pattern as the archetype hook (loadSessionStore → resolve entry →
+    // shouldBlockMutation reads via runtime-api.isInPlanMode).
+    api.on("before_tool_call", async (event, ctx) => {
+      const sessionKey = ctx.sessionKey;
+      const agentId = ctx.agentId;
+      if (!sessionKey || !agentId) {
+        return undefined;
+      }
+      let storePath: string | undefined;
+      try {
+        storePath = resolveStorePath(agentId);
+      } catch {
+        return undefined;
+      }
+      if (!storePath) return undefined;
+
+      let entry: ReturnType<typeof resolveSessionStoreEntry>["existing"];
+      try {
+        const store = loadSessionStore(storePath, { skipCache: true });
+        entry = resolveSessionStoreEntry({ store: store ?? {}, sessionKey }).existing;
+      } catch {
+        return undefined;
+      }
+
+      // Pull command for exec/bash so the read-only allowlist applies.
+      const params = event.params ?? {};
+      const execCommand =
+        typeof (params as { command?: unknown }).command === "string"
+          ? (params as { command: string }).command
+          : typeof (params as { cmd?: unknown }).cmd === "string"
+            ? (params as { cmd: string }).cmd
+            : undefined;
+
+      const result = shouldBlockMutation({
+        toolName: event.toolName,
+        session: entry,
+        execCommand,
+      });
+
+      if (result.blocked) {
+        logPlanModeDebug({
+          kind: "tool_call",
+          sessionKey,
+          tool: `before_tool_call:blocked:${event.toolName}`,
+        });
+        return { block: true, blockReason: result.reason ?? "Blocked by Smarter-Claw plan-mode mutation gate." };
+      }
+      return undefined;
     });
   },
 });
