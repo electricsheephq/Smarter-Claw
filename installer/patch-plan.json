@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "expectedHostVersion": "2026.4.22",
+  "smarterClawTargetVersion": "0.1.0",
+  "_comment": "patches[] is populated as the UI/core patch authoring lands. install.mjs reads this file and dispatches each entry to applyNewFilePatch or applyDiffPatch. Each entry shape: { type: 'new-file', relPath, sourceRelPath } OR { type: 'diff', relPath, patchRelPath, expectedOriginalSha256 }.",
+  "patches": []
+}
