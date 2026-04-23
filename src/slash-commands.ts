@@ -236,7 +236,16 @@ export type PlanPatch =
  * Throws on failure; the caller maps known error messages to friendly
  * chat replies (see `mapErrorToReply` below).
  */
-export type ApplyPlanPatch = (params: { sessionKey: string; patch: PlanPatch }) => Promise<void>;
+export type ApplyPlanPatch = (params: {
+  sessionKey: string;
+  patch: PlanPatch;
+  /**
+   * Optional command context — slash-command-deps uses this to resolve
+   * the active agentId via `ctx.config.agents.list`. Pure-test deps may
+   * omit this.
+   */
+  ctx?: PluginCommandContext;
+}) => Promise<void>;
 
 function pickPlanRenderFormat(
   channel: string,
@@ -402,17 +411,17 @@ export function createPlanCommandHandler(deps: PlanCommandHandlerDeps = {}) {
 
     try {
       if (sub.kind === "on") {
-        await apply({ sessionKey, patch: { planMode: "plan" } });
+        await apply({ sessionKey, ctx, patch: { planMode: "plan" } });
         return {
           text: "Plan mode **enabled** — write/edit/exec tools blocked until plan approved.",
         };
       }
       if (sub.kind === "off") {
-        await apply({ sessionKey, patch: { planMode: "normal" } });
+        await apply({ sessionKey, ctx, patch: { planMode: "normal" } });
         return { text: "Plan mode **disabled** — mutations unblocked." };
       }
       if (sub.kind === "auto") {
-        await apply({
+        await apply({ ctx,
           sessionKey,
           patch: { planApproval: { action: "auto", autoEnabled: sub.autoEnabled } },
         });
@@ -432,7 +441,7 @@ export function createPlanCommandHandler(deps: PlanCommandHandlerDeps = {}) {
               "No pending ask_user_question for this session — `/plan answer` requires a question to be active.",
           };
         }
-        await apply({
+        await apply({ ctx,
           sessionKey,
           patch: {
             planApproval: {
@@ -470,13 +479,13 @@ export function createPlanCommandHandler(deps: PlanCommandHandlerDeps = {}) {
         }
         if (sub.kind === "accept") {
           const action = sub.allowEdits ? "edit" : "approve";
-          await apply({
+          await apply({ ctx,
             sessionKey,
             patch: { planApproval: { action, approvalId } },
           });
           return { text: `Plan ${sub.allowEdits ? "approved with edits" : "approved"} — agent resumes shortly.` };
         }
-        await apply({
+        await apply({ ctx,
           sessionKey,
           patch: {
             planApproval: { action: "reject", feedback: sub.feedback, approvalId },

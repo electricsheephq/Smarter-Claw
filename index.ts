@@ -20,6 +20,7 @@ import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { buildArchetypePromptResult } from "./src/archetype-hook.js";
 import { isPlanModeDebugEnabled, logPlanModeDebug, setPlanModeDebugEnabled } from "./src/debug-log.js";
 import { shouldBlockMutation } from "./src/mutation-gate.js";
+import { buildSlashCommandDeps } from "./src/slash-command-deps.js";
 import { createPlanCommandHandler } from "./src/slash-commands.js";
 import { createAskUserQuestionTool } from "./src/tools/ask-user-question-tool.js";
 import { createEnterPlanModeTool } from "./src/tools/enter-plan-mode-tool.js";
@@ -134,7 +135,7 @@ export default definePluginEntry({
       description:
         "Plan-mode controls: accept/revise plans, toggle mode, restate the active plan, or answer pending questions.",
       acceptsArgs: true,
-      handler: createPlanCommandHandler(),
+      handler: createPlanCommandHandler(buildSlashCommandDeps()),
     });
 
     // Phase 2.4: wire the mutation gate via the public `before_tool_call`
