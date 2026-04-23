@@ -191,6 +191,36 @@ export async function persistSmarterClawState(opts: {
       // up without requiring a UI rewrite. Long-term, the UI patches
       // should migrate to `pluginMetadata['smarter-claw']` directly.
       const mirror = buildUiCompatMirror(next);
+      // Concurrency contract (#9). The host's mergeSessionEntry does a
+      // SHALLOW spread: { ...existing, ...patch }. So returning
+      // `pluginMetadata: <full bag>` REPLACES the whole pluginMetadata
+      // field on the persisted entry — it does NOT deep-merge per
+      // namespace. The reason this is still safe for OTHER plugins'
+      // slices is:
+      //
+      //   1. updateSessionStoreEntry is wrapped in withSessionStoreLock
+      //      on the host side (see openclaw store.js: every entry update
+      //      goes through `withSessionStoreLock(storePath, async () => {
+      //      const store = loadSessionStore(storePath, { skipCache: true
+      //      }); ... })`). The per-storePath lock serializes ALL writes.
+      //
+      //   2. Inside the lock the host re-reads the store with
+      //      skipCache:true, so the `entry` we receive in this callback
+      //      is the CANONICAL on-disk snapshot at the moment of the
+      //      mutation — not a stale in-memory cache.
+      //
+      //   3. writeSmarterClawState reads `entry.pluginMetadata` and
+      //      spreads it: { ...existing, [SMARTER_CLAW_PLUGIN_ID]: next }.
+      //      So the bag we return preserves every other plugin's slice
+      //      that was on disk at lock-acquisition time.
+      //
+      // Multi-process caveat: the lock is per-process (a file lock would
+      // be needed for true cross-process safety). If another OpenClaw
+      // instance — or a test harness — writes to the same store outside
+      // this lock, the in-callback `entry` may not reflect that write,
+      // and the patch we return would clobber it. v1.0 ships with a
+      // single-process gateway assumption; multi-process safety is
+      // upstream Plugin SDK work.
       return {
         pluginMetadata: (merged as { pluginMetadata?: unknown }).pluginMetadata,
         ...mirror,

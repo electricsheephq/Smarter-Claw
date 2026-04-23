@@ -17,6 +17,7 @@ import {
   resolveStorePath,
 } from "openclaw/plugin-sdk/session-store-runtime";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
+import { assertOpenclawVersionSupported } from "./api.js";
 import { buildArchetypePromptResult } from "./src/archetype-hook.js";
 import { isPlanModeDebugEnabled, logPlanModeDebug, setPlanModeDebugEnabled } from "./src/debug-log.js";
 import { buildInjectionDrainResult } from "./src/injection-drain-hook.js";
@@ -128,6 +129,29 @@ export default definePluginEntry({
     // Wire the debug-log knob from plugin config so plan_mode_status and
     // every gate decision can be traced when debugLog is on.
     setPlanModeDebugEnabled(config.debugLog === true);
+
+    // Verify the host's openclaw version matches the version this
+    // Smarter-Claw release is pinned against (#13). The check is
+    // best-effort: if we can't read the host package.json, we log + skip
+    // rather than block plugin load, since the installer's SHA-pinning
+    // is the real safety belt — the runtime check is a louder warning
+    // for the case where someone updates openclaw without re-running the
+    // installer.
+    try {
+      const hostPkgUrl = new URL("../openclaw/package.json", import.meta.url);
+      // dynamic import keeps this from blocking module load on hosts
+      // where the file is missing (e.g. plugin loaded standalone in tests)
+      void import(hostPkgUrl.toString(), { with: { type: "json" } })
+        .then((mod) => {
+          const v = (mod?.default ?? mod)?.version as string | undefined;
+          assertOpenclawVersionSupported(v, { mode: "warn" });
+        })
+        .catch(() => {
+          // ignore — best-effort version check
+        });
+    } catch {
+      // ignore — URL construction failed (no import.meta in CJS, etc)
+    }
 
     // Phase 2.1: register the four plan-mode agent tools. Each tool is
     // a fresh instance per-call so options like runId/sessionKey can be
