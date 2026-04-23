@@ -1,6 +1,6 @@
 {
   "name": "@electricsheephq/smarter-claw",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Smarter Claw — Plan Mode, Auto-Plan Mode, and every mode for OpenClaw 🦞. Plan-then-execute workflow with archetype prompting, mutation gate, ack-only retry, and cross-channel /plan slash commands.",
   "type": "module",
   "main": "dist/index.js",

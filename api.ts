@@ -61,7 +61,7 @@ export function assertOpenclawVersionSupported(
     return;
   }
   const msg =
-    `Smarter-Claw v0.1.0 is pinned to OpenClaw ${SUPPORTED_OPENCLAW_VERSION}, ` +
+    `Smarter-Claw v1.0.0 is pinned to OpenClaw ${SUPPORTED_OPENCLAW_VERSION}, ` +
     `but the host is ${hostVersion}. Patch SHAs and runtime seams are not ` +
     `verified against this version. Install may fail or produce undefined ` +
     `behavior. Pin your host to ${SUPPORTED_OPENCLAW_VERSION} or wait for a ` +
