@@ -12,6 +12,7 @@
  */
 
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
+import { buildArchetypePromptResult } from "./src/archetype-hook.js";
 import { isPlanModeDebugEnabled, setPlanModeDebugEnabled } from "./src/debug-log.js";
 import { createAskUserQuestionTool } from "./src/tools/ask-user-question-tool.js";
 import { createEnterPlanModeTool } from "./src/tools/enter-plan-mode-tool.js";
@@ -20,11 +21,10 @@ import { createPlanModeStatusTool } from "./src/tools/plan-mode-status-tool.js";
 import { SMARTER_CLAW_PLUGIN_ID } from "./src/types.js";
 
 // Phase 2.1 (2026-04-24): tools registered via api.registerTool.
+// Phase 2.2 (2026-04-24): before_prompt_build hook injects archetype prompt.
 // Future clusters land their own registrations here:
-//   - Phase 2.2: api.registerHook("before_prompt_build", archetype prompt
-//                                 + persist + bridge)
 //   - Phase 2.3: api.registerHook("tool_result", mutation gate +
-//                                 accept-edits gate)
+//                                 accept-edits gate + plan-state writer)
 //   - Phase 2.4: api.registerHook("agent_end", ack-only retry +
 //                                 injections + auto-enable wiring)
 //   - Phase 2.5: api.registerCommand("plan", slash command dispatcher)
@@ -33,6 +33,7 @@ import { SMARTER_CLAW_PLUGIN_ID } from "./src/types.js";
 type SmarterClawConfig = {
   enabled?: boolean;
   debugLog?: boolean;
+  archetype?: { enabled?: boolean; minStepCount?: number };
 };
 
 function readConfig(pluginConfig: unknown): SmarterClawConfig {
@@ -72,5 +73,22 @@ export default definePluginEntry({
         debugLogEnabled: isPlanModeDebugEnabled(),
       }),
     );
+
+    // Phase 2.2: inject the plan-archetype system prompt fragment via
+    // the before_prompt_build LIFECYCLE hook (registered via api.on,
+    // not api.registerHook — those are two different surfaces:
+    // api.registerHook is the legacy InternalHookHandler event bus,
+    // api.on is the typed PluginHookHandlerMap lifecycle hook). Fires
+    // before every turn; reads the session state via the plugin-
+    // namespaced metadata slot and only appends the prompt when
+    // planMode === "plan". No-op otherwise so we don't add cacheable
+    // bytes to non-plan-mode prompts.
+    const archetypeEnabled = config.archetype?.enabled !== false;
+    api.on("before_prompt_build", (_event, ctx) => {
+      return buildArchetypePromptResult(
+        { enabled: archetypeEnabled },
+        { agentId: ctx.agentId, sessionKey: ctx.sessionKey },
+      );
+    });
   },
 });
