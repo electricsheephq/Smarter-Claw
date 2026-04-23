@@ -29,6 +29,7 @@ import {
   handleSubagentSpawning,
 } from "./src/lifecycle-hooks.js";
 import { shouldBlockMutation } from "./src/mutation-gate.js";
+import { bustPlanModeCache, getPlanModeCache, setPlanModeCache } from "./src/plan-mode-cache.js";
 import { buildSlashCommandDeps } from "./src/slash-command-deps.js";
 import { createPlanCommandHandler } from "./src/slash-commands.js";
 import { handleToolResultPersist } from "./src/tool-result-persist-hook.js";
@@ -318,16 +319,29 @@ export default definePluginEntry({
           return gateFailureResult(sessionKey, event.toolName, "missing-store-path");
         }
 
+        // Per-session in-process cache (#10). Tool calls fire many times
+        // per turn; without caching every call ate the full cost of a
+        // skipCache:true loadSessionStore + JSON.parse. The cache window
+        // is 5s by default — long enough to skip per-turn lookups, short
+        // enough to catch external state flips between turns. Bust on
+        // session_start (handled in session_start hook) and on tool body
+        // writes that change planMode (handled in tool-result-persist).
         let entry: ReturnType<typeof resolveSessionStoreEntry>["existing"];
-        try {
-          const store = loadSessionStore(storePath, { skipCache: true });
-          entry = resolveSessionStoreEntry({ store: store ?? {}, sessionKey }).existing;
-        } catch (err) {
-          return gateFailureResult(
-            sessionKey,
-            event.toolName,
-            `session-store-read-failed:${(err as Error)?.message ?? String(err)}`,
-          );
+        const cached = getPlanModeCache(sessionKey);
+        if (cached) {
+          entry = cached.entry as typeof entry;
+        } else {
+          try {
+            const store = loadSessionStore(storePath, { skipCache: true });
+            entry = resolveSessionStoreEntry({ store: store ?? {}, sessionKey }).existing;
+          } catch (err) {
+            return gateFailureResult(
+              sessionKey,
+              event.toolName,
+              `session-store-read-failed:${(err as Error)?.message ?? String(err)}`,
+            );
+          }
+          setPlanModeCache(sessionKey, entry as Record<string, unknown> | undefined);
         }
 
         // Pull command for exec/bash so the read-only allowlist applies.
@@ -418,6 +432,21 @@ export default definePluginEntry({
         agentId: (ctx as { agentId?: string }).agentId,
         sessionKey: (ctx as { sessionKey?: string }).sessionKey,
       });
+      // Bust the plan-mode cache on tool-result-persist (#10): if the
+      // tool body wrote new state (enter_plan_mode / exit_plan_mode /
+      // update_plan), we want the NEXT before_tool_call to see fresh
+      // disk state, not the cached pre-write entry.
+      const sessionKey = (ctx as { sessionKey?: string }).sessionKey;
+      if (sessionKey) {
+        const toolName = (event as { toolName?: string }).toolName;
+        if (
+          toolName === "enter_plan_mode" ||
+          toolName === "exit_plan_mode" ||
+          toolName === "update_plan"
+        ) {
+          bustPlanModeCache(sessionKey);
+        }
+      }
     });
 
     // Belt-and-suspenders fallback: tool_result_persist doesn't fire for
@@ -438,6 +467,12 @@ export default definePluginEntry({
     // Phase A6: session_start fires the one-shot [PLAN_MODE_INTRO]
     // injection when first entering plan mode for a session.
     api.on("session_start", (_event, ctx) => {
+      // Bust the per-session plan-mode cache (#10) on session_start so
+      // the first before_tool_call after a session restart picks up the
+      // fresh on-disk state instead of stale cache from a prior run.
+      if (ctx.sessionKey) {
+        bustPlanModeCache(ctx.sessionKey);
+      }
       void handleSessionStart({ agentId: ctx.agentId, sessionKey: ctx.sessionKey });
     });
 

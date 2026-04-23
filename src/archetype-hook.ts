@@ -22,6 +22,7 @@ import {
 import { readSmarterClawState } from "../runtime-api.js";
 import { PLAN_ARCHETYPE_PROMPT } from "./archetype-prompt.js";
 import { logPlanModeDebug } from "./debug-log.js";
+import { getPlanModeCache, setPlanModeCache } from "./plan-mode-cache.js";
 
 export type ArchetypeHookConfig = {
   /** Plugin config: archetype.enabled (defaults to true). */
@@ -61,12 +62,24 @@ export function buildArchetypePromptResult(
   if (!storePath) {
     return undefined;
   }
+  // Per-session cache (#10): before_prompt_build fires every turn but
+  // session state changes are rare. Reuse the same cache the
+  // before_tool_call hook uses so once-per-turn the disk read happens
+  // and subsequent turns within the cache window skip it. Cache is
+  // busted on session_start + planMode-changing tool results, so a
+  // genuine state flip is reflected on the very next prompt build.
   let entry: ReturnType<typeof resolveSessionStoreEntry>["existing"];
-  try {
-    const store = loadSessionStore(storePath, { skipCache: true });
-    entry = resolveSessionStoreEntry({ store: store ?? {}, sessionKey }).existing;
-  } catch {
-    return undefined;
+  const cached = getPlanModeCache(sessionKey);
+  if (cached) {
+    entry = cached.entry as typeof entry;
+  } else {
+    try {
+      const store = loadSessionStore(storePath, { skipCache: true });
+      entry = resolveSessionStoreEntry({ store: store ?? {}, sessionKey }).existing;
+    } catch {
+      return undefined;
+    }
+    setPlanModeCache(sessionKey, entry as Record<string, unknown> | undefined);
   }
   const planState = entry ? readSmarterClawState(entry) : undefined;
   if (planState?.planMode !== "plan") {
