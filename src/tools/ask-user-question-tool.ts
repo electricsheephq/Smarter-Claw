@@ -22,6 +22,7 @@ import {
   describeAskUserQuestionTool,
 } from "../tool-descriptions.js";
 import { readStringParam, ToolInputError } from "../tool-helpers.js";
+import { askQuestionStateUpdate, persistFromTool } from "./tool-state-helpers.js";
 
 export { ASK_USER_QUESTION_TOOL_DISPLAY_SUMMARY };
 
@@ -58,11 +59,16 @@ const AskUserQuestionToolSchema = Type.Object(
 export interface CreateAskUserQuestionToolOptions {
   /** Stable run identifier — used to scope question approvals to the run. */
   runId?: string;
+  /** Agent id for persisting pendingQuestionApprovalId. */
+  agentId?: string;
+  /** Session key for persisting pendingQuestionApprovalId. */
+  sessionKey?: string;
 }
 
 export function createAskUserQuestionTool(
-  _options?: CreateAskUserQuestionToolOptions,
+  options?: CreateAskUserQuestionToolOptions,
 ): AnyAgentTool {
+  const persistCtx = { agentId: options?.agentId, sessionKey: options?.sessionKey };
   return {
     label: "Ask User Question",
     name: "ask_user_question",
@@ -106,12 +112,14 @@ export function createAskUserQuestionTool(
       // tool result is ever re-replayed (transcript repair, retries).
       // The toolCallId is already stable for a given call.
       const questionId = `q-${toolCallId}`;
+      // Persist pendingQuestionApprovalId so /plan answer can route the
+      // answer back. The state mutation also stashes the approvalId in
+      // pendingInteraction so the slash-command handler can validate it.
+      // Per #31: tool was previously decorative.
+      const persist = await persistFromTool(persistCtx, "ask_user_question", askQuestionStateUpdate);
+
       // Return non-empty content (lossless-claw paired-tool-result fix).
-      // The runtime intercept (lives in the host agent runner, hooked via
-      // the plugin's tool_result middleware) detects this tool result and
-      // emits a question approval event via the existing kind:"plugin"
-      // approval pipeline.
-      const text = `Question submitted to user: "${question.trim()}" (${options.length} options).`;
+      const text = `Question submitted to user: "${question.trim()}" (${options.length} options).${persist.persisted ? "" : " (Note: state persistence skipped — /plan answer may not route correctly.)"}`;
       return {
         content: [{ type: "text" as const, text }],
         details: {
@@ -120,6 +128,7 @@ export function createAskUserQuestionTool(
           question: question.trim(),
           options,
           allowFreetext,
+          persisted: persist.persisted,
         },
       };
     },

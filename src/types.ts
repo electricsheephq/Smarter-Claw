@@ -124,12 +124,14 @@ export type SmarterClawSessionState = {
     approvalId: string;
     deliveredAt: string;
   };
-  /** Pending agent-side synthetic injection queued for next turn. */
-  pendingAgentInjection?: {
-    kind: "plan-decision" | "planning-retry";
-    body: string;
-    queuedAt: string;
-  };
+  /**
+   * Pending agent-side synthetic injection queue. Drained at the start
+   * of each turn by the `before_prompt_build` hook (see index.ts +
+   * src/injections.ts). Writers MUST upsert by stable id (e.g.
+   * `plan-decision-${approvalId}`) so retries don't append duplicates.
+   * See `appendToInjectionQueue` in src/injections.ts.
+   */
+  pendingAgentInjections?: import("./injections.js").PendingAgentInjectionEntry[];
   /** Pending question approval id when ask_user_question is in flight. */
   pendingQuestionApprovalId?: string;
   /** Post-approval permission overrides (acceptEdits, etc). */

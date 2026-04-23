@@ -18,6 +18,7 @@
 
 import type { PluginCommandContext } from "openclaw/plugin-sdk/plugin-entry";
 import { persistSmarterClawState } from "../runtime-api.js";
+import { appendToInjectionQueue } from "./injections.js";
 import type { SmarterClawSessionState } from "./types.js";
 import { logPlanModeDebug } from "./debug-log.js";
 import type { PlanCommandHandlerDeps, PlanPatch } from "./slash-commands.js";
@@ -167,17 +168,20 @@ export function applyPatchToState(
       // injection so the agent's NEXT turn sees the approval as
       // an inline message (delivered by the before_prompt_build
       // injection-queue drain). Per #32 review comment.
+      const queueHost = { pendingAgentInjections: base.pendingAgentInjections };
+      appendToInjectionQueue(queueHost, {
+        id: `plan-decision-${pa.approvalId}`,
+        kind: "plan_decision",
+        text: `[PLAN_DECISION]: ${pa.action === "approve" ? "approved" : "edited"}`,
+        createdAt: Date.now(),
+      });
       return {
         ...base,
         planMode: "normal",
         planApproval: "approved",
         pendingInteraction: undefined,
         recentlyApprovedAt: new Date().toISOString(),
-        pendingAgentInjection: {
-          kind: "plan-decision",
-          body: `[PLAN_DECISION]: ${pa.action === "approve" ? "approved" : "edited"}`,
-          queuedAt: new Date().toISOString(),
-        },
+        pendingAgentInjections: queueHost.pendingAgentInjections,
       };
     }
     if (pa.action === "reject") {
@@ -198,28 +202,34 @@ export function applyPatchToState(
       const lines = [`[PLAN_DECISION]: rejected`];
       if (sanitized) lines.push(`feedback: ${JSON.stringify(sanitized)}`);
       lines.push("Revise your plan based on the feedback and call update_plan again.");
+      const rejectHost = { pendingAgentInjections: base.pendingAgentInjections };
+      appendToInjectionQueue(rejectHost, {
+        id: `plan-decision-${pa.approvalId}`,
+        kind: "plan_decision",
+        text: lines.join("\n"),
+        createdAt: Date.now(),
+      });
       return {
         ...base,
         planApproval: "rejected",
         pendingInteraction: undefined,
-        pendingAgentInjection: {
-          kind: "plan-decision",
-          body: lines.join("\n"),
-          queuedAt: new Date().toISOString(),
-        },
+        pendingAgentInjections: rejectHost.pendingAgentInjections,
       };
     }
     if (pa.action === "answer") {
       // Answer flows to the agent via the injection queue similarly.
+      const answerHost = { pendingAgentInjections: base.pendingAgentInjections };
+      appendToInjectionQueue(answerHost, {
+        id: `question-answer-${pa.approvalId}`,
+        kind: "question_answer",
+        text: `[QUESTION_ANSWER]: ${pa.answer}`,
+        createdAt: Date.now(),
+      });
       return {
         ...base,
         pendingQuestionApprovalId: undefined,
         pendingInteraction: undefined,
-        pendingAgentInjection: {
-          kind: "plan-decision",
-          body: `[QUESTION_ANSWER]: ${pa.answer}`,
-          queuedAt: new Date().toISOString(),
-        },
+        pendingAgentInjections: answerHost.pendingAgentInjections,
       };
     }
     if (pa.action === "auto") {

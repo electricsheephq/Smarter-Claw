@@ -6,7 +6,9 @@ import {
   EXIT_PLAN_MODE_TOOL_DISPLAY_SUMMARY,
 } from "../tool-descriptions.js";
 import { readStringParam, ToolInputError } from "../tool-helpers.js";
+import type { PlanProposal, PlanStep } from "../types.js";
 import { PLAN_STEP_STATUSES, stringEnum, type PlanStepStatus } from "../typebox-helpers.js";
+import { exitPlanModeStateUpdate, persistFromTool } from "./tool-state-helpers.js";
 
 /**
  * Grace period after the last subagent settles before exit_plan_mode
@@ -189,11 +191,14 @@ export interface CreateExitPlanModeToolOptions {
   runId?: string;
   /** Session key used to scope debug events. */
   sessionKey?: string;
+  /** Agent id for persisting the proposal under the correct store. */
+  agentId?: string;
 }
 
 export function createExitPlanModeTool(options?: CreateExitPlanModeToolOptions): AnyAgentTool {
   const runId = options?.runId;
   const sessionKey = options?.sessionKey;
+  const persistCtx = { agentId: options?.agentId, sessionKey };
   return {
     label: "Exit Plan Mode",
     name: "exit_plan_mode",
@@ -243,13 +248,42 @@ export function createExitPlanModeTool(options?: CreateExitPlanModeToolOptions):
 
       const stepCount = plan.length;
       const headlineLabel = title ?? summary;
+
+      // Persist the proposal so /plan accept|revise can act on it +
+      // the UI/sidebar can render it. Translates the loose tool-shape
+      // PlanStep into the typed PlanProposal (PlanProposal.steps uses
+      // {index, description, ...}; tool's plan[] uses {step, status, ...}).
+      // Per #31: tool was previously decorative.
+      const proposal: PlanProposal = {
+        title,
+        ...(summary ? { analysis: summary } : {}),
+        ...(archetype.analysis ? { analysis: archetype.analysis } : {}),
+        steps: plan.map(
+          (entry, idx): PlanStep => ({
+            index: idx + 1,
+            description: entry.activeForm?.trim() || entry.step,
+            done: entry.status === "completed",
+          }),
+        ),
+        ...(archetype.assumptions ? { assumptions: archetype.assumptions } : {}),
+        ...(archetype.risks ? { risks: archetype.risks } : {}),
+        ...(archetype.verification ? { verification: archetype.verification } : {}),
+        ...(archetype.references ? { references: archetype.references } : {}),
+      };
+      const persist = await persistFromTool(
+        persistCtx,
+        "exit_plan_mode",
+        exitPlanModeStateUpdate(proposal),
+      );
+
       const text = headlineLabel
-        ? `Plan submitted for approval — ${headlineLabel} (${stepCount} ${stepCount === 1 ? "step" : "steps"}).`
-        : `Plan submitted for approval (${stepCount} ${stepCount === 1 ? "step" : "steps"}).`;
+        ? `Plan submitted for approval — ${headlineLabel} (${stepCount} ${stepCount === 1 ? "step" : "steps"}).${persist.persisted ? "" : " (Note: state persistence skipped — UI may not render the approval card.)"}`
+        : `Plan submitted for approval (${stepCount} ${stepCount === 1 ? "step" : "steps"}).${persist.persisted ? "" : " (Note: state persistence skipped.)"}`;
       return {
         content: [{ type: "text" as const, text }],
         details: {
           status: "approval_requested" as const,
+          persisted: persist.persisted,
           ...(title ? { title } : {}),
           ...(summary ? { summary } : {}),
           plan,

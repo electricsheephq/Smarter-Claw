@@ -19,6 +19,7 @@ import {
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { buildArchetypePromptResult } from "./src/archetype-hook.js";
 import { isPlanModeDebugEnabled, logPlanModeDebug, setPlanModeDebugEnabled } from "./src/debug-log.js";
+import { buildInjectionDrainResult } from "./src/injection-drain-hook.js";
 import { shouldBlockMutation } from "./src/mutation-gate.js";
 import { buildSlashCommandDeps } from "./src/slash-command-deps.js";
 import { createPlanCommandHandler } from "./src/slash-commands.js";
@@ -91,11 +92,24 @@ export default definePluginEntry({
     // factories take no per-call options through registerTool, so the
     // tools fall back to their no-arg defaults; per-session wiring lives
     // in the hook clusters that come next.
-    api.registerTool(createEnterPlanModeTool());
-    api.registerTool(createExitPlanModeTool());
-    api.registerTool(createAskUserQuestionTool());
-    api.registerTool(
+    // Per-call factory pattern: every tool dispatch gets a fresh
+    // instance bound to the active OpenClawPluginToolContext (agentId,
+    // sessionKey, sessionId). Without this the tools see no session
+    // context and persist-from-tool short-circuits with
+    // "missing storePath/sessionKey" — see #33.
+    api.registerTool((toolCtx) =>
+      createEnterPlanModeTool({ agentId: toolCtx.agentId, sessionKey: toolCtx.sessionKey }),
+    );
+    api.registerTool((toolCtx) =>
+      createExitPlanModeTool({ agentId: toolCtx.agentId, sessionKey: toolCtx.sessionKey }),
+    );
+    api.registerTool((toolCtx) =>
+      createAskUserQuestionTool({ agentId: toolCtx.agentId, sessionKey: toolCtx.sessionKey }),
+    );
+    api.registerTool((toolCtx) =>
       createPlanModeStatusTool({
+        agentId: toolCtx.agentId,
+        sessionKey: toolCtx.sessionKey,
         debugLogEnabled: isPlanModeDebugEnabled(),
       }),
     );
@@ -110,11 +124,28 @@ export default definePluginEntry({
     // planMode === "plan". No-op otherwise so we don't add cacheable
     // bytes to non-plan-mode prompts.
     const archetypeEnabled = config.archetype?.enabled !== false;
-    api.on("before_prompt_build", (_event, ctx) => {
-      return buildArchetypePromptResult(
-        { enabled: archetypeEnabled },
-        { agentId: ctx.agentId, sessionKey: ctx.sessionKey },
-      );
+    api.on("before_prompt_build", async (_event, ctx) => {
+      // Two side-by-side concerns share before_prompt_build:
+      //   1. Archetype prompt (constant per-turn when in plan mode)
+      //   2. Injection-queue drain (per-turn variable; fires from /plan
+      //      accept|revise|answer to deliver [PLAN_DECISION]:... and
+      //      [QUESTION_ANSWER]:... synthetic messages on the next turn)
+      // Both append to system context; we concatenate when both fire so
+      // a single appendSystemContext payload reaches the model.
+      const [archetype, drain] = await Promise.all([
+        Promise.resolve(
+          buildArchetypePromptResult(
+            { enabled: archetypeEnabled },
+            { agentId: ctx.agentId, sessionKey: ctx.sessionKey },
+          ),
+        ),
+        buildInjectionDrainResult({ agentId: ctx.agentId, sessionKey: ctx.sessionKey }),
+      ]);
+      const parts: string[] = [];
+      if (drain?.appendSystemContext) parts.push(drain.appendSystemContext);
+      if (archetype?.appendSystemContext) parts.push(archetype.appendSystemContext);
+      if (parts.length === 0) return undefined;
+      return { appendSystemContext: parts.join("\n\n") };
     });
 
     // Phase 2.5: register the universal `/plan` slash command. The

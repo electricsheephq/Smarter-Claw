@@ -183,14 +183,55 @@ export async function persistSmarterClawState(opts: {
       if (!next) return null;
       nextState = next;
       const merged = writeSmarterClawState(entry, next);
-      // updateSessionStoreEntry merges the returned partial onto the
-      // existing entry; we're returning the full pluginMetadata bag so
-      // the merge replaces our slice without disturbing other plugins'.
-      return { pluginMetadata: (merged as { pluginMetadata?: unknown }).pluginMetadata };
+      // UI compatibility shim (#30): the PR #70071 UI patches read
+      // top-level SessionEntry.planMode / planApproval /
+      // pendingQuestionApprovalId for backward-compat with the
+      // in-core implementation. Mirror our plugin-namespaced state
+      // to those fields so the chip / sidebar / approval card light
+      // up without requiring a UI rewrite. Long-term, the UI patches
+      // should migrate to `pluginMetadata['smarter-claw']` directly.
+      const mirror = buildUiCompatMirror(next);
+      return {
+        pluginMetadata: (merged as { pluginMetadata?: unknown }).pluginMetadata,
+        ...mirror,
+      };
     },
   });
   if (!result || !nextState) {
     return { persisted: false, reason: "session entry not found or no state change requested" };
   }
   return { persisted: true, next: nextState };
+}
+
+/**
+ * Build the top-level SessionEntry mirror fields used by the PR #70071
+ * UI patches. These are shadow writes — the plugin-owned source of truth
+ * remains `pluginMetadata['smarter-claw']` — but the UI hydration code
+ * still expects them at the top level. Document the shim here so the
+ * coupling is visible from one place and easy to remove when the UI
+ * migrates to read the namespaced field directly (post-v1.0).
+ *
+ * Mirror surface:
+ *   - planMode: { mode, approval, approvalId } — chip + sidebar shape
+ *   - pendingQuestionApprovalId: ask_user_question routing key
+ *   - planApproval (top-level enum) — the slash-command-executor UI patch
+ *     reads this directly instead of nested
+ */
+function buildUiCompatMirror(state: SmarterClawSessionState): Record<string, unknown> {
+  const approvalId =
+    state.pendingInteraction?.kind === "approval"
+      ? state.pendingInteraction.approvalId
+      : state.pendingQuestionApprovalId;
+  return {
+    planMode: {
+      mode: state.planMode,
+      approval: state.planApproval,
+      ...(approvalId ? { approvalId } : {}),
+      ...(state.lastPlanSteps?.title ? { title: state.lastPlanSteps.title } : {}),
+      ...(state.recentlyApprovedAt ? { recentlyApprovedAt: state.recentlyApprovedAt } : {}),
+    },
+    ...(state.pendingQuestionApprovalId
+      ? { pendingQuestionApprovalId: state.pendingQuestionApprovalId }
+      : {}),
+  };
 }

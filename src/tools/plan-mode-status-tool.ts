@@ -142,8 +142,8 @@ export function createPlanModeStatusTool(options?: CreatePlanModeStatusToolOptio
         openSubagentCount: openSubagentRunIds.length,
         openSubagentRunIds: openSubagentRunIds.slice(0, 10),
         recentlyApprovedAt: planState?.recentlyApprovedAt,
-        pendingAgentInjectionPreview: planState?.pendingAgentInjection
-          ? `${planState.pendingAgentInjection.kind}: ${planState.pendingAgentInjection.body.slice(0, 200)}`
+        pendingAgentInjectionPreview: planState?.pendingAgentInjections?.[0]
+          ? `${planState.pendingAgentInjections[0].kind}: ${planState.pendingAgentInjections[0].text.slice(0, 200)} (${planState.pendingAgentInjections.length - 1} more)`
           : undefined,
         planModeIntroDeliveredAt: planState?.planModeIntroDeliveredAt,
         autoApprove: planState?.autoApprove,
