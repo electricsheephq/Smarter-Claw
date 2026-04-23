@@ -50,24 +50,59 @@ import { SMARTER_CLAW_PLUGIN_ID } from "./src/types.js";
 type SmarterClawConfig = {
   enabled?: boolean;
   debugLog?: boolean;
+  /**
+   * Restrict the plugin's hooks/tools/commands to specific agent ids.
+   * Empty array (default) applies to all agents.
+   */
+  agents?: string[];
   archetype?: { enabled?: boolean; minStepCount?: number };
   mutationGate?: {
-    enabled?: boolean;
-    blockedTools?: string[];
     /**
-     * What to do when the mutation gate cannot determine session state
-     * (session store IO failure, parse error, missing storePath, etc.).
-     *
-     *   "closed" (default): block the tool call and surface a clear
-     *     reason. Right answer for a security gate — when in doubt,
-     *     refuse. Recommended for any plan-mode workflow where the
-     *     gate is the user's only fence against unintended mutations.
-     *
-     *   "open": let the tool call through. Use only for non-security-
-     *     critical setups where transient session-store hiccups would
-     *     produce annoying false-blocks and the user accepts the risk.
+     * Master switch for the before_tool_call hook. Default true. Set
+     * false to skip mutation-gate registration entirely (rare — only
+     * for users running plan-mode-as-soft-steer-only setups where the
+     * archetype prompt is enough).
      */
+    enabled?: boolean;
+    /**
+     * Additional tool names to treat as mutating (extends the built-in
+     * blocklist; doesn't replace it). Use for plugin tools or MCP tools
+     * the built-in gate doesn't recognize.
+     */
+    blockedTools?: string[];
     gateFailureMode?: "open" | "closed";
+  };
+  retry?: {
+    /**
+     * Master switch for the agent_end ack-only retry hook. Default true.
+     */
+    enabled?: boolean;
+    /**
+     * Maximum [PLANNING_RETRY] injections per cycle before giving up. (v1.0
+     * note: not yet enforced — the per-id dedup in the queue gives an
+     * effective limit of 1 today; multi-injection limit is v1.1 work.)
+     */
+    limit?: number;
+  };
+  autoApprove?: {
+    /**
+     * Initial autoApprove value when a fresh session enters plan mode.
+     * Per-session toggle via /plan auto on|off.
+     */
+    default?: boolean;
+  };
+  snapshot?: {
+    /**
+     * Persist lastPlanSteps to session metadata so /plan restate works
+     * across reconnects. Default true. (v1.0 note: always-on today —
+     * the toggle is a v1.1 ergonomic; setting false has no effect yet.)
+     */
+    persist?: boolean;
+    /**
+     * Renderer cap. (v1.0 note: handled at render-call sites with
+     * hardcoded 100 today; honoring this knob is v1.1 work.)
+     */
+    maxStepsRendered?: number;
   };
 };
 
@@ -220,6 +255,17 @@ export default definePluginEntry({
           "Restart the gateway, run smarter-claw verify, or set " +
           "mutationGate.gateFailureMode=\"open\" in plugin config to opt out.",
       };
+    }
+
+    // mutationGate.enabled — operator can disable the hard gate (e.g.
+    // soft-steer-only setups where the archetype prompt is enough).
+    if (config.mutationGate?.enabled === false) {
+      logPlanModeDebug({
+        kind: "tool_call",
+        sessionKey: "<startup>",
+        tool: "register:mutation-gate-disabled-via-config",
+      });
+      return;
     }
 
     api.on("before_tool_call", async (event, ctx) => {
@@ -390,13 +436,26 @@ export default definePluginEntry({
 
     // Phase #37: ack-only retry. Detects when an agent ends a turn in
     // plan mode without calling exit_plan_mode and queues a
-    // [PLANNING_RETRY] injection for the next turn.
-    api.on("agent_end", (event, ctx) => {
-      void handleAgentEnd(event as Parameters<typeof handleAgentEnd>[0], {
-        agentId: ctx.agentId,
-        sessionKey: ctx.sessionKey,
+    // [PLANNING_RETRY] injection for the next turn. Skip when the
+    // operator explicitly disables retry via plugin config.
+    if (config.retry?.enabled !== false) {
+      api.on("agent_end", (event, ctx) => {
+        // agents filter: when configured, skip handlers for non-listed
+        // agent ids. Empty/missing array means apply to all.
+        if (
+          Array.isArray(config.agents) &&
+          config.agents.length > 0 &&
+          ctx.agentId &&
+          !config.agents.includes(ctx.agentId)
+        ) {
+          return;
+        }
+        void handleAgentEnd(event as Parameters<typeof handleAgentEnd>[0], {
+          agentId: ctx.agentId,
+          sessionKey: ctx.sessionKey,
+        });
       });
-    });
+    }
 
     api.on("before_message_write", (event, ctx) => {
       const msg = event.message as { toolName?: string; type?: string };
