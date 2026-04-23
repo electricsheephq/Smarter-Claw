@@ -36,6 +36,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { applyDiffPatch, applyNewFilePatch, reverseDiffPatch, reverseNewFilePatch } from "../lib/apply-patch.mjs";
+import { acquireInstallLock } from "../lib/install-lock.mjs";
 import { locateHost } from "../lib/locate-host.mjs";
 import {
   deleteManifestBackup,
@@ -97,6 +98,21 @@ async function main() {
   console.log(`Host:    ${hostPath}`);
   console.log(`Version: ${hostVersion}`);
 
+  // Acquire process-exclusive install lock BEFORE doing any patching
+  // work. Concurrent install/uninstall invocations would otherwise race
+  // each other — one reads "no manifest" while the other is mid-write,
+  // and we end up with a frankenstate (issue #7). The lock is released
+  // in the finally block at the bottom of main(), and on abnormal exit
+  // via the cleanup handlers wired in install-lock.mjs.
+  const releaseLock = acquireInstallLock(hostPath);
+  try {
+    await runInstall({ args, hostPath, hostVersion });
+  } finally {
+    releaseLock();
+  }
+}
+
+async function runInstall({ args, hostPath, hostVersion }) {
   const plan = loadPatchPlan();
   const smarterClawVersion = loadSmarterClawVersion();
 

@@ -26,7 +26,7 @@
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { sha256OfFile } from "./host-fingerprint.mjs";
+import { readAndHashFile, sha256OfFile } from "./host-fingerprint.mjs";
 
 /**
  * Containment guard for every path the installer touches.
@@ -165,14 +165,25 @@ export function applyDiffPatch({ hostPath, installerRoot, relPath, patchRelPath,
     );
   }
 
-  const actualOriginalSha = sha256OfFile(target);
-  if (actualOriginalSha !== expectedOriginalSha256) {
+  // Read + hash the file in a single fd-bound operation so the buffer we
+  // patch is provably the buffer we just verified. Eliminates the
+  // read-twice TOCTOU window described in issue #11: if we hashed the
+  // file via sha256OfFile and then re-read it via readFileSync, an
+  // attacker could swap the contents between calls and slip through
+  // attacker-chosen bytes that the SHA already approved.
+  const read = readAndHashFile(target);
+  if (!read) {
     throw new Error(
-      `Host file drift detected: ${relPath}\n  expected sha256: ${expectedOriginalSha256}\n  actual sha256:   ${actualOriginalSha}\n\nThe Smarter-Claw installer is pinned to a specific OpenClaw version. Either you're on a different host version than expected, or this file has been manually modified. Refusing to patch.`,
+      `Cannot apply diff to ${relPath}: target file disappeared between existence check and read. (Concurrent installer? Try again.)`,
+    );
+  }
+  if (read.sha256 !== expectedOriginalSha256) {
+    throw new Error(
+      `Host file drift detected: ${relPath}\n  expected sha256: ${expectedOriginalSha256}\n  actual sha256:   ${read.sha256}\n\nThe Smarter-Claw installer is pinned to a specific OpenClaw version. Either you're on a different host version than expected, or this file has been manually modified. Refusing to patch.`,
     );
   }
 
-  const originalContent = readFileSync(target, "utf8");
+  const originalContent = read.buffer.toString("utf8");
   const patchContent = readFileSync(patchSource, "utf8");
   const patchedContent = applyUnifiedDiff(originalContent, patchContent, relPath);
 
@@ -181,7 +192,7 @@ export function applyDiffPatch({ hostPath, installerRoot, relPath, patchRelPath,
   return {
     type: "diff",
     relPath,
-    originalSha256: actualOriginalSha,
+    originalSha256: read.sha256,
     newSha256: sha256OfFile(target),
     patchRelPath,
     expectedOriginalSha256,
@@ -316,10 +327,17 @@ export function reverseNewFilePatch({ hostPath, record }) {
   if (!existsSync(target)) {
     return { skipped: "already-removed" };
   }
-  const actualSha = sha256OfFile(target);
-  if (actualSha !== record.newSha256) {
+  // Read + hash in one fd-bound operation. Same TOCTOU rationale (#11):
+  // the file we unlink must provably be the file whose SHA we just
+  // verified — otherwise an attacker could swap it between the hash and
+  // the unlink and trick us into deleting an unrelated file.
+  const read = readAndHashFile(target);
+  if (!read) {
+    return { skipped: "already-removed" };
+  }
+  if (read.sha256 !== record.newSha256) {
     throw new Error(
-      `Cannot reverse new-file patch for ${record.relPath}: file SHA differs from manifest (expected ${record.newSha256}, found ${actualSha}). Manual cleanup required.`,
+      `Cannot reverse new-file patch for ${record.relPath}: file SHA differs from manifest (expected ${record.newSha256}, found ${read.sha256}). Manual cleanup required.`,
     );
   }
   unlinkSync(target);
@@ -343,14 +361,22 @@ export function reverseDiffPatch({ hostPath, installerRoot, record }) {
   if (!existsSync(target)) {
     throw new Error(`Cannot reverse diff for ${record.relPath}: target file missing.`);
   }
-  const actualSha = sha256OfFile(target);
-  if (actualSha !== record.newSha256) {
+  // Read + hash in one fd-bound operation. Same TOCTOU rationale as
+  // applyDiffPatch (issue #11): the buffer we restore must provably be
+  // the buffer whose SHA matches the manifest's newSha256.
+  const read = readAndHashFile(target);
+  if (!read) {
     throw new Error(
-      `Cannot reverse diff for ${record.relPath}: file SHA differs from manifest (expected ${record.newSha256}, found ${actualSha}). Manual cleanup required.`,
+      `Cannot reverse diff for ${record.relPath}: target file disappeared between existence check and read.`,
+    );
+  }
+  if (read.sha256 !== record.newSha256) {
+    throw new Error(
+      `Cannot reverse diff for ${record.relPath}: file SHA differs from manifest (expected ${record.newSha256}, found ${read.sha256}). Manual cleanup required.`,
     );
   }
 
-  const currentContent = readFileSync(target, "utf8");
+  const currentContent = read.buffer.toString("utf8");
   const patchContent = readFileSync(patchSource, "utf8");
   const reversedPatch = invertUnifiedDiff(patchContent);
   const restored = applyUnifiedDiff(currentContent, reversedPatch, record.relPath);

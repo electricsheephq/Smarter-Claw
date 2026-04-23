@@ -18,6 +18,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { reverseDiffPatch, reverseNewFilePatch } from "../lib/apply-patch.mjs";
+import { acquireInstallLock } from "../lib/install-lock.mjs";
 import { locateHost } from "../lib/locate-host.mjs";
 import { deleteManifest, manifestPathFor, readManifest } from "../lib/manifest.mjs";
 
@@ -53,6 +54,18 @@ async function main() {
   const { hostPath } = locateHost(args);
   console.log(`Host:     ${hostPath}`);
 
+  // Acquire the same process-exclusive lock as install.mjs so uninstall
+  // can't race a concurrent install (or another uninstall) — see #7.
+  // Released in finally so an unclean exit doesn't strand the lock.
+  const releaseLock = acquireInstallLock(hostPath);
+  try {
+    await runUninstall({ args, hostPath });
+  } finally {
+    releaseLock();
+  }
+}
+
+async function runUninstall({ args, hostPath }) {
   const manifest = readManifest(hostPath);
   if (!manifest) {
     console.log(`No Smarter-Claw install found at ${manifestPathFor(hostPath)}.`);

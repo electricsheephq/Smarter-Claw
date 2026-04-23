@@ -19,7 +19,7 @@
  */
 
 import { execSync } from "node:child_process";
-import { existsSync, lstatSync, readlinkSync, readFileSync } from "node:fs";
+import { closeSync, constants as fsConstants, existsSync, fstatSync, lstatSync, openSync, readlinkSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 const HARDCODED_CANDIDATES = [
@@ -31,18 +31,106 @@ const HARDCODED_CANDIDATES = [
 /**
  * Resolves a candidate path that may be a symlink to its target.
  * Returns null if the candidate doesn't exist.
+ *
+ * TOCTOU-safe (issue #8): historical impl was lstatSync → readlinkSync →
+ * existsSync(target), which leaves a window between each call where a
+ * malicious symlink could swap the link target out from under us. The
+ * fixed version:
+ *   1. lstat the candidate (does NOT follow links).
+ *   2. If it's a symlink, readlink + resolve target relative to the
+ *      candidate's directory.
+ *   3. Open the resolved target with O_NOFOLLOW (refuses any further
+ *      symlink hop) and fstat the FD — so we're inspecting the exact
+ *      inode the kernel handed us, not whatever the path resolves to
+ *      now.
+ *   4. Close the fd, then re-lstat the resolved path: if the dev/ino
+ *      from fstat doesn't match the dev/ino from the second lstat, a
+ *      swap happened between the open and the lstat — bail.
+ *
+ * This catches the swap-in-between attacks the original impl was
+ * vulnerable to. The fd is opened read-only and immediately closed;
+ * we don't read its contents here — the directory listing on the
+ * resolved path is done by callers via verifyHost (which has its own
+ * existsSync gate).
  */
 function resolveCandidate(candidate) {
-  if (!existsSync(candidate)) {
+  // Use lstat, not exists, so a broken symlink is detected as such
+  // rather than treated as "doesn't exist".
+  let lstat;
+  try {
+    lstat = lstatSync(candidate);
+  } catch (err) {
+    if (err && err.code === "ENOENT") return null;
+    throw err;
+  }
+
+  // Resolve to the final target path. For non-symlinks the target is the
+  // candidate itself.
+  let resolvedPath;
+  if (lstat.isSymbolicLink()) {
+    let target;
+    try {
+      target = readlinkSync(candidate);
+    } catch (err) {
+      if (err && err.code === "ENOENT") return null;
+      throw err;
+    }
+    resolvedPath = path.isAbsolute(target) ? target : path.resolve(path.dirname(candidate), target);
+  } else {
+    resolvedPath = candidate;
+  }
+
+  // Open the resolved target. O_NOFOLLOW refuses to follow if the
+  // resolved path is itself a symlink — which would be a multi-hop
+  // attack chain. Combined with O_DIRECTORY where supported, this
+  // guarantees we end up holding an fd to a real directory inode.
+  let fd;
+  try {
+    // O_DIRECTORY isn't always defined; prefer it when available so we
+    // get an EISDIR-style early bail on non-dir candidates.
+    const flags = fsConstants.O_RDONLY
+      | (fsConstants.O_NOFOLLOW || 0)
+      | (fsConstants.O_DIRECTORY || 0);
+    fd = openSync(resolvedPath, flags);
+  } catch (err) {
+    if (err && (err.code === "ENOENT" || err.code === "ELOOP" || err.code === "ENOTDIR")) {
+      return null;
+    }
+    throw err;
+  }
+
+  let fdStat;
+  try {
+    fdStat = fstatSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+
+  if (!fdStat.isDirectory()) {
     return null;
   }
-  const stats = lstatSync(candidate);
-  if (stats.isSymbolicLink()) {
-    const target = readlinkSync(candidate);
-    const resolved = path.isAbsolute(target) ? target : path.resolve(path.dirname(candidate), target);
-    return existsSync(resolved) ? resolved : null;
+
+  // Verify the path still resolves to the same inode after the open.
+  // If a TOCTOU swap happened between open and now, dev/ino will differ
+  // and we treat the candidate as unsafe.
+  let postLstat;
+  try {
+    postLstat = lstatSync(resolvedPath);
+  } catch {
+    return null;
   }
-  return candidate;
+  // If the resolved path is itself a symlink (which O_NOFOLLOW already
+  // ruled out at open time, but lstat sees it as a link), the inode of
+  // the link entry differs from the inode of the directory we opened —
+  // refuse.
+  if (postLstat.isSymbolicLink()) {
+    return null;
+  }
+  if (postLstat.dev !== fdStat.dev || postLstat.ino !== fdStat.ino) {
+    return null;
+  }
+
+  return resolvedPath;
 }
 
 /**
