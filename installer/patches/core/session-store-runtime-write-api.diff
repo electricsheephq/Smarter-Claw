@@ -1,10 +1,20 @@
-@@ -1,6 +1,11 @@
+@@ -1,6 +1,21 @@
 -// Narrow session-store read helpers for channel hot paths.
 +// Narrow session-store read + write helpers for channel hot paths and
 +// plugin-owned session-state mutation. Smarter-Claw installer adds the
 +// `update*` exports so external plugins can flip plugin-namespaced
 +// SessionEntry metadata (planMode, planApproval, etc) without reaching
 +// into private session-store internals.
++//
++// SECURITY TRADE-OFF (issue #12): exposing updateSessionStoreEntry to
++// the plugin SDK widens the write surface to ALL installed plugins, not
++// just Smarter-Claw. Any plugin loaded after Smarter-Claw is installed
++// can call this export and write into another plugin's pluginMetadata
++// slot. v1.0 ships with single-author plugin curation (no third-party
++// plugin marketplace), so this is acceptable for now. The principled
++// fix is an upstream Plugin SDK RFC for a narrowed
++// `updatePluginMetadata({ pluginId, ... })` API that capability-checks
++// the caller's pluginId — tracked at #12.
  
  export { loadSessionStore } from "../config/sessions/store-load.js";
  export { resolveSessionStoreEntry } from "../config/sessions/store-entry.js";
