@@ -1,0 +1,40 @@
+# Dependency directories
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Test artifacts
+coverage/
+.vitest/
+.nyc_output/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Log files
+*.log
+logs/
+.npm/
+.pnpm-debug.log*
+.yarn/
+
+# OpenClaw local install artifacts
+.openclaw-install-stage-*/
+.openclaw-install-backups/
+
+# pnpm
+pnpm-debug.log*

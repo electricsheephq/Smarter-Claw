@@ -1,0 +1,173 @@
+{
+  "id": "smarter-claw",
+  "name": "Smarter Claw",
+  "description": "Plan Mode, Auto-Plan Mode, and every mode on Claude Code/Codex. Plan-then-execute workflow with archetype prompting, mutation gate, ack-only retry, and cross-channel /plan slash commands. Universal across Pi and Codex harnesses.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Globally enable or disable Smarter Claw."
+      },
+      "agents": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Restrict plan-mode behavior to these agent ids only. Empty array means apply to all agents."
+      },
+      "archetype": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Inject the plan-archetype system prompt fragment to steer toward decision-complete plans."
+          },
+          "minStepCount": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 3,
+            "description": "Soft floor on the number of steps a proposed plan should contain."
+          }
+        }
+      },
+      "mutationGate": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Block mutating tool calls (write/edit/exec) while the session is in plan mode."
+          },
+          "blockedTools": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Override the default mutating-tool list. Empty array uses the built-in default."
+          }
+        }
+      },
+      "retry": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Detect ack-only assistant turns (planning text without a tool call) and inject a [PLANNING_RETRY] synthetic message."
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10,
+            "default": 2,
+            "description": "Maximum number of [PLANNING_RETRY] injections per turn before giving up."
+          }
+        }
+      },
+      "autoApprove": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "default": {
+            "type": "boolean",
+            "default": false,
+            "description": "Default value for the per-session autoApprove flag (auto-approve plans without user confirmation). Toggleable per-session via /plan auto on|off."
+          }
+        }
+      },
+      "snapshot": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "persist": {
+            "type": "boolean",
+            "default": true,
+            "description": "Persist the lastPlanSteps snapshot to session metadata so /plan restate works across reconnects."
+          },
+          "maxStepsRendered": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "default": 100,
+            "description": "Cap on how many plan steps the renderer will emit per surface."
+          }
+        }
+      },
+      "debugLog": {
+        "type": "boolean",
+        "default": false,
+        "description": "Emit verbose plan-mode debug events (state transitions, gate decisions, approval events)."
+      }
+    }
+  },
+  "uiHints": {
+    "enabled": {
+      "label": "Enable Smarter Claw",
+      "help": "Master switch for Plan Mode, Auto-Plan Mode, and the /plan command surface."
+    },
+    "agents": {
+      "label": "Target Agents",
+      "help": "Restrict to specific agent ids (e.g. main, eva). Leave empty to apply to all agents."
+    },
+    "archetype": {
+      "label": "Plan Archetype Prompt",
+      "help": "Inject prompt guidance steering the model toward decision-complete plans (analysis, assumptions, risks, verification, references)."
+    },
+    "archetype.enabled": {
+      "label": "Inject Archetype Prompt"
+    },
+    "archetype.minStepCount": {
+      "label": "Minimum Steps Per Plan",
+      "advanced": true
+    },
+    "mutationGate": {
+      "label": "Mutation Gate",
+      "help": "Block write/edit/exec tool calls while in plan mode. Plans propose without executing."
+    },
+    "mutationGate.enabled": {
+      "label": "Block Mutations in Plan Mode"
+    },
+    "mutationGate.blockedTools": {
+      "label": "Blocked Tools Override",
+      "advanced": true
+    },
+    "retry": {
+      "label": "Ack-Only Retry",
+      "help": "When the agent produces planning text without calling exit_plan_mode, inject a [PLANNING_RETRY] synthetic message to nudge it toward action."
+    },
+    "retry.enabled": {
+      "label": "Enable Retry on Ack-Only"
+    },
+    "retry.limit": {
+      "label": "Retry Limit",
+      "advanced": true
+    },
+    "autoApprove": {
+      "label": "Auto-Approve Plans",
+      "help": "Toggle whether plans auto-execute without user approval. Per-session via /plan auto on|off."
+    },
+    "autoApprove.default": {
+      "label": "Default Auto-Approve State"
+    },
+    "snapshot": {
+      "label": "Plan Snapshot Persistence",
+      "advanced": true
+    },
+    "snapshot.persist": {
+      "label": "Persist Last Plan Steps"
+    },
+    "snapshot.maxStepsRendered": {
+      "label": "Max Steps Rendered",
+      "advanced": true
+    },
+    "debugLog": {
+      "label": "Verbose Debug Log",
+      "help": "Emit plan-mode state transitions, gate decisions, and approval events to gateway logs.",
+      "advanced": true
+    }
+  }
+}

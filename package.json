@@ -1,0 +1,61 @@
+{
+  "name": "@electricsheephq/smarter-claw",
+  "version": "0.1.0",
+  "description": "Smarter Claw \u2014 Plan Mode, Auto-Plan Mode, and every mode for OpenClaw \ud83e\udd9e. Plan-then-execute workflow with archetype prompting, mutation gate, ack-only retry, and cross-channel /plan slash commands.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc && cp openclaw.plugin.json dist/openclaw.plugin.json",
+    "prepublishOnly": "npm run build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "files": [
+    "dist/",
+    "!dist/**/__tests__/",
+    "!dist/**/*.test.js",
+    "!dist/**/*.test.d.ts",
+    "openclaw.plugin.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.0",
+    "openclaw": "*"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.4.22"
+  },
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin",
+    "plan-mode",
+    "agent",
+    "claude-code",
+    "codex",
+    "gpt-5",
+    "smarter-claw"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/electricsheephq/Smarter-Claw.git"
+  },
+  "homepage": "https://github.com/electricsheephq/Smarter-Claw#readme",
+  "bugs": {
+    "url": "https://github.com/electricsheephq/Smarter-Claw/issues"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
