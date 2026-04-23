@@ -168,7 +168,7 @@ export async function persistSmarterClawState(opts: {
   }
   let storePath: string;
   try {
-    storePath = storeRuntime.resolveStorePath(opts.agentId);
+    storePath = storeRuntime.resolveStorePath(undefined, { agentId: opts.agentId });
   } catch (err) {
     return { persisted: false, reason: `resolveStorePath failed: ${(err as Error)?.message ?? err}` };
   }

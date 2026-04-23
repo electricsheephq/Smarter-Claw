@@ -53,7 +53,7 @@ export function buildArchetypePromptResult(
   let storePath: string | undefined;
   if (ctx.agentId) {
     try {
-      storePath = resolveStorePath(ctx.agentId);
+      storePath = resolveStorePath(undefined, { agentId: ctx.agentId });
     } catch {
       return undefined;
     }

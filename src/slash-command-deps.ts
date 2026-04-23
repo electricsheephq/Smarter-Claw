@@ -54,7 +54,7 @@ export function buildSlashCommandDeps(
       // updateSessionStoreEntry).
       try {
         const storeRuntime = await import("openclaw/plugin-sdk/session-store-runtime");
-        const storePath = storeRuntime.resolveStorePath(agentId);
+        const storePath = storeRuntime.resolveStorePath(undefined, { agentId });
         const store = storeRuntime.loadSessionStore(storePath, { skipCache: true });
         const resolved = storeRuntime.resolveSessionStoreEntry({
           store: store ?? {},

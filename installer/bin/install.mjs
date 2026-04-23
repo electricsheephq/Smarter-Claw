@@ -31,7 +31,7 @@
  *     reverse order. Manifest is written only on full success.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -233,6 +233,26 @@ async function main() {
   }
 
   manifest.patches = completed;
+
+  // Bundled-openclaw shadow: swap the plugin's `node_modules/openclaw`
+  // symlink so dynamic imports `import("openclaw/plugin-sdk/...")`
+  // resolve to the HOST's openclaw (with the installer's patched
+  // exports), not the npm-published v2026.4.22 dev dependency. Without
+  // this, persistSmarterClawState reports "missing
+  // updateSessionStoreEntry" because the plugin's local copy is the
+  // unpatched npm version. Recorded in the manifest as a synthetic
+  // patch so uninstall reverses it.
+  const pluginRoot = SMARTER_CLAW_ROOT;
+  const pluginNodeModulesOpenclaw = path.join(pluginRoot, "node_modules", "openclaw");
+  let bundledOpenclawShadow = null;
+  if (!args.dryRun) {
+    bundledOpenclawShadow = swapBundledOpenclaw(pluginNodeModulesOpenclaw, hostPath);
+    if (bundledOpenclawShadow) {
+      manifest.patches.push(bundledOpenclawShadow);
+      console.log(`  [shadowed] bundled openclaw → host symlink`);
+    }
+  }
+
   // Atomic-ish swap: write the new manifest (overwrites old in place; on
   // POSIX writeFileSync is one syscall). Only after this succeeds do we
   // delete the backup, so a crash between writeManifest and
@@ -246,6 +266,51 @@ async function main() {
   console.log(`\nSmarter-Claw v${smarterClawVersion} installed.`);
   console.log(`Manifest: ${manifestPathFor(hostPath)}`);
   console.log(`\nNext: restart the OpenClaw gateway to load the patched code.`);
+}
+
+/**
+ * Replace the plugin's bundled `node_modules/openclaw` (the npm-published
+ * v2026.4.22 dev dep) with a symlink to the host repo. This is the only
+ * way to make `import("openclaw/plugin-sdk/...")` from the plugin's
+ * runtime resolve to the host's PATCHED copy (which has the
+ * `updateSessionStoreEntry` re-export the plugin needs). Stashes the
+ * original bundled copy as a tarball so uninstall can restore it.
+ *
+ * Returns a synthetic patch record with type `bundled-openclaw-shadow`
+ * for the manifest, or null when the swap is a no-op (already symlinked
+ * to the same target).
+ */
+function swapBundledOpenclaw(pluginOpenclawPath, hostPath) {
+  if (!existsSync(pluginOpenclawPath)) {
+    // No bundled openclaw — plugin was installed via `pnpm openclaw plugins
+    // install` which strips dev deps. Nothing to shadow.
+    return null;
+  }
+  const lstat = lstatSync(pluginOpenclawPath);
+  if (lstat.isSymbolicLink()) {
+    const currentTarget = readlinkSync(pluginOpenclawPath);
+    const expected = path.resolve(hostPath);
+    if (path.resolve(path.dirname(pluginOpenclawPath), currentTarget) === expected) {
+      // Already symlinked to this host — idempotent re-install.
+      return null;
+    }
+  }
+  // Stash the bundled copy under a sibling name so uninstall can restore
+  // it. We don't tarball — the plugin's node_modules already contains the
+  // raw tree from pnpm install, so a sibling-rename is enough.
+  const stashPath = pluginOpenclawPath + ".smarter-claw-original";
+  if (existsSync(stashPath)) {
+    rmSync(stashPath, { recursive: true, force: true });
+  }
+  renameSync(pluginOpenclawPath, stashPath);
+  symlinkSync(path.resolve(hostPath), pluginOpenclawPath);
+  return {
+    type: "bundled-openclaw-shadow",
+    relPath: path.relative(hostPath, pluginOpenclawPath) || "../Smarter-Claw/node_modules/openclaw",
+    pluginOpenclawPath,
+    stashPath,
+    targetHostPath: path.resolve(hostPath),
+  };
 }
 
 main().catch((err) => {

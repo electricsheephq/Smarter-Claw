@@ -89,7 +89,7 @@ export function createPlanModeStatusTool(options?: CreatePlanModeStatusToolOptio
       let storePath = options?.storePath;
       if (!storePath && options?.agentId) {
         try {
-          storePath = resolveStorePath(options.agentId);
+          storePath = resolveStorePath(undefined, { agentId: options.agentId });
         } catch {
           storePath = undefined;
         }

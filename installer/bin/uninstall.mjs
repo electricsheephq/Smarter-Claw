@@ -13,6 +13,7 @@
  * --force skips the SHA-drift safety check.
  */
 
+import { existsSync, lstatSync, renameSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -70,6 +71,8 @@ async function main() {
         result = reverseNewFilePatch({ hostPath, record });
       } else if (record.type === "diff") {
         result = reverseDiffPatch({ hostPath, installerRoot: INSTALLER_ROOT, record });
+      } else if (record.type === "bundled-openclaw-shadow") {
+        result = reverseBundledOpenclawShadow({ record });
       } else {
         console.warn(`  WARN: unknown patch type ${record.type} for ${record.relPath}, skipping`);
         continue;
@@ -96,6 +99,30 @@ async function main() {
   deleteManifest(hostPath);
   console.log(`\nSmarter-Claw uninstalled.`);
   console.log(`\nNext: restart the OpenClaw gateway to reload the original code.`);
+}
+
+/**
+ * Reverse the bundled-openclaw-shadow swap: delete the symlink, rename
+ * the stash back into place. Mirror of `swapBundledOpenclaw` in install.mjs.
+ */
+function reverseBundledOpenclawShadow({ record }) {
+  const target = record.pluginOpenclawPath;
+  const stash = record.stashPath;
+  if (!existsSync(stash)) {
+    if (!existsSync(target)) {
+      return { skipped: "no shadow + no stash; nothing to reverse" };
+    }
+    return { skipped: "stash missing; cannot restore original openclaw" };
+  }
+  if (existsSync(target)) {
+    const lstat = lstatSync(target);
+    if (!lstat.isSymbolicLink()) {
+      return { skipped: "target is no longer the shadow symlink; manual cleanup required" };
+    }
+    unlinkSync(target);
+  }
+  renameSync(stash, target);
+  return { reversed: true };
 }
 
 main().catch((err) => {

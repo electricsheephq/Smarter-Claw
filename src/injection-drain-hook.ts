@@ -60,7 +60,7 @@ export async function buildInjectionDrainResult(
   }
   let storePath: string;
   try {
-    storePath = resolveStorePath(agentId);
+    storePath = resolveStorePath(undefined, { agentId });
   } catch {
     return undefined;
   }
