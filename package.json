@@ -1,7 +1,7 @@
 {
   "name": "@electricsheephq/smarter-claw",
   "version": "0.1.0",
-  "description": "Smarter Claw \u2014 Plan Mode, Auto-Plan Mode, and every mode for OpenClaw \ud83e\udd9e. Plan-then-execute workflow with archetype prompting, mutation gate, ack-only retry, and cross-channel /plan slash commands.",
+  "description": "Smarter Claw — Plan Mode, Auto-Plan Mode, and every mode for OpenClaw 🦞. Plan-then-execute workflow with archetype prompting, mutation gate, ack-only retry, and cross-channel /plan slash commands.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -21,12 +21,14 @@
     "README.md",
     "LICENSE"
   ],
-  "dependencies": {},
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.49"
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "openclaw": "*",
     "typescript": "^5.6.0",
-    "vitest": "^3.2.0",
-    "openclaw": "*"
+    "vitest": "^3.2.0"
   },
   "peerDependencies": {
     "openclaw": ">=2026.4.22"

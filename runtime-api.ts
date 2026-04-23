@@ -11,22 +11,43 @@
 import { SMARTER_CLAW_PLUGIN_ID } from "./src/types.js";
 import type { SmarterClawSessionState } from "./src/types.js";
 
-type PluginMetadataHost = {
-  pluginMetadata?: Record<string, Record<string, unknown>>;
+/**
+ * Loose host shape — any object that MIGHT have a plugin-namespaced
+ * metadata bag. We deliberately do NOT constrain on the host's
+ * `pluginMetadata` field type because the host-side SessionEntry may or
+ * may not declare it (the field is added in OpenClaw v2026.4.22+ via
+ * the patch in `src/config/sessions/types.ts`). Accepting `unknown`
+ * lets the plugin keep working against older OpenClaw publishes too —
+ * `readSmarterClawState` just returns `undefined` when the field is
+ * missing at runtime.
+ */
+type MaybePluginMetadataHost = Record<string, unknown> & {
+  pluginMetadata?: unknown;
 };
+
+function readPluginMetadataBag(session: unknown): Record<string, unknown> | undefined {
+  if (!session || typeof session !== "object") {
+    return undefined;
+  }
+  const bag = (session as MaybePluginMetadataHost).pluginMetadata;
+  if (!bag || typeof bag !== "object" || Array.isArray(bag)) {
+    return undefined;
+  }
+  return bag as Record<string, unknown>;
+}
 
 /**
  * Read the Smarter Claw state slice off a SessionEntry-shaped object.
- * Returns `undefined` if the plugin has never written to this session yet.
- *
- * Defensive: validates that the namespaced slot is an object before
- * casting. Mismatched shape (corrupted state) returns `undefined` so the
- * caller treats it as "no state" rather than crashing.
+ * Returns `undefined` if the plugin has never written to this session yet,
+ * or if the host's SessionEntry doesn't have the pluginMetadata field
+ * (older OpenClaw versions).
  */
-export function readSmarterClawState<S extends PluginMetadataHost>(
-  session: S,
-): SmarterClawSessionState | undefined {
-  const slot = session.pluginMetadata?.[SMARTER_CLAW_PLUGIN_ID];
+export function readSmarterClawState(session: unknown): SmarterClawSessionState | undefined {
+  const bag = readPluginMetadataBag(session);
+  if (!bag) {
+    return undefined;
+  }
+  const slot = bag[SMARTER_CLAW_PLUGIN_ID];
   if (!slot || typeof slot !== "object" || Array.isArray(slot)) {
     return undefined;
   }
@@ -39,40 +60,41 @@ export function readSmarterClawState<S extends PluginMetadataHost>(
  * Pure: does not mutate the input. Caller is responsible for persisting
  * the returned object back to the session store.
  */
-export function writeSmarterClawState<S extends PluginMetadataHost>(
+export function writeSmarterClawState<S extends Record<string, unknown>>(
   session: S,
   next: SmarterClawSessionState,
 ): S {
-  const existing = session.pluginMetadata ?? {};
+  const existing = readPluginMetadataBag(session) ?? {};
   return {
     ...session,
     pluginMetadata: {
       ...existing,
       [SMARTER_CLAW_PLUGIN_ID]: next as unknown as Record<string, unknown>,
     },
-  };
+  } as S;
 }
 
 /**
  * Produce a NEW session object with the Smarter Claw state slice removed.
  * Useful for /plan reset and full session resets. Pure.
  */
-export function clearSmarterClawState<S extends PluginMetadataHost>(session: S): S {
-  if (!session.pluginMetadata?.[SMARTER_CLAW_PLUGIN_ID]) {
+export function clearSmarterClawState<S extends Record<string, unknown>>(session: S): S {
+  const existing = readPluginMetadataBag(session);
+  if (!existing || !existing[SMARTER_CLAW_PLUGIN_ID]) {
     return session;
   }
-  const { [SMARTER_CLAW_PLUGIN_ID]: _removed, ...rest } = session.pluginMetadata;
+  const { [SMARTER_CLAW_PLUGIN_ID]: _removed, ...rest } = existing;
   return {
     ...session,
     pluginMetadata: rest,
-  };
+  } as S;
 }
 
 /**
  * Convenience: returns true if the session is currently in plan mode.
  * Defaults to false when state is missing or planMode is `normal`.
  */
-export function isInPlanMode<S extends PluginMetadataHost>(session: S): boolean {
+export function isInPlanMode(session: unknown): boolean {
   return readSmarterClawState(session)?.planMode === "plan";
 }
 
@@ -80,6 +102,6 @@ export function isInPlanMode<S extends PluginMetadataHost>(session: S): boolean 
  * Convenience: returns true if auto-approve is enabled for the session.
  * Defaults to false when state is missing or autoApprove is unset.
  */
-export function isAutoApproveEnabled<S extends PluginMetadataHost>(session: S): boolean {
+export function isAutoApproveEnabled(session: unknown): boolean {
   return readSmarterClawState(session)?.autoApprove === true;
 }
