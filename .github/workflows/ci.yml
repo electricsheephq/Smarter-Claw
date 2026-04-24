@@ -25,7 +25,7 @@ permissions:
 
 jobs:
   ci:
-    name: build + test + installer dry-run
+    name: ci
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
