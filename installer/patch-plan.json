@@ -210,6 +210,18 @@
       "relPath": "src/plugin-sdk/session-store-runtime.ts",
       "patchRelPath": "patches/core/session-store-runtime-write-api.diff",
       "expectedOriginalSha256": "716b63766ebf0dad56d772f70d7f08a0d07cfbaeff01c7800e826c1d81147dbd"
+    },
+    {
+      "type": "diff",
+      "relPath": "src/gateway/protocol/schema/sessions.ts",
+      "patchRelPath": "patches/core/sessions-patch-schema-plan-mode.diff",
+      "expectedOriginalSha256": "52d0dc074dea3c053783748aaed2bad1622dee87bf5dedef0d509a2d48872ae9"
+    },
+    {
+      "type": "diff",
+      "relPath": "src/gateway/sessions-patch.ts",
+      "patchRelPath": "patches/core/sessions-patch-handler-plan-mode.diff",
+      "expectedOriginalSha256": "f1f92cf131ce183f97273cece5754d7366764e0649d4b0a1707067092ccfb1ba"
     }
   ]
 }

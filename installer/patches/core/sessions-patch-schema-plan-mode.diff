@@ -1,0 +1,54 @@
+@@ -132,6 +132,53 @@
+   {
+     key: NonEmptyString,
+     label: Type.Optional(Type.Union([SessionLabelString, Type.Null()])),
++    // Smarter-Claw parity port #2: accept plan-mode + planApproval
++    // payloads in sessions.patch so the webchat inline-button path
++    // (Approve / Reject / Edit / Auto) can route through the
++    // plugin's state machine. Without these fields the schema
++    // strict-additionalProperties check rejects the payload before
++    // it reaches the handler. The handler block in
++    // src/gateway/sessions-patch.ts mirrors the plugin's
++    // slash-command path: writes plan-mode state into
++    // SessionEntry.pluginMetadata['smarter-claw'] and enqueues the
++    // matching `[PLAN_DECISION]:` injection.
++    planMode: Type.Optional(
++      Type.Union([Type.Literal("plan"), Type.Literal("normal"), Type.Null()]),
++    ),
++    planApproval: Type.Optional(
++      Type.Union([
++        Type.Object(
++          {
++            action: Type.Literal("approve"),
++            approvalId: Type.Optional(NonEmptyString),
++          },
++          { additionalProperties: false },
++        ),
++        Type.Object(
++          {
++            action: Type.Literal("reject"),
++            approvalId: Type.Optional(NonEmptyString),
++            feedback: Type.Optional(Type.String()),
++          },
++          { additionalProperties: false },
++        ),
++        Type.Object(
++          {
++            action: Type.Literal("edit"),
++            approvalId: Type.Optional(NonEmptyString),
++            feedback: Type.Optional(Type.String()),
++          },
++          { additionalProperties: false },
++        ),
++        Type.Object(
++          {
++            action: Type.Literal("auto"),
++            autoEnabled: Type.Boolean(),
++          },
++          { additionalProperties: false },
++        ),
++      ]),
++    ),
+     thinkingLevel: Type.Optional(Type.Union([NonEmptyString, Type.Null()])),
+     fastMode: Type.Optional(Type.Union([Type.Boolean(), Type.Null()])),
+     verboseLevel: Type.Optional(Type.Union([NonEmptyString, Type.Null()])),

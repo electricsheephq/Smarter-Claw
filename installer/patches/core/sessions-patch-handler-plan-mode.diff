@@ -1,0 +1,201 @@
+@@ -485,7 +485,200 @@
+       next.groupActivation = normalized;
+     }
+   }
++  // Smarter-Claw parity port #2: webchat inline-button approval routing.
++  //
++  // The Control UI's Approve/Reject/Edit/Auto buttons send
++  // `sessions.patch { key, planApproval: { action, ... } }` and the
++  // mode chip sends `sessions.patch { key, planMode: "plan"|"normal" }`.
++  // Mirror the plugin's slash-command handler logic
++  // (Smarter-Claw/src/slash-command-deps.ts:applyPatchToState) by writing
++  // the matching state into SessionEntry.pluginMetadata['smarter-claw']
++  // — the same slot the plugin's `before_prompt_build` /
++  // `before_tool_call` hooks read from. The plugin's runtime-api
++  // also mirrors a UI-compat shadow into `entry.planMode` /
++  // `entry.pendingQuestionApprovalId`; we don't need to write those
++  // here because the plugin's persist path will overwrite them on the
++  // next plugin-side write (and the UI hydrates from the plugin slot).
++  //
++  // Stale-token guard: when planApproval { action: approve|edit|reject }
++  // arrives with an approvalId that doesn't match the pending interaction,
++  // refuse the mutation as `invalid("planApproval ignored: stale approvalId")`.
++  // Without the guard, a double-clicked button or a stale event from
++  // another channel silently overwrites a freshly-resolved state.
++  const SMARTER_CLAW_PLUGIN_ID = "smarter-claw";
++  function readSmarterClawSlot(entry: Record<string, unknown>): Record<string, unknown> | undefined {
++    const bag = entry.pluginMetadata as Record<string, unknown> | undefined;
++    if (!bag || typeof bag !== "object") return undefined;
++    const slot = bag[SMARTER_CLAW_PLUGIN_ID];
++    if (!slot || typeof slot !== "object" || Array.isArray(slot)) return undefined;
++    return slot as Record<string, unknown>;
++  }
++  function writeSmarterClawSlot(
++    entry: Record<string, unknown>,
++    nextSlot: Record<string, unknown>,
++  ): void {
++    const bag = (entry.pluginMetadata as Record<string, unknown> | undefined) ?? {};
++    entry.pluginMetadata = { ...bag, [SMARTER_CLAW_PLUGIN_ID]: nextSlot };
++  }
++  function appendInjection(
++    slot: Record<string, unknown>,
++    entry: { id: string; kind: string; text: string; createdAt: number },
++  ): void {
++    const queueRaw = slot.pendingAgentInjections;
++    const queue = Array.isArray(queueRaw)
++      ? (queueRaw as Array<Record<string, unknown>>)
++      : [];
++    const filtered = queue.filter((q) => q && typeof q === "object" && q.id !== entry.id);
++    filtered.push(entry as unknown as Record<string, unknown>);
++    slot.pendingAgentInjections = filtered;
++  }
++
++  if ("planMode" in patch && (patch as { planMode?: unknown }).planMode !== undefined) {
++    const raw = (patch as { planMode?: unknown }).planMode;
++    if (raw === null) {
++      // Reset to default state ("normal" + idle).
++      const slot = readSmarterClawSlot(next as unknown as Record<string, unknown>) ?? {
++        planMode: "normal",
++        planApproval: "idle",
++        autoApprove: false,
++      };
++      writeSmarterClawSlot(next as unknown as Record<string, unknown>, {
++        ...slot,
++        planMode: "normal",
++        planApproval: "idle",
++      });
++    } else if (raw === "plan" || raw === "normal") {
++      const slot = readSmarterClawSlot(next as unknown as Record<string, unknown>) ?? {
++        planMode: "normal",
++        planApproval: "idle",
++        autoApprove: false,
++      };
++      writeSmarterClawSlot(next as unknown as Record<string, unknown>, {
++        ...slot,
++        planMode: raw,
++        planApproval: raw === "normal" ? "idle" : (slot.planApproval ?? "idle"),
++      });
++    } else {
++      return invalid('invalid planMode (use "plan"|"normal" or null)');
++    }
++  }
++
++  if ("planApproval" in patch && (patch as { planApproval?: unknown }).planApproval !== undefined) {
++    const pa = (patch as { planApproval?: { action: string; approvalId?: string; feedback?: string; autoEnabled?: boolean } }).planApproval;
++    if (!pa || typeof pa !== "object" || typeof pa.action !== "string") {
++      return invalid("planApproval requires {action,...}");
++    }
++    const slot = readSmarterClawSlot(next as unknown as Record<string, unknown>) ?? {
++      planMode: "normal",
++      planApproval: "idle",
++      autoApprove: false,
++    };
++    if (pa.action === "approve" || pa.action === "edit") {
++      const pending = slot.pendingInteraction as
++        | { kind?: string; approvalId?: string }
++        | undefined;
++      if (
++        !pending ||
++        pending.kind !== "approval" ||
++        (pa.approvalId && pending.approvalId !== pa.approvalId)
++      ) {
++        return invalid(
++          "planApproval ignored: stale approvalId or no pending plan approval",
++        );
++      }
++      const approvalId = pa.approvalId ?? pending.approvalId;
++      if (!approvalId) {
++        return invalid('planApproval action="' + pa.action + '" requires approvalId');
++      }
++      const nextSlot: Record<string, unknown> = {
++        ...slot,
++        planMode: "normal",
++        planApproval: "approved",
++        pendingInteraction: undefined,
++        recentlyApprovedAt: new Date().toISOString(),
++        retryCounters: undefined,
++      };
++      appendInjection(nextSlot, {
++        id: `plan-decision-${approvalId}`,
++        kind: "plan_decision",
++        text: `[PLAN_DECISION]: ${pa.action === "approve" ? "approved" : "edited"}`,
++        createdAt: Date.now(),
++      });
++      writeSmarterClawSlot(next as unknown as Record<string, unknown>, nextSlot);
++    } else if (pa.action === "reject") {
++      const pending = slot.pendingInteraction as
++        | { kind?: string; approvalId?: string }
++        | undefined;
++      if (
++        !pending ||
++        pending.kind !== "approval" ||
++        (pa.approvalId && pending.approvalId !== pa.approvalId)
++      ) {
++        return invalid(
++          "planApproval ignored: stale approvalId or no pending plan approval",
++        );
++      }
++      const approvalId = pa.approvalId ?? pending.approvalId;
++      if (!approvalId) {
++        return invalid('planApproval action="reject" requires approvalId');
++      }
++      const sanitized = (pa.feedback ?? "").replace(
++        /\[\/PLAN_DECISION\]/gi,
++        "[\u200B/PLAN_DECISION]",
++      );
++      const lines = [`[PLAN_DECISION]: rejected`];
++      if (sanitized) lines.push(`feedback: ${JSON.stringify(sanitized)}`);
++      lines.push("Revise your plan based on the feedback and call update_plan again.");
++      const nextSlot: Record<string, unknown> = {
++        ...slot,
++        planApproval: "rejected",
++        pendingInteraction: undefined,
++      };
++      appendInjection(nextSlot, {
++        id: `plan-decision-${approvalId}`,
++        kind: "plan_decision",
++        text: lines.join("\n"),
++        createdAt: Date.now(),
++      });
++      writeSmarterClawSlot(next as unknown as Record<string, unknown>, nextSlot);
++    } else if (pa.action === "auto") {
++      if (typeof pa.autoEnabled !== "boolean") {
++        return invalid('planApproval action="auto" requires autoEnabled: boolean');
++      }
++      writeSmarterClawSlot(next as unknown as Record<string, unknown>, {
++        ...slot,
++        autoApprove: pa.autoEnabled,
++      });
++    } else {
++      return invalid(
++        'planApproval action must be one of: approve, edit, reject, auto',
++      );
++    }
++    // Mirror UI-compat shadow at SessionEntry top level so the UI
++    // patches that read `entry.planMode.{mode,approval,approvalId}`
++    // and `entry.pendingQuestionApprovalId` light up immediately
++    // without waiting for the next plugin-side write. The plugin's
++    // runtime-api buildUiCompatMirror writes the same fields on its
++    // own write path; this just keeps the chip + sidebar in sync
++    // between the host's sessions.patch RPC return and the next
++    // plugin write.
++    const writtenSlot = readSmarterClawSlot(next as unknown as Record<string, unknown>);
++    if (writtenSlot) {
++      const nextEntry = next as unknown as Record<string, unknown>;
++      nextEntry.planMode = {
++        mode: writtenSlot.planMode,
++        approval: writtenSlot.planApproval,
++        ...(writtenSlot.lastPlanSteps && typeof writtenSlot.lastPlanSteps === "object" && "title" in (writtenSlot.lastPlanSteps as Record<string, unknown>)
++          ? { title: (writtenSlot.lastPlanSteps as { title?: string }).title }
++          : {}),
++        ...(writtenSlot.recentlyApprovedAt
++          ? { recentlyApprovedAt: writtenSlot.recentlyApprovedAt }
++          : {}),
++        ...(writtenSlot.autoApprove ? { autoApprove: writtenSlot.autoApprove } : {}),
++      };
++    }
++  }
+ 
+   store[storeKey] = next;
+   return { ok: true, entry: next };
+ }
