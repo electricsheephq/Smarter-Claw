@@ -1,4 +1,4 @@
-@@ -132,6 +132,53 @@
+@@ -132,6 +132,67 @@
    {
      key: NonEmptyString,
      label: Type.Optional(Type.Union([SessionLabelString, Type.Null()])),
@@ -44,6 +44,19 @@
 +          {
 +            action: Type.Literal("auto"),
 +            autoEnabled: Type.Boolean(),
++          },
++          { additionalProperties: false },
++        ),
++        // Smarter-Claw issue #46 + sub-agent QA C9: /plan answer + UI
++        // answer-card route. Accept the answer payload so the slash
++        // command and inline question card can resolve a pending
++        // ask_user_question approval. The handler validates approvalId,
++        // sanitizes the answer text before injection.
++        Type.Object(
++          {
++            action: Type.Literal("answer"),
++            approvalId: Type.Optional(NonEmptyString),
++            answer: Type.String(),
 +          },
 +          { additionalProperties: false },
 +        ),

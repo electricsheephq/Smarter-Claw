@@ -1,4 +1,4 @@
-@@ -485,7 +485,247 @@
+@@ -485,7 +485,443 @@
        next.groupActivation = normalized;
      }
    }
@@ -47,13 +47,39 @@
 +      : [];
 +    const filtered = queue.filter((q) => q && typeof q === "object" && q.id !== entry.id);
 +    filtered.push(entry as unknown as Record<string, unknown>);
-+    slot.pendingAgentInjections = filtered;
++    // Sub-agent QA #72-cap: enforce keep-newest cap of 10 plan_decision
++    // entries (matches plugin's sortAndCapQueue policy in src/injections.ts).
++    // Without this cap, 100 sequential rejections accumulate 100 queued
++    // injections and the next prompt-build batches all of them into one
++    // turn, blowing the model's context window. Other kinds (question_answer,
++    // plan_complete, etc) are not capped here — only plan_decision was the
++    // observed accumulation vector.
++    const PLAN_DECISION_CAP = 10;
++    const planDecisions = filtered.filter((q) => q.kind === "plan_decision");
++    if (planDecisions.length > PLAN_DECISION_CAP) {
++      const dropCount = planDecisions.length - PLAN_DECISION_CAP;
++      const droppedIds = new Set(
++        planDecisions
++          .slice(0, dropCount)
++          .map((q) => q.id as string),
++      );
++      slot.pendingAgentInjections = filtered.filter(
++        (q) => q.kind !== "plan_decision" || !droppedIds.has(q.id as string),
++      );
++    } else {
++      slot.pendingAgentInjections = filtered;
++    }
 +  }
 +
 +  if ("planMode" in patch && (patch as { planMode?: unknown }).planMode !== undefined) {
 +    const raw = (patch as { planMode?: unknown }).planMode;
 +    if (raw === null) {
-+      // Reset to default state ("normal" + idle).
++      // Reset to default state ("normal" + idle). Sub-agent QA C7
++      // (electricsheephq/Smarter-Claw#72): also clear pendingInteraction,
++      // recentlyApprovedAt, and rejectionCount on full reset. Without
++      // these clears, an orphaned pendingInteraction can persist into
++      // the next cycle and a stale approvalId becomes accept-able under
++      // a new mode session — confused UI + stale-approval leak.
 +      const slot = readSmarterClawSlot(next as unknown as Record<string, unknown>) ?? {
 +        planMode: "normal",
 +        planApproval: "idle",
@@ -63,6 +89,9 @@
 +        ...slot,
 +        planMode: "normal",
 +        planApproval: "idle",
++        pendingInteraction: undefined,
++        recentlyApprovedAt: undefined,
++        rejectionCount: 0,
 +      });
 +    } else if (raw === "plan" || raw === "normal") {
 +      const slot = readSmarterClawSlot(next as unknown as Record<string, unknown>) ?? {
@@ -156,6 +185,26 @@
 +      if (!approvalId) {
 +        return invalid('planApproval action="' + pa.action + '" requires approvalId');
 +      }
++      // Sub-agent QA C3 / electricsheephq/Smarter-Claw#73: subagent gate.
++      // The plugin's exit_plan_mode tool refuses to submit while research
++      // subagents are in flight (src/tools/exit-plan-mode-tool.ts ~270);
++      // mirror that gate here so UI inline-button approve doesn't bypass
++      // it. Without this mirror, a UI click while subagents run can
++      // approve a stale plan whose context the subagents would have
++      // updated. v0.3.0 Sprint 2 PR a-structural retires this duplication
++      // by routing the UI path through the same gate-evaluation point as
++      // the tool path; tactical fix below until then.
++      const blockingIds = Array.isArray(slot.blockingSubagentRunIds)
++        ? (slot.blockingSubagentRunIds as unknown[]).filter(
++            (x) => typeof x === "string" && x.length > 0,
++          )
++        : [];
++      if (blockingIds.length > 0) {
++        return invalid(
++          'planApproval ignored: ' + String(blockingIds.length) +
++          ' research subagent(s) still running; wait for them to complete',
++        );
++      }
 +      // Smarter-Claw P2.4 — approve / edit transition writes
 +      // `planMode: "executing"` (was: "normal"). The session is no
 +      // longer in plan-design but it's also not "no plan activity"
@@ -217,6 +266,19 @@
 +      const lines = [`[PLAN_DECISION]: rejected`];
 +      if (sanitized) lines.push(`feedback: ${JSON.stringify(sanitized)}`);
 +      lines.push("Revise your plan based on the feedback and call update_plan again.");
++      // Sub-agent QA C21: surface "clarify their goal" auto-deescalation
++      // hint after 3+ rejections. The plugin's buildPlanDecisionInjection
++      // helper does this for slash-command rejects (types.ts ~369); the
++      // host patch built injection text inline before this fix and missed
++      // the hint, so UI-button rejecters never benefited. Replicate the
++      // hint here. Threshold matches plugin (>= 3).
++      const nextRejectionCount =
++        (typeof slot.rejectionCount === "number" ? slot.rejectionCount : 0) + 1;
++      if (nextRejectionCount >= 3) {
++        lines.push(
++          "Multiple revisions have been rejected. Consider asking the user to clarify their goal before proposing the next plan.",
++        );
++      }
 +      const nextSlot: Record<string, unknown> = {
 +        ...slot,
 +        planApproval: "rejected",
@@ -227,7 +289,7 @@
 +        // rejections via buildPlanDecisionInjection — without this
 +        // increment, UI-rejecting users never see the auto-deescalation.
 +        // Sister-fix in src/slash-command-deps.ts:applyPatchToState.
-+        rejectionCount: (typeof slot.rejectionCount === "number" ? slot.rejectionCount : 0) + 1,
++        rejectionCount: nextRejectionCount,
 +        // BUG #9: clear stale recentlyApprovedAt on reject (was carried
 +        // forward via `...slot` spread, causing UI to show "Recently
 +        // approved" indicator even after a fresh rejection cycle).
@@ -244,13 +306,103 @@
 +      if (typeof pa.autoEnabled !== "boolean") {
 +        return invalid('planApproval action="auto" requires autoEnabled: boolean');
 +      }
-+      writeSmarterClawSlot(next as unknown as Record<string, unknown>, {
++      // Sub-agent QA B5 / electricsheephq/Smarter-Claw#72: when toggling
++      // autoApprove ON while a plan approval is already pending, consume
++      // it immediately by transitioning to executing/approved (matches
++      // the slash-command path's auto-on-with-pending behavior). Without
++      // this consumer here, the user toggles auto-on and nothing visibly
++      // happens until the next agent persist event fires the consumer.
++      const pending = (slot.pendingInteraction as
++        | { kind?: string; approvalId?: string }
++        | undefined) ?? ((next as unknown as { pendingInteraction?: { kind?: string; approvalId?: string } }).pendingInteraction);
++      const isPlanApprovalPending =
++        pending?.kind === "approval" || pending?.kind === "plan";
++      if (pa.autoEnabled === true && isPlanApprovalPending && pending?.approvalId) {
++        const subagentBlocked = Array.isArray(slot.blockingSubagentRunIds)
++          ? (slot.blockingSubagentRunIds as unknown[]).filter(
++              (x) => typeof x === "string" && x.length > 0,
++            ).length > 0
++          : false;
++        if (subagentBlocked) {
++          // Auto-toggle on while subagents block: write autoApprove=true
++          // but don't consume the pending approval (mirror C3 gate).
++          writeSmarterClawSlot(next as unknown as Record<string, unknown>, {
++            ...slot,
++            autoApprove: true,
++          });
++        } else {
++          const nextSlot: Record<string, unknown> = {
++            ...slot,
++            autoApprove: true,
++            planMode: "executing",
++            planApproval: "approved",
++            pendingInteraction: undefined,
++            recentlyApprovedAt: new Date().toISOString(),
++            retryCounters: undefined,
++            rejectionCount: 0,
++          };
++          appendInjection(nextSlot, {
++            id: `plan-decision-${pending.approvalId}`,
++            kind: "plan_decision",
++            text: `[PLAN_DECISION]: approved`,
++            createdAt: Date.now(),
++          });
++          writeSmarterClawSlot(next as unknown as Record<string, unknown>, nextSlot);
++        }
++      } else {
++        writeSmarterClawSlot(next as unknown as Record<string, unknown>, {
++          ...slot,
++          autoApprove: pa.autoEnabled,
++        });
++      }
++    } else if (pa.action === "answer") {
++      // electricsheephq/Smarter-Claw#46 + sub-agent QA C9: /plan answer
++      // route was advertised but non-functional pre-fix because the schema
++      // rejected the action. With the schema patch accepting "answer",
++      // route the answer through the same pendingInteraction-validated
++      // path that approve/reject use, then enqueue a [QUESTION_ANSWER]
++      // injection so the agent's next turn sees the user's reply.
++      const pendingQ = (slot.pendingInteraction as
++        | { kind?: string; approvalId?: string; questionId?: string }
++        | undefined) ?? ((next as unknown as { pendingInteraction?: { kind?: string; approvalId?: string; questionId?: string } }).pendingInteraction);
++      // Question-shape kinds: plugin slot writes "question"; UI mirror
++      // writes "question" too (no translation, unlike approval/plan).
++      if (
++        !pendingQ ||
++        pendingQ.kind !== "question" ||
++        (pa.approvalId && pendingQ.approvalId !== pa.approvalId)
++      ) {
++        return invalid(
++          'planApproval ignored: stale approvalId or no pending question',
++        );
++      }
++      const approvalId = pa.approvalId ?? pendingQ.approvalId;
++      if (!approvalId) {
++        return invalid('planApproval action="answer" requires approvalId');
++      }
++      // Sanitize answer text — same envelope-escape protection as
++      // sanitizeFeedbackForInjection in src/types.ts. Question answers
++      // travel through the [QUESTION_ANSWER] block; an adversarial answer
++      // could close the envelope early if not escaped.
++      const sanitized = pa.answer.replace(
++        /\[\/QUESTION_ANSWER\]/gi,
++        "[\u200B/QUESTION_ANSWER]",
++      );
++      const nextSlot: Record<string, unknown> = {
 +        ...slot,
-+        autoApprove: pa.autoEnabled,
++        pendingInteraction: undefined,
++        pendingQuestionApprovalId: undefined,
++      };
++      appendInjection(nextSlot, {
++        id: `question-answer-${approvalId}`,
++        kind: "question_answer",
++        text: `[QUESTION_ANSWER]: ${JSON.stringify(sanitized)}`,
++        createdAt: Date.now(),
 +      });
++      writeSmarterClawSlot(next as unknown as Record<string, unknown>, nextSlot);
 +    } else {
 +      return invalid(
-+        'planApproval action must be one of: approve, edit, reject, auto',
++        'planApproval action must be one of: approve, edit, reject, auto, answer',
 +      );
 +    }
 +    // Mirror UI-compat shadow at SessionEntry top level so the UI
@@ -274,6 +426,15 @@
 +          ? { recentlyApprovedAt: writtenSlot.recentlyApprovedAt }
 +          : {}),
 +        ...(writtenSlot.autoApprove ? { autoApprove: writtenSlot.autoApprove } : {}),
++        // Sub-agent QA #72-mirror: include rejectionCount + blockingSubagentRunIds
++        // in the mirror so UI escalation logic and subagent gate state are
++        // visible without a separate plugin-side persist round-trip.
++        ...(typeof writtenSlot.rejectionCount === "number" && writtenSlot.rejectionCount > 0
++          ? { rejectionCount: writtenSlot.rejectionCount }
++          : {}),
++        ...(Array.isArray(writtenSlot.blockingSubagentRunIds) && writtenSlot.blockingSubagentRunIds.length > 0
++          ? { blockingSubagentRunIds: writtenSlot.blockingSubagentRunIds }
++          : {}),
 +      };
 +    }
 +  }
