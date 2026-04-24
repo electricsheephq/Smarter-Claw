@@ -9,7 +9,12 @@
 +  execSecurity?: "deny" | "allowlist" | "full";
 +  execAsk?: "off" | "on-miss" | "always";
 +  planMode?: {
-+    mode: "plan" | "normal";
++    // PR #70071 P2.6 (Smarter-Claw tracking issue #51) — widened from
++    // `"plan" | "normal"` to include `"executing"` (post-approve, mid-
++    // execution). UI consumers (mode-switcher chip, hydrate, app-
++    // render selector) handle it as plan-equivalent for chip rendering
++    // — see resolveCurrentMode in mode-switcher.ts.
++    mode: "plan" | "executing" | "normal";
 +    approval: "none" | "pending" | "approved" | "edited" | "rejected" | "timed_out";
 +    approvalId?: string;
 +    cycleId?: string;
