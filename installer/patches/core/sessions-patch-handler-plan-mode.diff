@@ -107,9 +107,18 @@
 +      if (!approvalId) {
 +        return invalid('planApproval action="' + pa.action + '" requires approvalId');
 +      }
++      // Smarter-Claw P2.4 — approve / edit transition writes
++      // `planMode: "executing"` (was: "normal"). The session is no
++      // longer in plan-design but it's also not "no plan activity"
++      // — the agent is now executing the approved steps. The
++      // close-on-complete detector in snapshot-persister fires
++      // `sessions.patch { planMode: "normal" }` when all steps
++      // mark completed/cancelled, which goes through the planMode
++      // branch above and DOES reset planApproval to "idle".
++      // Lifecycle: plan → executing → (close-on-complete) → normal.
 +      const nextSlot: Record<string, unknown> = {
 +        ...slot,
-+        planMode: "normal",
++        planMode: "executing",
 +        planApproval: "approved",
 +        pendingInteraction: undefined,
 +        recentlyApprovedAt: new Date().toISOString(),

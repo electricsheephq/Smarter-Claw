@@ -89,9 +89,32 @@ export function resolvePlanApproval(
     case "approve":
       // Approve clears feedback AND resets rejectionCount — the user is
       // moving forward, so cycle history is no longer relevant.
+      //
+      // PR #70071 follow-up (P2.4) — transitions to `mode: "executing"`
+      // (was: `mode: "normal"`). The plan was approved and the agent
+      // is now executing the steps; the session is no longer in plan
+      // design but it's also not "no plan activity at all". This
+      // unlocks downstream behavior that depends on knowing the
+      // session is mid-execution:
+      //   - UI chip rendering accurately reflects "plan is active"
+      //     (PR #70071 P2.6)
+      //   - execution-phase nudge crons (PR #70071 P2.9) can fire
+      //     during stalls
+      //   - `plan_mode_status` introspection reports the precise
+      //     state (PR #70071 P2.8)
+      //   - `[PLAN_STATUS]` per-turn preamble auto-injection
+      //     (PR #70071 P2.12b)
+      //
+      // The close-on-complete detector (snapshot-persister.ts
+      // `shouldAutoClosePlan`) continues to fire the
+      // executing → "normal" transition when all steps are
+      // completed/cancelled. Lifecycle: plan → executing →
+      // (close-on-complete) → normal. Mutation gate is unaffected
+      // by the new value (executing passes through like normal —
+      // mutations are allowed once the plan is approved).
       return {
         ...current,
-        mode: "normal",
+        mode: "executing",
         approval: "approved",
         confirmedAt: now,
         updatedAt: now,
@@ -101,9 +124,13 @@ export function resolvePlanApproval(
 
     case "edit":
       // Edit counts as approval — same reset behavior as approve.
+      // Same `mode: "executing"` transition rationale as the approve
+      // case above (see comment block there). Distinguished only by
+      // `approval: "edited"` (vs "approved") for downstream signals
+      // like `postApprovalPermissions.acceptEdits`.
       return {
         ...current,
-        mode: "normal",
+        mode: "executing",
         approval: "edited",
         confirmedAt: now,
         updatedAt: now,
