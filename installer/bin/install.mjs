@@ -31,7 +31,8 @@
  *     reverse order. Manifest is written only on full success.
  */
 
-import { existsSync, lstatSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -287,6 +288,63 @@ async function runInstall({ args, hostPath, hostVersion }) {
   console.log(`\nSmarter-Claw v${smarterClawVersion} installed.`);
   console.log(`Manifest: ${manifestPathFor(hostPath)}`);
   console.log(`\nNext: restart the OpenClaw gateway to load the patched code.`);
+
+  // BUG #3 diagnostic (Smarter-Claw v0.2.0-beta.2): if the plugin is
+  // installed at ~/.openclaw/extensions/smarter-claw/ AND the parent
+  // node_modules has a stale openclaw (older than this host version),
+  // the plugin will silently fail to write state because `await import
+  // ("openclaw/plugin-sdk/session-store-runtime")` resolves to the
+  // stale copy that lacks updateSessionStoreEntry. We can't auto-fix
+  // this from the host-patch installer (we don't know the plugin
+  // install dir), but we CAN detect + warn.
+  //
+  // Sprint 2 (Alternative I migration) replaces dynamic-import with
+  // `api.runtime.agent.session.*` injection, which retires this whole
+  // class. Until then, document the manual symlink fix.
+  try {
+    const stateDir = process.env.OPENCLAW_STATE_DIR?.trim() || path.join(homedir(), ".openclaw");
+    const extensionsNodeModulesOpenclaw = path.join(stateDir, "extensions", "node_modules", "openclaw");
+    if (existsSync(extensionsNodeModulesOpenclaw)) {
+      // Compare to host openclaw via realpath. The symlink at
+      // ~/.openclaw/extensions/node_modules/openclaw may point through
+      // /opt/homebrew/lib/node_modules/openclaw (a global symlink) →
+      // hostPath. realpath collapses both ends to the same canonical
+      // path if they ultimately resolve to the same place.
+      let resolvedExt;
+      let resolvedHost;
+      try {
+        resolvedExt = realpathSync(extensionsNodeModulesOpenclaw);
+        resolvedHost = realpathSync(hostPath);
+      } catch {
+        // Broken symlink or missing target → treat as drift.
+        resolvedExt = extensionsNodeModulesOpenclaw;
+        resolvedHost = hostPath;
+      }
+      if (resolvedExt !== resolvedHost) {
+        const stalePkgPath = path.join(extensionsNodeModulesOpenclaw, "package.json");
+        let staleVersion = "unknown";
+        if (existsSync(stalePkgPath)) {
+          try {
+            const stalePkg = JSON.parse(readFileSync(stalePkgPath, "utf8"));
+            staleVersion = stalePkg.version ?? "unknown";
+          } catch { /* ignore */ }
+        }
+        console.log(``);
+        console.log(`⚠ BUG #3 diagnostic: stale openclaw at ${extensionsNodeModulesOpenclaw}`);
+        console.log(`  (version ${staleVersion}; host is ${hostVersion})`);
+        console.log(`  This will cause persist:skipped errors if plugin is loaded from`);
+        console.log(`  ~/.openclaw/extensions/. Manual fix:`);
+        console.log(``);
+        console.log(`    mv ${extensionsNodeModulesOpenclaw} ${extensionsNodeModulesOpenclaw}.bak-$(date -u +%Y%m%dT%H%M%SZ)`);
+        console.log(`    ln -s ${hostPath} ${extensionsNodeModulesOpenclaw}`);
+        console.log(``);
+        console.log(`  Sprint 2 (Alternative I) will retire this requirement.`);
+      }
+    }
+  } catch (err) {
+    // Best-effort diagnostic — never block install on its own failure.
+    console.log(`  (BUG #3 probe skipped: ${(err && err.message) || err})`);
+  }
 }
 
 /**

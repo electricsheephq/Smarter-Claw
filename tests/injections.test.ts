@@ -113,6 +113,41 @@ describe("sortAndCapQueue", () => {
     ]);
   });
 
+  it("plan_decision uses keep-newest policy on cap (BUG #4 fix)", () => {
+    // Pre-fix: sorted ASC by createdAt + slice(0, MAX) → kept oldest,
+    // dropped newest. For plan_decision (multi-revision rejection
+    // cycles), this silently delivered 8-revision-stale feedback to
+    // the agent and dropped the user's most recent feedback. Adversarial
+    // QA's BUG #4. Now: plan_decision keeps the most recent MAX entries.
+    const warn = vi.fn();
+    const q: PendingAgentInjectionEntry[] = [];
+    for (let i = 0; i < MAX_QUEUE_SIZE + 3; i++) {
+      // Distinct ids + monotonic createdAt — id "d0" is OLDEST, "d12" NEWEST.
+      q.push(mkEntry("plan_decision", `d${i}`, i));
+    }
+    const sorted = sortAndCapQueue(q, { warn });
+    expect(sorted).toHaveLength(MAX_QUEUE_SIZE);
+    expect(warn).toHaveBeenCalledTimes(3);
+    // Kept the LAST 10 (newest createdAt). Dropped d0/d1/d2 (oldest).
+    expect(sorted.map((e) => e.id)).toEqual([
+      "d3",
+      "d4",
+      "d5",
+      "d6",
+      "d7",
+      "d8",
+      "d9",
+      "d10",
+      "d11",
+      "d12",
+    ]);
+    // Warn text reflects the actual policy ("dropping older entry"
+    // not the misleading old "dropping oldest" — also closes BUG #10).
+    const warnCalls = warn.mock.calls.map((args) => args[0]);
+    expect(warnCalls.every((m) => m.includes("dropping older"))).toBe(true);
+    expect(warnCalls.every((m) => m.includes("kind=plan_decision"))).toBe(true);
+  });
+
   it("preserves all entries when queue is under cap", () => {
     const q = [mkEntry("plan_decision", "d1", 1), mkEntry("question_answer", "q1", 2)];
     const sorted = sortAndCapQueue(q);

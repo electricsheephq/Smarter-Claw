@@ -144,8 +144,32 @@ function filterExpired(
 }
 
 /**
+ * Kinds where MOST RECENT user feedback matters more than the oldest
+ * (e.g. plan_decision: a 12-rejection cycle should deliver the user's
+ * latest feedback, not the 8-revision-stale first one). For these
+ * kinds we drop OLDEST entries on cap — keeping the most recent
+ * MAX_QUEUE_SIZE within the kind. Per BUG #4 from adversarial QA.
+ *
+ * Other kinds (system messages, plan_intro) keep the historical
+ * "drop newest" semantic since priority-based ranking already favors
+ * older + higher-priority entries appropriately.
+ */
+const KEEP_NEWEST_KINDS = new Set<string>(["plan_decision"]);
+
+/**
  * Sorts a queue for drain order and applies the size cap.
  * Pure (no store I/O) so callers can test independently.
+ *
+ * BUG #4 + #10 fix (Smarter-Claw v0.2.0-beta.2): the cap policy is
+ * now KIND-AWARE. Pre-fix `sorted.slice(0, MAX_QUEUE_SIZE)` kept
+ * oldest within each priority band — which silently dropped the
+ * user's most recent feedback in multi-revision plan_decision
+ * cycles. The warn-log text said "dropping oldest" but actually
+ * dropped newest entries (anything past index MAX). Now: for kinds
+ * in KEEP_NEWEST_KINDS we keep the LAST MAX entries (most recent
+ * timestamps); for other kinds we keep the FIRST MAX (oldest, the
+ * historical behavior). The warn log now correctly reflects what
+ * was dropped per kind.
  */
 export function sortAndCapQueue(
   queue: PendingAgentInjectionEntry[],
@@ -171,13 +195,50 @@ export function sortAndCapQueue(
   if (sorted.length <= MAX_QUEUE_SIZE) {
     return sorted;
   }
-  const dropped = sorted.slice(MAX_QUEUE_SIZE);
-  for (const d of dropped) {
-    log?.warn?.(
-      `pending-injection-queue: at cap ${MAX_QUEUE_SIZE}, dropping oldest entry id=${d.id} kind=${d.kind}`,
-    );
+  // Per-kind cap policy: separate by kind, apply directional slice.
+  const byKind = new Map<string, PendingAgentInjectionEntry[]>();
+  for (const entry of sorted) {
+    const arr = byKind.get(entry.kind) ?? [];
+    arr.push(entry);
+    byKind.set(entry.kind, arr);
   }
-  return sorted.slice(0, MAX_QUEUE_SIZE);
+  const kept: PendingAgentInjectionEntry[] = [];
+  for (const [kind, entries] of byKind) {
+    if (entries.length <= MAX_QUEUE_SIZE) {
+      kept.push(...entries);
+      continue;
+    }
+    if (KEEP_NEWEST_KINDS.has(kind)) {
+      // Keep the LAST MAX (most recent timestamps within priority).
+      const dropped = entries.slice(0, entries.length - MAX_QUEUE_SIZE);
+      const keptForKind = entries.slice(entries.length - MAX_QUEUE_SIZE);
+      for (const d of dropped) {
+        log?.warn?.(
+          `pending-injection-queue: at cap ${MAX_QUEUE_SIZE} for kind=${kind}, dropping older entry id=${d.id} (keep-newest policy)`,
+        );
+      }
+      kept.push(...keptForKind);
+    } else {
+      // Keep the FIRST MAX (oldest within priority — historical default).
+      const dropped = entries.slice(MAX_QUEUE_SIZE);
+      const keptForKind = entries.slice(0, MAX_QUEUE_SIZE);
+      for (const d of dropped) {
+        log?.warn?.(
+          `pending-injection-queue: at cap ${MAX_QUEUE_SIZE} for kind=${kind}, dropping newer entry id=${d.id} (keep-oldest policy)`,
+        );
+      }
+      kept.push(...keptForKind);
+    }
+  }
+  // Re-sort the merged kept set by the same sort key so drain-order
+  // is preserved across the per-kind partitioning.
+  return kept.sort((a, b) => {
+    const pa = resolveEntryPriority(a);
+    const pb = resolveEntryPriority(b);
+    if (pa !== pb) return pb - pa;
+    if (a.createdAt !== b.createdAt) return a.createdAt - b.createdAt;
+    return a.id.localeCompare(b.id);
+  });
 }
 
 /**
