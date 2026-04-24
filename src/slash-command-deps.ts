@@ -175,6 +175,12 @@ export function applyPatchToState(
         text: `[PLAN_DECISION]: ${pa.action === "approve" ? "approved" : "edited"}`,
         createdAt: Date.now(),
       });
+      // Reset escalating-retry counters on approval — the post-
+      // approval execution phase is a fresh ladder. The
+      // planApprovedYield ladder fires AFTER this state-write so it
+      // starts at the standard tier; planModeAckOnly + planningOnly
+      // also reset since those failure modes don't carry across the
+      // planning → execution boundary.
       return {
         ...base,
         planMode: "normal",
@@ -182,6 +188,7 @@ export function applyPatchToState(
         pendingInteraction: undefined,
         recentlyApprovedAt: new Date().toISOString(),
         pendingAgentInjections: queueHost.pendingAgentInjections,
+        retryCounters: undefined,
       };
     }
     if (pa.action === "reject") {

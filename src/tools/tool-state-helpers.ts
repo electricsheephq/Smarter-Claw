@@ -78,6 +78,12 @@ export function enterPlanModeStateUpdate(
     planApproval: "idle",
     pendingInteraction: undefined,
     pendingAgentInjections: [],
+    // Reset escalating-retry counters on every fresh plan cycle so the
+    // ack-only / planning-only / yield ladders re-start at "standard"
+    // instead of inheriting "firm/final" from the previous cycle. Matches
+    // openclaw-1 semantics where the counters lived in per-attempt
+    // memory and were naturally fresh per cycle.
+    retryCounters: undefined,
     cycleId: `cycle-${Date.now()}`,
   };
 }
