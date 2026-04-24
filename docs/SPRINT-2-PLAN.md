@@ -197,3 +197,20 @@ Estimated: 4-6 hr of focused work, not 2-4 hr.
 While Sprint 2 ships these workarounds in our plugin, file an upstream RFC against `openclaw/openclaw` for `mergeSessionEntryWithPolicy` — a non-shallow-merge variant that preserves unknown plugin slots. Once upstream lands (estimated post-v2026.5.x), Smarter-Claw can drop the file-state migration and write directly to `pluginMetadata['smarter-claw']` again with safety. The file-state path stays as the multi-process-safe option for hosts that opt in.
 
 RFC tracking issue lives in this repo until upstream PR exists.
+
+## Pre-implementation audit findings (2026-04-25)
+
+Call-site audit for `readSmarterClawState` ahead of Blocker #2's plumb-sessionKey requirement:
+
+| Call site | Has sessionKey in scope? | Already cached? |
+|---|---|---|
+| `src/archetype-hook.ts:84` | ✅ yes (loads entry via `loadSessionStore` + `resolveSessionStoreEntry`) | ✅ yes (`setPlanModeCache`) |
+| `src/execution-status-injection.ts:203` | ✅ yes | ✅ yes (`setPlanModeCache`) |
+| `src/injection-drain-hook.ts:74` | ✅ yes | ❌ no |
+| `src/tools/plan-mode-status-tool.ts:132` | ✅ yes (via tool ctx) | ❌ no (user-action triggered, rare) |
+| `src/tools/exit-plan-mode-tool.ts:272` | ✅ yes (via `persistCtx.sessionKey`) | ❌ no (user-action triggered, rare) |
+| `src/slash-commands.ts:326` | ✅ yes (deps + ctx) | ❌ no (user-action triggered, rare) |
+
+**Implication**: Blocker #2's "plumb sessionKey" work is essentially DONE — every call site has it. The read-cache work is also half-done — two of the three hot-path call sites already use `setPlanModeCache`. PR a's read-cache layer just needs to (a) extend `setPlanModeCache` to wrap file reads, (b) add caching to `injection-drain-hook.ts:74`. Estimated +50 LOC, not the +200 LOC originally feared.
+
+**Updated PR-a estimate**: ~600 → ~500 LOC (the audit reduces the read-path scope; the host-mutation-queue scope is still the wildcard pending the deep design agent's report).
