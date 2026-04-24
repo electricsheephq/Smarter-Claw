@@ -50,6 +50,9 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Packed artifact smoke
+        run: pnpm smoke:pack
+
       - name: Run unit tests
         run: pnpm test --run
 

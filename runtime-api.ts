@@ -9,7 +9,11 @@
  */
 
 import { SMARTER_CLAW_PLUGIN_ID } from "./src/types.js";
-import type { SmarterClawSessionState } from "./src/types.js";
+import type {
+  PlanApprovalState,
+  PlanModeApprovalState,
+  SmarterClawSessionState,
+} from "./src/types.js";
 
 /**
  * Loose host shape — any object that MIGHT have a plugin-namespaced
@@ -190,7 +194,7 @@ export async function persistSmarterClawState(opts: {
       // to those fields so the chip / sidebar / approval card light
       // up without requiring a UI rewrite. Long-term, the UI patches
       // should migrate to `pluginMetadata['smarter-claw']` directly.
-      const mirror = buildUiCompatMirror(next);
+      const mirror = projectSmarterClawHostCompat(next);
       // Concurrency contract (#9). The host's mergeSessionEntry does a
       // SHALLOW spread: { ...existing, ...patch }. So returning
       // `pluginMetadata: <full bag>` REPLACES the whole pluginMetadata
@@ -267,11 +271,34 @@ export async function persistSmarterClawState(opts: {
  * input shape). We translate at mirror time so the UI sees the shape
  * it was authored against without requiring a UI rewrite.
  */
-function buildUiCompatMirror(state: SmarterClawSessionState): Record<string, unknown> {
+export function toHostApprovalState(
+  approval: PlanApprovalState | undefined,
+): PlanModeApprovalState {
+  switch (approval) {
+    case "awaiting-approval":
+    case "proposed":
+      return "pending";
+    case "approved":
+      return "approved";
+    case "rejected":
+      return "rejected";
+    case "expired":
+    case "cancelled":
+      return "timed_out";
+    case "idle":
+    default:
+      return "none";
+  }
+}
+
+export function projectSmarterClawHostCompat(
+  state: SmarterClawSessionState,
+): Record<string, unknown> {
   const approvalId =
     state.pendingInteraction?.kind === "approval"
       ? state.pendingInteraction.approvalId
       : state.pendingQuestionApprovalId;
+  const hostApproval = toHostApprovalState(state.planApproval);
 
   // Translate PlanProposal.steps → UI shape. Lossy on activeForm
   // because the internal PlanStep collapsed `step` and `activeForm`
@@ -287,43 +314,63 @@ function buildUiCompatMirror(state: SmarterClawSessionState): Record<string, unk
         }))
       : undefined;
 
-  return {
-    planMode: {
-      mode: state.planMode,
-      approval: state.planApproval,
-      ...(approvalId ? { approvalId } : {}),
-      ...(state.lastPlanSteps?.title ? { title: state.lastPlanSteps.title } : {}),
-      ...(state.recentlyApprovedAt ? { recentlyApprovedAt: state.recentlyApprovedAt } : {}),
-      // PR-9 audit additions: fields the UI patches read but were
-      // missing from the mirror in v1.0.0.
-      ...(state.autoApprove ? { autoApprove: state.autoApprove } : {}),
-      ...(lastPlanStepsForUi ? { lastPlanSteps: lastPlanStepsForUi } : {}),
-      ...(state.blockingSubagentRunIds && state.blockingSubagentRunIds.length > 0
-        ? { blockingSubagentRunIds: state.blockingSubagentRunIds }
-        : {}),
-    },
-    ...(state.pendingQuestionApprovalId
-      ? { pendingQuestionApprovalId: state.pendingQuestionApprovalId }
+  const planMode: Record<string, unknown> = {
+    mode: state.planMode,
+    approval: hostApproval,
+    ...(approvalId ? { approvalId } : {}),
+    ...(state.cycleId ? { cycleId: state.cycleId } : {}),
+    ...(state.lastPlanSteps?.title ? { title: state.lastPlanSteps.title } : {}),
+    ...(state.recentlyApprovedAt ? { recentlyApprovedAt: state.recentlyApprovedAt } : {}),
+    ...(state.autoApprove ? { autoApprove: state.autoApprove } : {}),
+    ...(lastPlanStepsForUi ? { lastPlanSteps: lastPlanStepsForUi } : {}),
+    ...(state.blockingSubagentRunIds && state.blockingSubagentRunIds.length > 0
+      ? { blockingSubagentRunIds: state.blockingSubagentRunIds }
       : {}),
+  };
+
+  let pendingInteraction: Record<string, unknown> | undefined;
+  if (state.pendingInteraction?.kind === "approval") {
+    pendingInteraction = {
+      kind: "plan",
+      approvalId: state.pendingInteraction.approvalId,
+      ...(state.lastPlanSteps?.title ? { title: state.lastPlanSteps.title } : {}),
+      createdAt: Date.parse(state.pendingInteraction.deliveredAt) || Date.now(),
+      status: "pending",
+      ...(state.cycleId ? { cycleId: state.cycleId } : {}),
+    };
+  } else if (state.pendingInteraction?.kind === "question") {
+    const question = state.pendingInteraction;
+    pendingInteraction = {
+      kind: "question",
+      approvalId: question.approvalId,
+      ...(question.questionId ? { questionId: question.questionId } : {}),
+      ...(question.title || question.prompt ? { title: question.title ?? question.prompt } : {}),
+      ...(question.prompt ? { prompt: question.prompt } : {}),
+      ...(question.options ? { options: question.options } : {}),
+      allowFreetext: question.allowFreetext === true,
+      createdAt: Date.parse(question.deliveredAt) || Date.now(),
+      status: "pending",
+      ...(state.cycleId ? { cycleId: state.cycleId } : {}),
+    };
+  }
+
+  return {
+    // These top-level fields intentionally include explicit undefined
+    // values when absent. The host patch uses shallow entry merges; an
+    // explicit undefined is the only way for a projection update to
+    // clear stale pending-question/interaction fields from the top
+    // level without making pluginMetadata the UI's direct source.
+    planMode: {
+      ...planMode,
+    },
+    pendingQuestionApprovalId: state.pendingQuestionApprovalId,
     // Mirror pendingInteraction at the top level for the
     // slash-command-executor `/plan answer` path
     // (ui-src-ui-chat-slash-command-executor.ts.diff:144-148). The UI
-    // discriminates on `kind` and reads `approvalId` + `questionId`.
-    // We don't have `questionId` in our state today (it was recorded
-    // in the question-approval persist on openclaw-1) so just mirror
-    // what we have; questionId can land later via a separate field.
-    ...(state.pendingInteraction
-      ? {
-          pendingInteraction: {
-            kind:
-              state.pendingInteraction.kind === "approval"
-                ? "plan"
-                : state.pendingInteraction.kind,
-            approvalId: state.pendingInteraction.approvalId,
-            createdAt: Date.parse(state.pendingInteraction.deliveredAt) || Date.now(),
-            status: "pending" as const,
-          },
-        }
-      : {}),
+    // discriminates on `kind` and reads approval/question metadata
+    // directly from this projected host-compatible shape.
+    pendingInteraction,
+    recentlyApprovedAt: state.recentlyApprovedAt,
+    postApprovalPermissions: state.postApprovalPermissions,
   };
 }

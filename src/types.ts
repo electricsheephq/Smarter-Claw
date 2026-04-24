@@ -118,12 +118,23 @@ export type SmarterClawSessionState = {
   planModeIntroDeliveredAt?: string;
   /** ISO timestamp of the most recent approval. */
   recentlyApprovedAt?: string;
-  /** Pending interaction (e.g. ask_user_question) awaiting response. */
-  pendingInteraction?: {
-    kind: "question" | "approval";
-    approvalId: string;
-    deliveredAt: string;
-  };
+  /** Pending interaction awaiting user response. */
+  pendingInteraction?:
+    | {
+        kind: "approval";
+        approvalId: string;
+        deliveredAt: string;
+      }
+    | {
+        kind: "question";
+        approvalId: string;
+        deliveredAt: string;
+        questionId?: string;
+        title?: string;
+        prompt?: string;
+        options?: string[];
+        allowFreetext?: boolean;
+      };
   /**
    * Pending agent-side synthetic injection queue. Drained at the start
    * of each turn by the `before_prompt_build` hook (see index.ts +

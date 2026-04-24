@@ -116,16 +116,27 @@ export function createAskUserQuestionTool(
       // answer back. The state mutation also stashes the approvalId in
       // pendingInteraction so the slash-command handler can validate it.
       // Per #31: tool was previously decorative.
-      const persist = await persistFromTool(persistCtx, "ask_user_question", askQuestionStateUpdate);
+      const prompt = question.trim();
+      const persist = await persistFromTool(
+        persistCtx,
+        "ask_user_question",
+        askQuestionStateUpdate({
+          questionId,
+          title: prompt,
+          prompt,
+          options,
+          allowFreetext,
+        }),
+      );
 
       // Return non-empty content (lossless-claw paired-tool-result fix).
-      const text = `Question submitted to user: "${question.trim()}" (${options.length} options).${persist.persisted ? "" : " (Note: state persistence skipped — /plan answer may not route correctly.)"}`;
+      const text = `Question submitted to user: "${prompt}" (${options.length} options).${persist.persisted ? "" : " (Note: state persistence skipped — /plan answer may not route correctly.)"}`;
       return {
         content: [{ type: "text" as const, text }],
         details: {
           status: "question_submitted" as const,
           questionId,
-          question: question.trim(),
+          question: prompt,
           options,
           allowFreetext,
           persisted: persist.persisted,

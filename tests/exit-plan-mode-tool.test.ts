@@ -193,6 +193,7 @@ describe("createExitPlanModeTool — PR-10 archetype fields", () => {
     expect(details.verification).toBeUndefined();
     expect(details.references).toBeUndefined();
     expect(details.status).toBe("approval_requested");
+    expect(details.approvalId).toBe("plan-c1");
     expect(details.plan).toEqual(planSteps);
   });
 });

@@ -9,6 +9,7 @@
     "build": "tsc && cp openclaw.plugin.json dist/openclaw.plugin.json",
     "prepublishOnly": "npm run build",
     "prepack": "node scripts/check-tarball-shape.mjs",
+    "smoke:pack": "rm -rf .tmp/pack-smoke && mkdir -p .tmp/pack-smoke && pnpm pack --pack-destination .tmp/pack-smoke && node scripts/check-packed-artifact.mjs .tmp/pack-smoke/*.tgz",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"

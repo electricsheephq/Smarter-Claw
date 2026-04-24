@@ -18,11 +18,7 @@ import {
   type PersistSmarterClawStateResult,
 } from "../../runtime-api.js";
 import { logPlanModeDebug } from "../debug-log.js";
-import {
-  newPlanApprovalId,
-  type PlanProposal,
-  type SmarterClawSessionState,
-} from "../types.js";
+import { newPlanApprovalId, type PlanProposal, type SmarterClawSessionState } from "../types.js";
 
 export type ToolPersistContext = {
   agentId?: string;
@@ -91,6 +87,7 @@ export function enterPlanModeStateUpdate(
 /** State factory: stash the proposed plan + arm the approval gate. */
 export function exitPlanModeStateUpdate(
   proposal: PlanProposal,
+  approvalId: string = newPlanApprovalId(),
 ): (current: SmarterClawSessionState | undefined) => SmarterClawSessionState {
   return (current) => {
     const base: SmarterClawSessionState = current ?? {
@@ -98,7 +95,6 @@ export function exitPlanModeStateUpdate(
       planApproval: "idle",
       autoApprove: false,
     };
-    const approvalId = newPlanApprovalId();
     return {
       ...base,
       planMode: "plan",
@@ -113,23 +109,34 @@ export function exitPlanModeStateUpdate(
   };
 }
 
-/** State factory: arm the pending-question approval id. */
+export type PendingQuestionMetadata = {
+  questionId?: string;
+  title?: string;
+  prompt?: string;
+  options?: string[];
+  allowFreetext?: boolean;
+};
+
+/** State factory: arm the pending-question approval id and UI metadata. */
 export function askQuestionStateUpdate(
-  current: SmarterClawSessionState | undefined,
-): SmarterClawSessionState {
-  const base: SmarterClawSessionState = current ?? {
-    planMode: "plan",
-    planApproval: "idle",
-    autoApprove: false,
-  };
-  const approvalId = newPlanApprovalId();
-  return {
-    ...base,
-    pendingQuestionApprovalId: approvalId,
-    pendingInteraction: {
-      kind: "question",
-      approvalId,
-      deliveredAt: new Date().toISOString(),
-    },
+  metadata: PendingQuestionMetadata = {},
+): (current: SmarterClawSessionState | undefined) => SmarterClawSessionState {
+  return (current) => {
+    const base: SmarterClawSessionState = current ?? {
+      planMode: "plan",
+      planApproval: "idle",
+      autoApprove: false,
+    };
+    const approvalId = newPlanApprovalId();
+    return {
+      ...base,
+      pendingQuestionApprovalId: approvalId,
+      pendingInteraction: {
+        kind: "question",
+        approvalId,
+        deliveredAt: new Date().toISOString(),
+        ...metadata,
+      },
+    };
   };
 }
