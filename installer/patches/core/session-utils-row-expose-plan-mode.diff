@@ -1,0 +1,19 @@
+@@ -1434,6 +1434,17 @@ export function buildGatewaySessionRow(params: {
+     lastAccountId: deliveryFields.lastAccountId ?? entry?.lastAccountId,
+     lastThreadId: deliveryFields.lastThreadId ?? entry?.lastThreadId,
+     compactionCheckpointCount: entry?.compactionCheckpoints?.length,
+     latestCompactionCheckpoint,
++    // Smarter-Claw chip-stick fix (Layer B): expose `entry.planMode`,
++    // `entry.pendingQuestionApprovalId`, and `entry.pluginMetadata`
++    // (plugin-namespaced state) on the gateway row so the UI's
++    // mode-switcher / plan-cards / plan-resume can read live plan
++    // state. Without this, the host's row builder strips these
++    // fields — chip-stick visible because resolveCurrentMode reads
++    // entry.planMode.mode and gets undefined on every list refresh.
++    // The Smarter-Claw plugin owns the namespace so exposing these
++    // fields doesn't leak any other plugin's data.
++    planMode: entry?.planMode,
++    pendingQuestionApprovalId: entry?.pendingQuestionApprovalId,
++    pluginMetadata: entry?.pluginMetadata,
+   };
+ }

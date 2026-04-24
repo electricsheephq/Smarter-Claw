@@ -228,6 +228,18 @@
       "relPath": "src/agents/pi-embedded-subscribe.handlers.tools.ts",
       "patchRelPath": "patches/core/pi-embedded-subscribe-exit-plan-mode-emit.diff",
       "expectedOriginalSha256": "abbd8dbff32d54b6213b4fa4af6d8afecce26181a56275793e5358f4e5cc47b8"
+    },
+    {
+      "type": "diff",
+      "relPath": "src/gateway/session-utils.ts",
+      "patchRelPath": "patches/core/session-utils-row-expose-plan-mode.diff",
+      "expectedOriginalSha256": "be4f3e44bf64078868bc20ed5035d94daac7451b32ec0c7761b70030c000fdff"
+    },
+    {
+      "type": "diff",
+      "relPath": "src/config/schema.base.generated.ts",
+      "patchRelPath": "patches/core/schema-allow-conversation-access.diff",
+      "expectedOriginalSha256": "ca249d638091766d9b262d93318f33c5846155c9319cc5b15a195d0af226167c"
     }
   ]
 }

@@ -78,6 +78,32 @@
 +    } else {
 +      return invalid('invalid planMode (use "plan"|"normal" or null)');
 +    }
++    // Smarter-Claw chip-stick fix (Layer A): mirror entry.planMode
++    // immediately after a planMode-only patch (e.g. user clicks the
++    // chip's Plan/Normal entry). Without this, the slot updates but
++    // the UI's resolveCurrentMode reads `entry.planMode.mode` which
++    // stays stale until the next plugin-side persist — so the chip
++    // visually reverts to "Default" / the previous selection. Mirror
++    // logic identical to the planApproval branch's mirror further
++    // down — kept inline (vs factored into a helper) so this patch
++    // stays drop-in compatible with older plugin SDK shapes.
++    {
++      const writtenSlot = readSmarterClawSlot(next as unknown as Record<string, unknown>);
++      if (writtenSlot) {
++        const nextEntry = next as unknown as Record<string, unknown>;
++        nextEntry.planMode = {
++          mode: writtenSlot.planMode,
++          approval: writtenSlot.planApproval,
++          ...(writtenSlot.lastPlanSteps && typeof writtenSlot.lastPlanSteps === "object" && "title" in (writtenSlot.lastPlanSteps as Record<string, unknown>)
++            ? { title: (writtenSlot.lastPlanSteps as { title?: string }).title }
++            : {}),
++          ...(writtenSlot.recentlyApprovedAt
++            ? { recentlyApprovedAt: writtenSlot.recentlyApprovedAt }
++            : {}),
++          ...(writtenSlot.autoApprove ? { autoApprove: writtenSlot.autoApprove } : {}),
++        };
++      }
++    }
 +  }
 +
 +  if ("planApproval" in patch && (patch as { planApproval?: unknown }).planApproval !== undefined) {
