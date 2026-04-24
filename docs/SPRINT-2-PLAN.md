@@ -151,6 +151,47 @@ After all 4 land:
 
 **Risk 4 — test coverage regression.** 563 tests today; each PR adds ~30 contract tests + updates ~10 existing. Net +120 tests. Vitest CI time goes from ~28s to ~50s — still well under the 10-min CI timeout.
 
+## Adversarial review findings (2026-04-25 sub-agent pass)
+
+A general-purpose research agent ran a structural attack against this design before implementation. Five issues found; three are **PR-a-blocking** and require design changes here. The recommendation was "PROCEED WITH MODIFICATIONS" — direction is right, scope of PR a needs to grow.
+
+### Blocker #1 — host-patch is a continuing slot writer (CRITICAL, agent confidence 90%)
+
+The Sprint 1 host patch `installer/patches/core/sessions-patch-handler-plan-mode.diff` (lines 25-50, 74, 168-178, 220-235) writes `pluginMetadata['smarter-claw']` directly when an inline-button approval lands. After PR a, that's an out-of-band writer to the legacy slot — the file state still says `awaiting-approval` while the slot says `approved`. The "migration is one-way" claim in Risk 2 is false because the host patch is a continuing writer, not a one-time migration source.
+
+**Required PR-a-scope addition**: Amend `sessions-patch-handler-plan-mode.diff` so the patch handler STOPS writing the slot once file state exists. Two options:
+- **(a)** Patch handler writes to a "host-mutation queue" file at `~/.openclaw/state/smarter-claw/host-mutations.jsonl`; plugin drains in `before_prompt_build`. Decouples paths cleanly.
+- **(b)** Patch handler becomes a thin event emitter via `publishUiHint` or equivalent; plugin's hook reconciles. Cleaner but requires SDK seam audit.
+
+PR-a now: ~400 → ~600 LOC.
+
+### Blocker #2 — read-path becomes async file I/O on every hot path (CRITICAL, agent confidence 95%)
+
+`readSmarterClawState(entry)` is called synchronously from at least 6 hot paths: `archetype-hook.ts:84`, `injection-drain-hook.ts:74`, `slash-commands.ts:326`, `plan-mode-status-tool.ts`, `lifecycle-hooks.ts:19`, `runtime-api.ts:181`. PR a §4 changes signature to `loadPluginState(sessionKey)` (async). Several call sites only have the entry in scope (inside `update: (entry) => …` callbacks) — `sessionKey` is not always plumbed. Even where it is, every read becomes a syscall, including `before_tool_call` on the latency-critical loop.
+
+**Required PR-a-scope additions**:
+1. Audit every `readSmarterClawState` call site; explicitly enumerate which receive `sessionKey`. For ones that don't, plumb it through.
+2. Keep an in-process per-`sessionKey` LRU cache invalidated on every `withPluginState` write. Cache hit → no syscall. Cache miss → file read.
+3. Keep a **synchronous** `readSmarterClawStateFromEntry(entry)` fast-path that reads the projection from the entry's top-level mirror. Only fall through to file if projection is incomplete (during migration window). This means the `before_prompt_build` and `before_tool_call` hot paths stay synchronous.
+
+### Blocker #3 — Lock ordering between file lock + store lock is undefined (HIGH, agent confidence 80%)
+
+`withPluginState` takes a file lock; `updateSessionStoreEntry` is already wrapped in `withSessionStoreLock(storePath)` (per runtime-api.ts:200-210). After Sprint 2, an Approve click takes BOTH locks sequentially. Worse, the acquire order isn't pinned: host-patch path takes store lock first then plugin code may want file lock; plugin-persist path takes file lock first then enters store lock via `updateSessionStoreEntry`'s callback. Classic AB/BA deadlock if both directions race.
+
+**Required PR-a-scope addition**: Pin global lock order — file lock MUST always be acquired BEFORE store lock, never the reverse. This forces Blocker #1's resolution to be option (a) (host-patch writes to queue file) rather than option (b) (host-patch enters plugin code reentrantly while holding store lock — that path can't safely acquire the file lock).
+
+### Non-blockers (defer to follow-up)
+
+- **#4 Vocabulary translation is one-way.** Host upgrades that add new approval states would round-trip through projection but file-state writer doesn't accept them back. **Fix**: bidirectional projection schema with exhaustive `assertNever` switch + "rejected unknown vocabulary" log family. **Defer** to PR d (observability) — the silent-drop becomes visible there.
+
+- **#5 Test coverage gaps.** (a) Session-delete cleanup: orphaned files in state dir accumulate; need GC pass or `on:session_deleted` SDK hook. (b) Read-only filesystem fallback: `withPluginState` should degrade to in-memory ephemeral with warning, not crash. (c) `sha256(sessionKey).slice(0,16)` is 64-bit truncation; collision probability nontrivial across multi-tenant deploys. **Fix**: GC test in PR a, RO-FS test in PR a, full-hash + length suffix in PR a.
+
+### Updated PR-a scope after these findings
+
+Original: ~400 LOC + tests
+Updated: ~600 LOC + tests (added: host-mutation queue, LRU read cache, fast-path sync read, lock-order assertion, GC + RO-FS handling, full-hash filenames)
+Estimated: 4-6 hr of focused work, not 2-4 hr.
+
 ## Upstream RFC parallel track
 
 While Sprint 2 ships these workarounds in our plugin, file an upstream RFC against `openclaw/openclaw` for `mergeSessionEntryWithPolicy` — a non-shallow-merge variant that preserves unknown plugin slots. Once upstream lands (estimated post-v2026.5.x), Smarter-Claw can drop the file-state migration and write directly to `pluginMetadata['smarter-claw']` again with safety. The file-state path stays as the multi-process-safe option for hosts that opt in.
