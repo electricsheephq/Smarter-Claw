@@ -131,14 +131,34 @@ export function createPlanModeStatusTool(options?: CreatePlanModeStatusToolOptio
 
       const planState = entry ? readSmarterClawState(entry) : undefined;
       const inPlanMode = planState?.planMode === "plan";
+      // PR #70071 P2.8 (Smarter-Claw tracking issue #51) — surface
+      // the executing state explicitly. Both can be false (truly
+      // idle); one can be true (designing OR executing); never both
+      // true (mode is exclusive). Pre-P2.8 the agent would have seen
+      // "Not in plan mode (mode=executing)" — accurate but not
+      // actionable. The new branch tells the agent how much execution
+      // work remains so it can prioritize correctly.
+      const inExecution = planState?.planMode === "executing";
       const lastPlan = planState?.lastPlanSteps;
+      // Step-count breakdown for the executing-state summary. Smarter-
+      // Claw's PlanStep uses `done?: boolean` (vs openclaw-1's richer
+      // pending/in_progress/completed/cancelled status enum). Done
+      // count maps to "completed"; the rest are "remaining" — close
+      // enough for an agent-facing summary that just signals
+      // "how much work is left".
+      const totalSteps = lastPlan?.steps?.length ?? 0;
+      const doneSteps = lastPlan?.steps?.filter((s) => s.done === true).length ?? 0;
+      const remainingSteps = totalSteps - doneSteps;
 
       const status = {
         inPlanMode,
+        inExecution,
         approval: planState?.planApproval,
         title: lastPlan?.title,
         approvalRunId: undefined as string | undefined, // not yet tracked in plugin slice
-        planStepCount: lastPlan?.steps?.length ?? 0,
+        planStepCount: totalSteps,
+        planStepDoneCount: doneSteps,
+        planStepRemainingCount: remainingSteps,
         openSubagentCount: openSubagentRunIds.length,
         openSubagentRunIds: openSubagentRunIds.slice(0, 10),
         recentlyApprovedAt: planState?.recentlyApprovedAt,
@@ -154,11 +174,18 @@ export function createPlanModeStatusTool(options?: CreatePlanModeStatusToolOptio
         ...(sessionStoreReadError ? { sessionStoreReadError } : {}),
       };
 
+      // Three-branch summary (P2.8 — was two-branch):
+      //   - inPlanMode    → designing
+      //   - inExecution   → post-approval execution NEW
+      //   - else          → truly idle (mode === "normal" OR no entry)
+      // Plus the existing failure branch (!sessionStoreReadOk).
       const summary = !sessionStoreReadOk
         ? `WARNING: session-store read failed (${sessionStoreReadError ?? "unknown error"}); plan-mode state is UNKNOWN. The agent should treat this as a transient diagnostic failure, not a confirmed "normal" state.`
         : inPlanMode
-          ? `In plan mode (approval=${planState?.planApproval ?? "none"}; title="${lastPlan?.title ?? "(unset)"}"; ${openSubagentRunIds.length} subagent(s) in flight; ${lastPlan?.steps?.length ?? 0} plan step(s) tracked).`
-          : `Not in plan mode (mode=${planState?.planMode ?? "normal"}; ${planState?.recentlyApprovedAt ? `recently approved at ${planState.recentlyApprovedAt}` : "no recent approval"}).`;
+          ? `In plan mode (approval=${planState?.planApproval ?? "none"}; title="${lastPlan?.title ?? "(unset)"}"; ${openSubagentRunIds.length} subagent(s) in flight; ${totalSteps} plan step(s) tracked).`
+          : inExecution
+            ? `Executing approved plan (title="${lastPlan?.title ?? "(unset)"}"; approval=${planState?.planApproval ?? "approved"}; ${remainingSteps} step(s) remaining of ${totalSteps}; ${doneSteps} completed). Continue executing the approved steps; call update_plan after each step finishes to mark it done.`
+            : `Not in plan mode (mode=${planState?.planMode ?? "normal"}; ${planState?.recentlyApprovedAt ? `recently approved at ${planState.recentlyApprovedAt}` : "no recent approval"}).`;
       const debugSuffix = debugLogEnabled
         ? " Plan-mode debug log is ENABLED — tail with: tail -F ~/.openclaw/logs/gateway.err.log | grep '\\[smarter-claw/'"
         : " Plan-mode debug log is DISABLED — enable with: openclaw config set plugins.entries.smarter-claw.config.debugLog true";
