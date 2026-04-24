@@ -26,8 +26,10 @@ import {
   type PersistSmarterClawStateResult,
 } from "../runtime-api.js";
 import { persistPlanArchetypeMarkdown } from "./archetype-persist.js";
+import { appendToInjectionQueue } from "./injections.js";
 import { renderFullPlanArchetypeMarkdown } from "./plan-render.js";
 import { logPlanModeDebug } from "./debug-log.js";
+import { shouldAutoClosePlan } from "./snapshot-persister.js";
 import type { PlanProposal, PlanStep, SmarterClawSessionState } from "./types.js";
 
 export type ToolResultPersistContext = {
@@ -101,6 +103,17 @@ export async function handleToolResultPersist(
  * hook is the only path that updates lastPlanSteps when only update_plan
  * was called (e.g., agent in plan mode tracking progress without re-
  * submitting via exit_plan_mode).
+ *
+ * Parity port #4 (2026-04-24): also runs the auto-close + [PLAN_COMPLETE]
+ * logic from the openclaw-1 plan-snapshot-persister. The plugin SDK
+ * doesn't expose `onAgentEvent` so we can't wire `startPlanSnapshotPersister`
+ * directly — instead we fold the equivalent close-on-complete behavior
+ * into the existing `tool_result_persist` hook handler. When every step
+ * reaches a terminal status (completed/cancelled) AND the cycle is in
+ * an approved state (or within the post-approval grace window), flip
+ * planMode → "normal" and enqueue a `[PLAN_COMPLETE]` injection so the
+ * agent's NEXT turn knows to summarize + stop. Mirrors
+ * snapshot-persister.handlePlanEvent's close-on-complete branch.
  */
 async function handleUpdatePlanPersist(args: {
   event: LooseEvent;
@@ -112,6 +125,17 @@ async function handleUpdatePlanPersist(args: {
   if (!Array.isArray(rawPlan)) return;
   const steps = parsePlanStepsFromTool(rawPlan);
   if (steps.length === 0) return;
+
+  // Pre-compute "are all steps terminal?" using the raw plan's status
+  // field (the parsed PlanStep loses the cancelled/completed
+  // distinction by mapping both to `done`). Covers the auto-close
+  // signal the plan-snapshot-persister used.
+  const allTerminal = rawPlan.every((entry) => {
+    if (!entry || typeof entry !== "object") return false;
+    const e = entry as Record<string, unknown>;
+    const status = typeof e.status === "string" ? e.status : "";
+    return status === "completed" || status === "cancelled";
+  });
 
   await persistFromHook({
     sessionKey: args.sessionKey,
@@ -126,6 +150,49 @@ async function handleUpdatePlanPersist(args: {
           ? { ...existingProposal, steps }
           : { title: "Untitled plan", steps },
       };
+
+      // Parity port #4 close-on-complete branch. Only fire when:
+      //   - The agent just emitted a fully-terminal plan,
+      //   - shouldAutoClosePlan agrees (approved/edited cycle, or
+      //     within the post-deletion grace window).
+      // When suppressed, the agent still needs to call exit_plan_mode
+      // explicitly (matches the openclaw-1 persister's "auto-close
+      // suppressed" log).
+      if (allTerminal) {
+        const recentlyApprovedAtMs = base.recentlyApprovedAt
+          ? Date.parse(base.recentlyApprovedAt) || undefined
+          : undefined;
+        const canClose = shouldAutoClosePlan({
+          approval:
+            base.planApproval === "approved" || base.planApproval === "rejected"
+              ? base.planApproval
+              : base.planApproval === "awaiting-approval"
+                ? "pending"
+                : undefined,
+          recentlyApprovedAt: recentlyApprovedAtMs,
+        });
+        if (canClose) {
+          // Flip planMode to normal + enqueue [PLAN_COMPLETE] injection.
+          const completionStepCount = steps.length;
+          const completionInjectionText =
+            `[PLAN_COMPLETE]: ${completionStepCount} step${completionStepCount === 1 ? "" : "s"} ` +
+            `completed. Post a brief summary of what was done and stop. The plan has been ` +
+            `auto-closed; the user can start a new plan cycle if needed.`;
+          const queueHost = { pendingAgentInjections: next.pendingAgentInjections };
+          appendToInjectionQueue(queueHost, {
+            id: `plan-complete-${args.sessionKey}-${Date.now()}`,
+            kind: "plan_complete",
+            text: completionInjectionText,
+            createdAt: Date.now(),
+          });
+          return {
+            ...next,
+            planMode: "normal",
+            planApproval: "idle",
+            pendingAgentInjections: queueHost.pendingAgentInjections,
+          };
+        }
+      }
       return next;
     },
   });
