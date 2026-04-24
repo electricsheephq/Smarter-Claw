@@ -31,6 +31,7 @@ import {
 } from "./src/lifecycle-hooks.js";
 import { shouldBlockMutation } from "./src/mutation-gate.js";
 import { bustPlanModeCache, getPlanModeCache, setPlanModeCache } from "./src/plan-mode-cache.js";
+import { claimToolResultPersist } from "./src/tool-result-dedup.js";
 import { buildSlashCommandDeps } from "./src/slash-command-deps.js";
 import { createPlanCommandHandler } from "./src/slash-commands.js";
 import { handleToolResultPersist } from "./src/tool-result-persist-hook.js";
@@ -444,6 +445,16 @@ export default definePluginEntry({
     //   - exit_plan_mode: write plan-YYYY-MM-DD-<slug>.md to disk under
     //     ~/.openclaw/agents/<id>/plans/ for operator audit trail
     api.on("tool_result_persist", (event, ctx) => {
+      // BUG #5 dedup: vanilla openclaw v2026.4.23-beta.5 fires BOTH
+      // `tool_result_persist` and `before_message_write` for every
+      // exit_plan_mode/update_plan call. Without dedup we double-write
+      // archetype MDs + race the slice. Claim first; the
+      // before_message_write handler below skips if we won.
+      const msgWithId = (event as { message?: { id?: string }; toolName?: string });
+      const claimed = claimToolResultPersist(msgWithId.toolName, msgWithId.message?.id);
+      if (!claimed) {
+        return;
+      }
       // Returns void per the SDK contract — the hook is fire-and-forget
       // for our purposes (we never replace the persisted message).
       // Caught + logged inside the handler so any failure here doesn't
@@ -537,9 +548,17 @@ export default definePluginEntry({
     }
 
     api.on("before_message_write", (event, ctx) => {
-      const msg = event.message as { toolName?: string; type?: string };
+      const msg = event.message as { toolName?: string; type?: string; id?: string };
       const toolName = msg?.toolName;
       if (toolName !== "update_plan" && toolName !== "exit_plan_mode") {
+        return undefined;
+      }
+      // BUG #5 dedup: tool_result_persist hook above already claims for
+      // these tool names on current host versions. Only fire the
+      // fallback path if no one claimed (i.e. tool_result_persist
+      // didn't fire for this message — older host or synthetic path).
+      const claimed = claimToolResultPersist(toolName, msg?.id);
+      if (!claimed) {
         return undefined;
       }
       void handleToolResultPersist(
