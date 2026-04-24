@@ -252,6 +252,16 @@ export async function handleAgentEnd(
 // Loose local copy of the host's PluginHookGatewayCronCreateInput so
 // we don't have to depend on the host's typed exports (which differ
 // across openclaw publishes).
+//
+// openclaw v2026.4.23-beta.5 tightened the cron payload schema. The
+// permitted shapes are now:
+//   - `{ kind: "systemEvent"; text: string }` (broadcast, no session)
+//   - `{ kind: "agentTurn"; message: string; ... }` (session-targeted)
+// Our payload uses the `agentTurn` shape because the cron is
+// session-targeted (sessionTarget: "current"). Earlier openclaw
+// versions accepted `kind: "synthetic-user-message"` + `text` which
+// the host now rejects with "isolated/current/session cron jobs
+// require payload.kind=\"agentTurn\"".
 type CronCreateInput = {
   name: string;
   description: string;
@@ -259,7 +269,7 @@ type CronCreateInput = {
   schedule: { kind: string; expr: string; tz?: string };
   sessionTarget: string;
   wakeMode: string;
-  payload: { kind: string; text?: string };
+  payload: { kind: "agentTurn"; message: string } | { kind: "systemEvent"; text: string };
 };
 
 export async function handleGatewayStart(ctx: {
@@ -298,9 +308,19 @@ export async function handleGatewayStart(ctx: {
       },
       sessionTarget: "current",
       wakeMode: "auto",
+      // openclaw v2026.4.23-beta.5 tightened the cron payload schema:
+      // session-targeted crons now require `payload.kind: "agentTurn"`
+      // and use the field name `message` (not `text`). Pre-fix this
+      // registration silently failed at gateway_start with
+      // `[smarter-claw/tool_call] gateway_start:cron-failed details=
+      // "isolated/current/session cron jobs require payload.kind=
+      // \"agentTurn\""` — verified live during Eva's v2026.4.23-beta.5
+      // cutover. The other valid kind is `systemEvent` (broadcast,
+      // no session target); `agentTurn` is the right shape for our
+      // per-session plan-mode nudge.
       payload: {
-        kind: "synthetic-user-message",
-        text:
+        kind: "agentTurn",
+        message:
           "[PLAN_NUDGE]: This session is in plan mode but has been idle. Either (a) continue " +
           "investigation with a read-only tool, (b) submit the proposal via exit_plan_mode, or (c) " +
           "exit plan mode if the work is complete.",
