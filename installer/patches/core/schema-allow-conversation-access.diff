@@ -1,0 +1,16 @@
+@@ -22706,6 +22706,12 @@
+                     allowPromptInjection: {
+                       type: "boolean",
+                       title: "Allow Prompt Injection Hooks",
+                       description:
+                         "Controls whether this plugin may mutate prompts through typed hooks. Set false to block `before_prompt_build` and ignore prompt-mutating fields from legacy `before_agent_start`, while preserving legacy `modelOverride` and `providerOverride` behavior.",
+                     },
++                    allowConversationAccess: {
++                      type: "boolean",
++                      title: "Allow Conversation Access Hooks",
++                      description:
++                        "Controls whether this plugin may receive raw conversation content from llm_input/llm_output/agent_end hooks. Non-bundled plugins must opt in explicitly. Smarter-Claw needs this true to power the agent_end-driven escalating-retry suite. Smarter-Claw installer adds this property because the upstream v2026.4.23-beta.5 schema generation missed it (the field is in TS types + normalization + status reader but not in the generated JSON schema). Track upstream for removal of this patch when their schema regen catches up.",
++                    },
+                   },
+                   additionalProperties: false,
+                   title: "Plugin Hook Policy",
