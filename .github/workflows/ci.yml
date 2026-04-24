@@ -50,8 +50,20 @@ jobs:
       - name: Build
         run: pnpm build
 
+      # Run vitest with --passWithNoTests=false (the project default), then
+      # ALSO assert non-zero test count via reporter JSON. Belt-and-suspenders
+      # — vitest exits 0 when zero tests are discovered if any test file
+      # is `*.skip`/`*.todo`-only; the reporter check catches that case
+      # whereas the exit code wouldn't.
       - name: Run unit tests
-        run: pnpm test --run
+        run: |
+          pnpm test --run --reporter=json --outputFile=/tmp/vitest-report.json | tee /tmp/vitest-stdout.log
+          numTests=$(node -e "const r=JSON.parse(require('fs').readFileSync('/tmp/vitest-report.json','utf8')); console.log(r.numTotalTests ?? 0)")
+          if [ "$numTests" = "0" ]; then
+            echo "FAIL: vitest discovered 0 tests"
+            exit 1
+          fi
+          echo "vitest discovered $numTests tests"
 
       # Installer dry-run against the host repo's structure. We don't have
       # a real openclaw worktree available in CI, so we verify the
@@ -88,3 +100,48 @@ jobs:
 
       - name: Run TypeScript declaration check
         run: pnpm exec tsc --noEmit
+
+      # Pack the package as users would receive it via `npm install` and
+      # smoke-test that the tarball:
+      #   1. Builds without postinstall errors
+      #   2. Contains the dist/ + installer/ + plugin manifest
+      #   3. Exposes the installer CLI from a fresh extract
+      #   4. Reports the same version in package.json, dist/openclaw.plugin.json,
+      #      and the installer patch-plan's expectedSmarterClawVersion
+      - name: Pack + smoke-install tarball
+        run: |
+          pnpm pack --pack-destination /tmp/sc-pack | tee /tmp/pack-output.txt
+          tarball=$(ls /tmp/sc-pack/*.tgz | head -1)
+          if [ -z "$tarball" ]; then
+            echo "FAIL: pnpm pack produced no tarball"
+            exit 1
+          fi
+          echo "Tarball: $tarball ($(du -h "$tarball" | cut -f1))"
+
+          # Extract to a fresh dir and verify expected files are present
+          mkdir -p /tmp/sc-extract && tar -xzf "$tarball" -C /tmp/sc-extract
+          for required in package/dist/index.js package/dist/openclaw.plugin.json package/installer/bin/install.mjs package/installer/bin/uninstall.mjs package/installer/bin/verify.mjs package/installer/patch-plan.json; do
+            if [ ! -f "/tmp/sc-extract/$required" ]; then
+              echo "FAIL: tarball missing required file: $required"
+              echo "Tarball contents:"
+              tar -tzf "$tarball" | head -50
+              exit 1
+            fi
+          done
+          echo "Tarball contains all required files."
+
+          # Installer CLI must be runnable from the extracted tarball
+          node /tmp/sc-extract/package/installer/bin/install.mjs --help 2>&1 | head -3
+          if [ $? -ne 0 ]; then
+            echo "FAIL: installer CLI failed to load from packed artifact"
+            exit 1
+          fi
+
+          # Version consistency: package.json vs plugin manifest
+          pkgVersion=$(node -e "console.log(require('./package.json').version)")
+          pluginVersion=$(node -e "console.log(JSON.parse(require('fs').readFileSync('/tmp/sc-extract/package/dist/openclaw.plugin.json','utf8')).version)")
+          if [ "$pkgVersion" != "$pluginVersion" ]; then
+            echo "FAIL: version drift — package.json=$pkgVersion plugin manifest=$pluginVersion"
+            exit 1
+          fi
+          echo "Version consistent: $pkgVersion (package.json + plugin manifest)"
