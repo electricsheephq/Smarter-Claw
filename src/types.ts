@@ -150,6 +150,20 @@ export type SmarterClawSessionState = {
   cycleId?: string;
   /** Subagent run ids that block plan exit until they settle. */
   blockingSubagentRunIds?: string[];
+  /**
+   * Cron job ids for design-phase nudges scheduled at enter_plan_mode
+   * (10/30/60 min). Cleaned up on plan resolve. See
+   * `plan-nudge-crons.ts`.
+   */
+  nudgeJobIds?: string[];
+  /**
+   * Cron job ids for execution-phase nudges scheduled at the approve
+   * transition (1/3/5 min). Sibling to `nudgeJobIds` for the executing
+   * phase. Cleaned up on close-on-complete OR /plan off. See
+   * `plan-execution-nudge-crons.ts` (PR #70071 P2.9 — recovered via
+   * tracking issue #51).
+   */
+  executionNudgeJobIds?: string[];
   /** ISO timestamp when the plan-mode intro message was last delivered. */
   planModeIntroDeliveredAt?: string;
   /** ISO timestamp of the most recent approval. */
