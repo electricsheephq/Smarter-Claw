@@ -1,4 +1,4 @@
-@@ -485,7 +485,443 @@
+@@ -485,7 +485,487 @@
        next.groupActivation = normalized;
      }
    }
@@ -54,8 +54,20 @@
 +    // turn, blowing the model's context window. Other kinds (question_answer,
 +    // plan_complete, etc) are not capped here — only plan_decision was the
 +    // observed accumulation vector.
++    //
++    // Copilot review: sort by createdAt before slicing so eviction is
++    // chronological (oldest dropped first), matching the plugin helper's
++    // policy. Filter order alone is insertion-order which can diverge from
++    // chronological if entries arrive out-of-order from concurrent paths.
 +    const PLAN_DECISION_CAP = 10;
-+    const planDecisions = filtered.filter((q) => q.kind === "plan_decision");
++    const planDecisions = filtered
++      .filter((q) => q.kind === "plan_decision")
++      .slice() // copy before sort to avoid mutating filtered's order semantics
++      .sort((a, b) => {
++        const ta = typeof a.createdAt === "number" ? a.createdAt : 0;
++        const tb = typeof b.createdAt === "number" ? b.createdAt : 0;
++        return ta - tb; // oldest first → slice(0, dropCount) drops oldest
++      });
 +    if (planDecisions.length > PLAN_DECISION_CAP) {
 +      const dropCount = planDecisions.length - PLAN_DECISION_CAP;
 +      const droppedIds = new Set(
@@ -78,7 +90,7 @@
 +      // (electricsheephq/Smarter-Claw#72): also clear pendingInteraction,
 +      // recentlyApprovedAt, and rejectionCount on full reset. Without
 +      // these clears, an orphaned pendingInteraction can persist into
-+      // the next cycle and a stale approvalId becomes accept-able under
++      // the next cycle and a stale approvalId becomes acceptable under
 +      // a new mode session — confused UI + stale-approval leak.
 +      const slot = readSmarterClawSlot(next as unknown as Record<string, unknown>) ?? {
 +        planMode: "normal",
@@ -131,6 +143,20 @@
 +            : {}),
 +          ...(writtenSlot.autoApprove ? { autoApprove: writtenSlot.autoApprove } : {}),
 +        };
++        // C7 follow-up (Eva live-test 2026-04-25 04:55Z): when slot's
++        // pendingInteraction was cleared (planMode reset / null path),
++        // also clear top-level mirror fields. The session-row hydration
++        // and chat slash-cmd-executor read entry.pendingInteraction +
++        // entry.pendingQuestionApprovalId at top level; leaving them set
++        // after a planMode:null reset traps the UI in "there's a pending
++        // approval" — every subsequent agent reply is blocked because
++        // the mutation gate sees no plan-mode but the UI keeps showing
++        // a phantom approval card. Clear both top-level mirror fields
++        // when the slot says no pending interaction exists.
++        if (!writtenSlot.pendingInteraction) {
++          delete nextEntry.pendingInteraction;
++          delete nextEntry.pendingQuestionApprovalId;
++        }
 +      }
 +    }
 +  }
@@ -396,10 +422,28 @@
 +      appendInjection(nextSlot, {
 +        id: `question-answer-${approvalId}`,
 +        kind: "question_answer",
-+        text: `[QUESTION_ANSWER]: ${JSON.stringify(sanitized)}`,
++        // Copilot review: emit raw sanitized text (matches slash-command
++        // path's [QUESTION_ANSWER]: <text> format from
++        // src/slash-command-deps.ts). JSON.stringify here would surface
++        // quoted/escaped strings to the agent only on this path.
++        text: `[QUESTION_ANSWER]: ${sanitized}`,
 +        createdAt: Date.now(),
 +      });
 +      writeSmarterClawSlot(next as unknown as Record<string, unknown>, nextSlot);
++      // Codex review P2: also clear the top-level pendingQuestionApprovalId
++      // mirror in this request cycle. The webchat /plan answer resolver
++      // falls back to that top-level field when the slot is missing
++      // (BUG #1 mirror); leaving it stale means the UI keeps re-trying
++      // an answer that no longer has a pending question and gets
++      // rejected as stale. Clear in lockstep with the slot clear above.
++      const nextEntryAns = next as unknown as Record<string, unknown>;
++      delete nextEntryAns.pendingQuestionApprovalId;
++      if (nextEntryAns.pendingInteraction) {
++        const piAns = nextEntryAns.pendingInteraction as { kind?: string };
++        if (piAns.kind === "question") {
++          delete nextEntryAns.pendingInteraction;
++        }
++      }
 +    } else {
 +      return invalid(
 +        'planApproval action must be one of: approve, edit, reject, auto, answer',

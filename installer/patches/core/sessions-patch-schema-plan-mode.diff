@@ -1,4 +1,4 @@
-@@ -132,6 +132,67 @@
+@@ -132,6 +132,71 @@
    {
      key: NonEmptyString,
      label: Type.Optional(Type.Union([SessionLabelString, Type.Null()])),
@@ -56,6 +56,11 @@
 +          {
 +            action: Type.Literal("answer"),
 +            approvalId: Type.Optional(NonEmptyString),
++            // Codex review P1: webchat executor conditionally sends
++            // questionId on answer submissions when the pending question
++            // surfaces an id. Without accepting it, valid requests are
++            // rejected at schema validation before the handler runs.
++            questionId: Type.Optional(NonEmptyString),
 +            answer: Type.String(),
 +          },
 +          { additionalProperties: false },
