@@ -216,7 +216,7 @@ export function createExitPlanModeTool(options?: CreateExitPlanModeToolOptions):
     displaySummary: EXIT_PLAN_MODE_TOOL_DISPLAY_SUMMARY,
     description: describeExitPlanModeTool(),
     parameters: ExitPlanModeToolSchema,
-    execute: async (_toolCallId, args, _signal) => {
+    execute: async (toolCallId, args, _signal) => {
       const params = args as Record<string, unknown>;
       const summary = readStringParam(params, "summary");
       // PR-9 Tier 1 + Bug 2/6 fix: title is REQUIRED. Without it the
@@ -325,10 +325,14 @@ export function createExitPlanModeTool(options?: CreateExitPlanModeToolOptions):
         ...(archetype.verification ? { verification: archetype.verification } : {}),
         ...(archetype.references ? { references: archetype.references } : {}),
       };
+      // The host event bridge currently emits `plan-${toolCallId}`.
+      // Persist the same token here so plugin state, approval events,
+      // UI actions, and sessions.patch stale-token checks all agree.
+      const approvalId = `plan-${toolCallId}`;
       const persist = await persistFromTool(
         persistCtx,
         "exit_plan_mode",
-        exitPlanModeStateUpdate(proposal),
+        exitPlanModeStateUpdate(proposal, approvalId),
       );
 
       // Audit-trail markdown — write right here in the tool body since
@@ -377,6 +381,7 @@ export function createExitPlanModeTool(options?: CreateExitPlanModeToolOptions):
         content: [{ type: "text" as const, text }],
         details: {
           status: "approval_requested" as const,
+          approvalId,
           persisted: persist.persisted,
           ...(title ? { title } : {}),
           ...(summary ? { summary } : {}),

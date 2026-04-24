@@ -18,7 +18,9 @@ import {
   isAutoApproveEnabled,
   isInPlanMode,
   persistSmarterClawState,
+  projectSmarterClawHostCompat,
   readSmarterClawState,
+  toHostApprovalState,
   writeSmarterClawState,
 } from "../runtime-api.js";
 import { SMARTER_CLAW_PLUGIN_ID } from "../src/types.js";
@@ -99,6 +101,111 @@ describe("isInPlanMode / isAutoApproveEnabled", () => {
         pluginMetadata: { [SMARTER_CLAW_PLUGIN_ID]: { autoApprove: true } },
       }),
     ).toBe(true);
+  });
+});
+
+describe("projectSmarterClawHostCompat", () => {
+  it("maps plugin approval vocabulary to the PR #70071 host vocabulary", () => {
+    expect(toHostApprovalState("idle")).toBe("none");
+    expect(toHostApprovalState("proposed")).toBe("pending");
+    expect(toHostApprovalState("awaiting-approval")).toBe("pending");
+    expect(toHostApprovalState("approved")).toBe("approved");
+    expect(toHostApprovalState("rejected")).toBe("rejected");
+    expect(toHostApprovalState("cancelled")).toBe("timed_out");
+    expect(toHostApprovalState("expired")).toBe("timed_out");
+  });
+
+  it("projects pending plan approvals with compact approval state and plan metadata", () => {
+    const projected = projectSmarterClawHostCompat({
+      planMode: "plan",
+      planApproval: "awaiting-approval",
+      autoApprove: true,
+      cycleId: "cycle-1",
+      lastPlanSteps: {
+        title: "Ship adapter",
+        steps: [{ index: 1, description: "Normalize approval vocabulary", done: true }],
+      },
+      pendingInteraction: {
+        kind: "approval",
+        approvalId: "plan-123",
+        deliveredAt: "2026-04-24T10:00:00.000Z",
+      },
+    });
+
+    expect(projected.planMode).toMatchObject({
+      mode: "plan",
+      approval: "pending",
+      approvalId: "plan-123",
+      cycleId: "cycle-1",
+      title: "Ship adapter",
+      autoApprove: true,
+      lastPlanSteps: [{ step: "Normalize approval vocabulary", status: "completed" }],
+    });
+    expect(projected.pendingInteraction).toMatchObject({
+      kind: "plan",
+      approvalId: "plan-123",
+      title: "Ship adapter",
+      status: "pending",
+      cycleId: "cycle-1",
+    });
+  });
+
+  it("projects pending questions with the fields slash/UI hydration reads", () => {
+    const projected = projectSmarterClawHostCompat({
+      planMode: "plan",
+      planApproval: "idle",
+      autoApprove: false,
+      cycleId: "cycle-q",
+      pendingQuestionApprovalId: "question-approval-1",
+      pendingInteraction: {
+        kind: "question",
+        approvalId: "question-approval-1",
+        questionId: "q-call-1",
+        title: "Choose rollout",
+        prompt: "Ship as one PR or split it?",
+        options: ["One PR", "Split it"],
+        allowFreetext: false,
+        deliveredAt: "2026-04-24T10:00:00.000Z",
+      },
+    });
+
+    expect(projected.planMode).toMatchObject({
+      mode: "plan",
+      approval: "none",
+      approvalId: "question-approval-1",
+      cycleId: "cycle-q",
+    });
+    expect(projected.pendingQuestionApprovalId).toBe("question-approval-1");
+    expect(projected.pendingInteraction).toMatchObject({
+      kind: "question",
+      approvalId: "question-approval-1",
+      questionId: "q-call-1",
+      title: "Choose rollout",
+      prompt: "Ship as one PR or split it?",
+      options: ["One PR", "Split it"],
+      allowFreetext: false,
+      status: "pending",
+      cycleId: "cycle-q",
+    });
+  });
+
+  it("emits explicit top-level clears for stale pending interaction fields", () => {
+    const projected = projectSmarterClawHostCompat({
+      planMode: "normal",
+      planApproval: "approved",
+      autoApprove: false,
+      recentlyApprovedAt: "2026-04-24T10:00:00.000Z",
+    });
+
+    expect(projected.planMode).toMatchObject({
+      mode: "normal",
+      approval: "approved",
+      recentlyApprovedAt: "2026-04-24T10:00:00.000Z",
+    });
+    expect(Object.prototype.hasOwnProperty.call(projected, "pendingInteraction")).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(projected, "pendingQuestionApprovalId")).toBe(true);
+    expect(projected.pendingInteraction).toBeUndefined();
+    expect(projected.pendingQuestionApprovalId).toBeUndefined();
   });
 });
 

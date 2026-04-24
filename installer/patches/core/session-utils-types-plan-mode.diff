@@ -1,0 +1,62 @@
+@@ -16,5 +16,49 @@
+ export type SessionRunStatus = "running" | "done" | "failed" | "killed" | "timeout";
+ 
++export type GatewayPlanModeApproval =
++  | "none"
++  | "pending"
++  | "approved"
++  | "edited"
++  | "rejected"
++  | "timed_out";
++
++export type GatewayPlanMode = {
++  mode?: "plan" | "normal";
++  approval?: GatewayPlanModeApproval;
++  approvalId?: string;
++  cycleId?: string;
++  title?: string;
++  recentlyApprovedAt?: string;
++  autoApprove?: boolean;
++  lastPlanSteps?: Array<{ step: string; status: string; activeForm?: string }>;
++  blockingSubagentRunIds?: string[];
++  lastSubagentSettledAt?: string | number;
++  lastPlanUpdatedAt?: string | number;
++};
++
++export type GatewayPendingInteraction =
++  | {
++      kind: "plan";
++      approvalId: string;
++      title?: string;
++      createdAt?: number;
++      status?: "pending" | "approved" | "edited" | "rejected" | "timed_out";
++      cycleId?: string;
++    }
++  | {
++      kind: "question";
++      approvalId: string;
++      questionId?: string;
++      title?: string;
++      prompt?: string;
++      options?: string[];
++      allowFreetext?: boolean;
++      createdAt?: number;
++      status?: "pending" | "answered" | "timed_out";
++      cycleId?: string;
++    };
++
+ export type GatewaySessionRow = {
+   key: string;
+   spawnedBy?: string;
+@@ -38,6 +82,11 @@
+   sessionId?: string;
+   systemSent?: boolean;
+   abortedLastRun?: boolean;
++  planMode?: GatewayPlanMode;
++  pendingInteraction?: GatewayPendingInteraction;
++  pendingQuestionApprovalId?: string;
++  recentlyApprovedAt?: string;
++  postApprovalPermissions?: { acceptEdits?: boolean; until?: string };
+   thinkingLevel?: string;
+   thinkingOptions?: string[];
+   thinkingDefault?: string;

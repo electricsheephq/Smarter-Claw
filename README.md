@@ -28,8 +28,8 @@ a clean v2026.4.22 worktree with the installer applied):
 - Subagent gate inside `exit_plan_mode` (reads `blockingSubagentRunIds`)
 - Snapshot persister with close-on-complete + `[PLAN_COMPLETE]` injection
 - Plan-archetype markdown written to `~/.openclaw/agents/<id>/plans/plan-YYYY-MM-DD-<slug>.md`
-- 39-patch installer with strict-context drift detection + reversible uninstall
-- 563 unit tests across 18 files, all passing
+- 41-patch installer with strict-context drift detection + reversible uninstall
+- 570 unit tests across 19 files, all passing
 
 **NOT yet validated:**
 
@@ -96,7 +96,7 @@ After install, verify with:
 
 ```bash
 pnpm openclaw plugins list  # smarter-claw should be loaded
-node /path/to/Smarter-Claw/installer/bin/verify.mjs --host=/path/to/openclaw  # all 36 patches OK
+node /path/to/Smarter-Claw/installer/bin/verify.mjs --host=/path/to/openclaw  # all 41 patches OK
 ```
 
 ## Uninstall
@@ -175,7 +175,7 @@ The agent can call `ask_user_question` with 2-6 multiple-choice options (and opt
 
 ## Architecture
 
-Smarter-Claw is a Spicetify-style plugin: a pure OpenClaw plugin AT RUNTIME, but ships with a reversible installer that patches the host's UI files (so plan cards, mode dropdown, approval-card UI render natively in the Control UI without waiting for upstream PR #70071 to merge) and one tiny core diff (re-exports `updateSessionStoreEntry` so plugins can mutate session state).
+Smarter-Claw is a Spicetify-style plugin: plugin-owned runtime state plus a reversible installer that patches the host seams required for PR #70071 parity. The installer patches UI files for plan cards, mode dropdown, and approval-card rendering, and patches a narrow set of core gateway/session seams that current plugin hooks cannot express at 100% parity.
 
 ### Plugin → SDK seams (no patcher required)
 
@@ -197,10 +197,10 @@ Smarter-Claw is a Spicetify-style plugin: a pure OpenClaw plugin AT RUNTIME, but
 |---|---|
 | **UI new files** (verbatim copies from PR #70071) | `ui/src/ui/chat/{plan-cards,mode-switcher,plan-resume}.ts` + tests, `ui/src/ui/views/plan-approval-inline.ts` + test, `ui/src/styles/chat/plan-cards.css` |
 | **UI diffs** (additive mounts in existing files) | 13 i18n locale files (one key each), 2 CSS files, 6 `app-*.ts` files, 3 `chat/` files, `types.ts`, `views/chat.ts` |
-| **Core diff** (1 file, 8 lines) | `src/plugin-sdk/session-store-runtime.ts` — re-export `updateSessionStore` and `updateSessionStoreEntry` so plugins can mutate session state |
+| **Core diffs** (6 files) | `plugin-sdk/session-store-runtime.ts` write seam; `gateway/protocol/schema/sessions.ts` and `gateway/sessions-patch.ts` plan approval actions; `gateway/session-utils*.ts` row forwarding; `agents/pi-embedded-subscribe.handlers.tools.ts` approval event bridge |
 | **Bundled-openclaw shadow** (synthetic) | At install time, swaps the plugin's `node_modules/openclaw` for a symlink to the host repo so dynamic `import("openclaw/plugin-sdk/...")` resolves to the host's PATCHED copy (and not the npm-published version that lacks `updateSessionStoreEntry`) |
 
-This means UI patches AND the core diff are reversible via `installer/bin/uninstall.mjs` — every modification is recorded in `<hostPath>/.smarter-claw-install-manifest.json` with both `originalSha256` and `newSha256` so drift detection refuses to revert manually-modified files.
+This means UI patches and core diffs are reversible via `installer/bin/uninstall.mjs` — every modification is recorded in `<hostPath>/.smarter-claw-install-manifest.json` with both `originalSha256` and `newSha256` so drift detection refuses to revert manually-modified files.
 
 ## Develop
 
@@ -208,7 +208,7 @@ This means UI patches AND the core diff are reversible via `installer/bin/uninst
 git clone https://github.com/electricsheephq/Smarter-Claw.git
 cd Smarter-Claw
 pnpm install
-pnpm test            # vitest run — 470 passing, 1 skipped
+pnpm test            # vitest run — 570 passing, 1 skipped
 pnpm build           # tsc → dist/
 
 # Install your local dev build into a local OpenClaw:
@@ -222,7 +222,7 @@ node ./installer/bin/install.mjs --host=/path/to/openclaw
 |---|---|
 | `2026.4.22` | `0.2.x-dev` (target for first beta release) |
 
-The installer's UI patches and the one core diff are pinned to v2026.4.22 SHAs. Newer OpenClaw versions need a Smarter-Claw patch refresh — patches will refuse to apply on drifted source (drift detection is a feature, not a bug).
+The installer's UI patches and core diffs are pinned to v2026.4.22 SHAs. Newer OpenClaw versions need a Smarter-Claw patch refresh — patches will refuse to apply on drifted source (drift detection is a feature, not a bug).
 
 ## Known limitations (tracked as issues)
 

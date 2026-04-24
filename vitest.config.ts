@@ -10,6 +10,5 @@ export default defineConfig({
     hookTimeout: 15_000,
     isolate: false,
     reporters: process.env.CI ? ["default"] : ["default"],
-    passWithNoTests: true,
   },
 });

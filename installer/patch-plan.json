@@ -225,6 +225,18 @@
     },
     {
       "type": "diff",
+      "relPath": "src/gateway/session-utils.types.ts",
+      "patchRelPath": "patches/core/session-utils-types-plan-mode.diff",
+      "expectedOriginalSha256": "d678017e71d24723821b3e671d8adb516ee25a47ad29373dfa18365ab7df77f8"
+    },
+    {
+      "type": "diff",
+      "relPath": "src/gateway/session-utils.ts",
+      "patchRelPath": "patches/core/session-utils-row-plan-mode.diff",
+      "expectedOriginalSha256": "be4f3e44bf64078868bc20ed5035d94daac7451b32ec0c7761b70030c000fdff"
+    },
+    {
+      "type": "diff",
       "relPath": "src/agents/pi-embedded-subscribe.handlers.tools.ts",
       "patchRelPath": "patches/core/pi-embedded-subscribe-exit-plan-mode-emit.diff",
       "expectedOriginalSha256": "abbd8dbff32d54b6213b4fa4af6d8afecce26181a56275793e5358f4e5cc47b8"

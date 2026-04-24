@@ -1,0 +1,12 @@
+@@ -1401,6 +1401,11 @@
+     sessionId: entry?.sessionId,
+     systemSent: entry?.systemSent,
+     abortedLastRun: entry?.abortedLastRun,
++    planMode: (entry as { planMode?: GatewaySessionRow["planMode"] } | undefined)?.planMode,
++    pendingInteraction: (entry as { pendingInteraction?: GatewaySessionRow["pendingInteraction"] } | undefined)?.pendingInteraction,
++    pendingQuestionApprovalId: (entry as { pendingQuestionApprovalId?: string } | undefined)?.pendingQuestionApprovalId,
++    recentlyApprovedAt: (entry as { recentlyApprovedAt?: string } | undefined)?.recentlyApprovedAt,
++    postApprovalPermissions: (entry as { postApprovalPermissions?: GatewaySessionRow["postApprovalPermissions"] } | undefined)?.postApprovalPermissions,
+     thinkingLevel: entry?.thinkingLevel,
+     thinkingOptions: listThinkingLevelLabels(thinkingProvider, thinkingModel),
+     thinkingDefault: resolveThinkingDefaultForModel({

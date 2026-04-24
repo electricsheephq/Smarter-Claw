@@ -224,12 +224,38 @@ export function applyPatchToState(
       };
     }
     if (pa.action === "answer") {
+      const pending = base.pendingInteraction;
+      if (
+        pending?.kind !== "question" ||
+        pending.approvalId !== pa.approvalId
+      ) {
+        throw new Error("stale question approvalId");
+      }
+      if (pa.questionId && pending.questionId && pa.questionId !== pending.questionId) {
+        throw new Error("stale questionId");
+      }
+      const answer = pa.answer.trim();
+      if (!answer) {
+        throw new Error("empty question answer");
+      }
+      if (
+        pending.options &&
+        pending.options.length > 0 &&
+        pending.allowFreetext !== true &&
+        !pending.options.includes(answer)
+      ) {
+        throw new Error("question answer must match one of the provided options");
+      }
       // Answer flows to the agent via the injection queue similarly.
       const answerHost = { pendingAgentInjections: base.pendingAgentInjections };
+      const sanitizedAnswer = answer.replace(
+        /\[\/QUESTION_ANSWER\]/gi,
+        "[\u200B/QUESTION_ANSWER]",
+      );
       appendToInjectionQueue(answerHost, {
         id: `question-answer-${pa.approvalId}`,
         kind: "question_answer",
-        text: `[QUESTION_ANSWER]: ${pa.answer}`,
+        text: `[QUESTION_ANSWER]: ${sanitizedAnswer}`,
         createdAt: Date.now(),
       });
       return {
@@ -245,4 +271,3 @@ export function applyPatchToState(
   }
   return base;
 }
-

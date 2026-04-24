@@ -290,131 +290,130 @@ export default definePluginEntry({
         sessionKey: "<startup>",
         tool: "register:mutation-gate-disabled-via-config",
       });
-      return;
-    }
-
-    api.on("before_tool_call", async (event, ctx) => {
-      // Wrap the entire body in try/catch — a bug anywhere downstream
-      // (e.g. unexpected throw from shouldBlockMutation) MUST honor the
-      // fail-closed policy rather than bubble out and let the host
-      // default-allow.
-      try {
-        const sessionKey = ctx.sessionKey;
-        const agentId = ctx.agentId;
-        if (!sessionKey || !agentId) {
-          return gateFailureResult(sessionKey, event.toolName, "missing-session-context");
-        }
-
-        let storePath: string | undefined;
+    } else {
+      api.on("before_tool_call", async (event, ctx) => {
+        // Wrap the entire body in try/catch — a bug anywhere downstream
+        // (e.g. unexpected throw from shouldBlockMutation) MUST honor the
+        // fail-closed policy rather than bubble out and let the host
+        // default-allow.
         try {
-          storePath = resolveStorePath(undefined, { agentId });
-        } catch (err) {
-          return gateFailureResult(
-            sessionKey,
-            event.toolName,
-            `resolveStorePath-threw:${(err as Error)?.message ?? String(err)}`,
-          );
-        }
-        if (!storePath) {
-          return gateFailureResult(sessionKey, event.toolName, "missing-store-path");
-        }
+          const sessionKey = ctx.sessionKey;
+          const agentId = ctx.agentId;
+          if (!sessionKey || !agentId) {
+            return gateFailureResult(sessionKey, event.toolName, "missing-session-context");
+          }
 
-        // Per-session in-process cache (#10). Tool calls fire many times
-        // per turn; without caching every call ate the full cost of a
-        // skipCache:true loadSessionStore + JSON.parse. The cache window
-        // is 5s by default — long enough to skip per-turn lookups, short
-        // enough to catch external state flips between turns. Bust on
-        // session_start (handled in session_start hook) and on tool body
-        // writes that change planMode (handled in tool-result-persist).
-        let entry: ReturnType<typeof resolveSessionStoreEntry>["existing"];
-        const cached = getPlanModeCache(sessionKey);
-        if (cached) {
-          entry = cached.entry as typeof entry;
-        } else {
+          let storePath: string | undefined;
           try {
-            const store = loadSessionStore(storePath, { skipCache: true });
-            entry = resolveSessionStoreEntry({ store: store ?? {}, sessionKey }).existing;
+            storePath = resolveStorePath(undefined, { agentId });
           } catch (err) {
             return gateFailureResult(
               sessionKey,
               event.toolName,
-              `session-store-read-failed:${(err as Error)?.message ?? String(err)}`,
+              `resolveStorePath-threw:${(err as Error)?.message ?? String(err)}`,
             );
           }
-          setPlanModeCache(sessionKey, entry as Record<string, unknown> | undefined);
-        }
-
-        // Pull command for exec/bash so the read-only allowlist applies.
-        // Widened to cover every common shell-command param name an MCP
-        // plugin might use (script/code/bash_command/shell_command/cmdline/
-        // input/run/args). The mutation-gate inspects whichever is set.
-        const params = (event.params ?? {}) as Record<string, unknown>;
-        const COMMAND_PARAM_KEYS = [
-          "command",
-          "cmd",
-          "script",
-          "code",
-          "bash_command",
-          "shell_command",
-          "cmdline",
-          "input",
-          "run",
-          "execute",
-        ] as const;
-        let execCommand: string | undefined;
-        for (const key of COMMAND_PARAM_KEYS) {
-          const v = params[key];
-          if (typeof v === "string" && v.length > 0) {
-            execCommand = v;
-            break;
+          if (!storePath) {
+            return gateFailureResult(sessionKey, event.toolName, "missing-store-path");
           }
-        }
-        // Also consider an `args` param: an array of arg tokens (string or
-        // numeric) joined by spaces is a common alternative shape. Only
-        // used when no string-typed command param matched above.
-        if (execCommand === undefined && Array.isArray(params.args)) {
-          const joined = params.args
-            .map((x) => (typeof x === "string" || typeof x === "number" ? String(x) : ""))
-            .join(" ")
-            .trim();
-          if (joined.length > 0) execCommand = joined;
-        }
 
-        let result: ReturnType<typeof shouldBlockMutation>;
-        try {
-          result = shouldBlockMutation({
-            toolName: event.toolName,
-            session: entry,
-            execCommand,
-          });
+          // Per-session in-process cache (#10). Tool calls fire many times
+          // per turn; without caching every call ate the full cost of a
+          // skipCache:true loadSessionStore + JSON.parse. The cache window
+          // is 5s by default — long enough to skip per-turn lookups, short
+          // enough to catch external state flips between turns. Bust on
+          // session_start (handled in session_start hook) and on tool body
+          // writes that change planMode (handled in tool-result-persist).
+          let entry: ReturnType<typeof resolveSessionStoreEntry>["existing"];
+          const cached = getPlanModeCache(sessionKey);
+          if (cached) {
+            entry = cached.entry as typeof entry;
+          } else {
+            try {
+              const store = loadSessionStore(storePath, { skipCache: true });
+              entry = resolveSessionStoreEntry({ store: store ?? {}, sessionKey }).existing;
+            } catch (err) {
+              return gateFailureResult(
+                sessionKey,
+                event.toolName,
+                `session-store-read-failed:${(err as Error)?.message ?? String(err)}`,
+              );
+            }
+            setPlanModeCache(sessionKey, entry as Record<string, unknown> | undefined);
+          }
+
+          // Pull command for exec/bash so the read-only allowlist applies.
+          // Widened to cover every common shell-command param name an MCP
+          // plugin might use (script/code/bash_command/shell_command/cmdline/
+          // input/run/args). The mutation-gate inspects whichever is set.
+          const params = (event.params ?? {}) as Record<string, unknown>;
+          const COMMAND_PARAM_KEYS = [
+            "command",
+            "cmd",
+            "script",
+            "code",
+            "bash_command",
+            "shell_command",
+            "cmdline",
+            "input",
+            "run",
+            "execute",
+          ] as const;
+          let execCommand: string | undefined;
+          for (const key of COMMAND_PARAM_KEYS) {
+            const v = params[key];
+            if (typeof v === "string" && v.length > 0) {
+              execCommand = v;
+              break;
+            }
+          }
+          // Also consider an `args` param: an array of arg tokens (string or
+          // numeric) joined by spaces is a common alternative shape. Only
+          // used when no string-typed command param matched above.
+          if (execCommand === undefined && Array.isArray(params.args)) {
+            const joined = params.args
+              .map((x) => (typeof x === "string" || typeof x === "number" ? String(x) : ""))
+              .join(" ")
+              .trim();
+            if (joined.length > 0) execCommand = joined;
+          }
+
+          let result: ReturnType<typeof shouldBlockMutation>;
+          try {
+            result = shouldBlockMutation({
+              toolName: event.toolName,
+              session: entry,
+              execCommand,
+            });
+          } catch (err) {
+            return gateFailureResult(
+              sessionKey,
+              event.toolName,
+              `shouldBlockMutation-threw:${(err as Error)?.message ?? String(err)}`,
+            );
+          }
+
+          if (result.blocked) {
+            logPlanModeDebug({
+              kind: "tool_call",
+              sessionKey,
+              tool: `before_tool_call:blocked:${event.toolName}`,
+            });
+            return {
+              block: true,
+              blockReason: result.reason ?? "Blocked by Smarter-Claw plan-mode mutation gate.",
+            };
+          }
+          return undefined;
         } catch (err) {
           return gateFailureResult(
-            sessionKey,
+            ctx.sessionKey,
             event.toolName,
-            `shouldBlockMutation-threw:${(err as Error)?.message ?? String(err)}`,
+            `unhandled-throw:${(err as Error)?.message ?? String(err)}`,
           );
         }
-
-        if (result.blocked) {
-          logPlanModeDebug({
-            kind: "tool_call",
-            sessionKey,
-            tool: `before_tool_call:blocked:${event.toolName}`,
-          });
-          return {
-            block: true,
-            blockReason: result.reason ?? "Blocked by Smarter-Claw plan-mode mutation gate.",
-          };
-        }
-        return undefined;
-      } catch (err) {
-        return gateFailureResult(
-          ctx.sessionKey,
-          event.toolName,
-          `unhandled-throw:${(err as Error)?.message ?? String(err)}`,
-        );
-      }
-    });
+      });
+    }
 
     // Phase A3+A4: tool_result_persist hook handles two side-effects
     // that the tool body itself can't do (because the tool body returns
