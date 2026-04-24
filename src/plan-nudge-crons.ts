@@ -1,6 +1,43 @@
 /**
  * Schedule + clean up "plan nudge" cron jobs.
  *
+ * # Parity port #7 status (2026-04-24)
+ *
+ * The audit asks for this module to be wired via `gateway_start`. Today
+ * `src/lifecycle-hooks.handleGatewayStart` registers a SINGLE recurring
+ * cron with `command: "openclaw plan nudge --check-stale-plan-mode"`,
+ * which is non-functional because:
+ *
+ *   1. There is NO `openclaw plan nudge` CLI subcommand in openclaw-1
+ *      (verified via grep — only this module references the string).
+ *   2. The PluginHookGatewayCronCreateInput SDK type expects
+ *      `schedule.kind/expr` + `payload.kind/text` + `sessionTarget`,
+ *      not `cron` + `command`. The fields currently used by the
+ *      lifecycle hook would be silently dropped by the host cron
+ *      service.
+ *   3. The original openclaw-1 design schedules per-session ONE-SHOT
+ *      `at` crons inside `enter_plan_mode` (see schedulePlanNudges
+ *      below), NOT a global recurring cron. The recurring-cron model
+ *      is incompatible with the per-session payload shape.
+ *
+ * Proper wireup requires either:
+ *   - Exposing `getCron` on the per-tool-call hook context (so
+ *     `enter_plan_mode` can call schedulePlanNudges with the SDK cron
+ *     service at the moment plan mode is entered), OR
+ *   - Restructuring lifecycle-hooks.handleGatewayStart to honor the
+ *     SDK's CronCreateInput shape (drop `command`, use `payload.kind:
+ *     "agentTurn"` + `payload.text: "[PLAN_NUDGE]: ..."` + a real
+ *     `sessionTarget`).
+ *
+ * Both options touch `src/lifecycle-hooks.ts` which is currently
+ * being worked on in parallel by the operator (escalating-retry suite).
+ * Leaving this port as a documented gap so the operator can pick the
+ * right wireup when the lifecycle-hooks landing settles. The schedule/
+ * cleanup helpers below are still callable when the wireup arrives —
+ * no additional module changes needed here.
+ *
+ * # Original behavior
+ *
  * When the agent calls `enter_plan_mode`, the runtime auto-schedules a
  * series of one-shot cron wake-ups bound to the same session. Each
  * wake-up fires a fresh agent turn into the originating session that
