@@ -427,6 +427,26 @@ export interface ShouldBlockMutationContext {
 }
 
 export function shouldBlockMutation(ctx: ShouldBlockMutationContext): MutationGateResult {
+  // 3-state PlanMode awareness (PR #70071 P2.5 — recovered via tracking
+  // issue #51): `isInPlanMode` returns boolean true ONLY when the
+  // session's plugin-namespaced state has `planMode === "plan"`. Both
+  // `"executing"` and `"normal"` collapse to false here, which is the
+  // correct mutation-gate behavior:
+  //   - mode "plan"      → planMode "plan" → gate ENFORCED (writes blocked)
+  //   - mode "executing" → planMode "normal" → gate NOT enforced
+  //                        (writes allowed; agent is acting on the
+  //                        approved plan)
+  //   - mode "normal"    → planMode "normal" → gate NOT enforced
+  //                        (no plan activity at all)
+  //
+  // Equivalent in openclaw-1's pi-tools.before-tool-call.ts
+  // (commit 077b425966 / P2.5) which special-cases mode === "executing"
+  // to skip the plan-mode block but still report it via the diagnostic
+  // log line. Smarter-Claw's plugin abstraction (the boolean collapse
+  // above) achieves the same functional outcome with no special-casing
+  // needed at the gate level. The `[smarter-claw/before_tool_call]`
+  // diagnostic in index.ts only fires on actual blocks, not on
+  // pass-through, so executing-mode tool calls don't generate noise.
   const planMode: PlanMode = isInPlanMode(ctx.session) ? "plan" : "normal";
   return checkMutationGate(ctx.toolName, planMode, ctx.execCommand);
 }

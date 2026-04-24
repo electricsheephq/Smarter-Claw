@@ -45,6 +45,26 @@
  *     prompt layer is ignored or misinterpreted, the gate blocks the
  *     tool call with an instruction to ask the user.
  *
+ * ## Mode applicability (3-state PlanMode awareness, PR #70071 P2.5)
+ *
+ * The acceptEdits permission is granted at approve time and applies
+ * THROUGH the execution phase. The constraint-check gate must
+ * therefore fire during BOTH `mode === "executing"` AND `mode ===
+ * "normal"`, not just "normal" (the post-PR #70071 P2.4 transition
+ * leaves the session in "executing" until close-on-complete fires).
+ *
+ * In Smarter-Claw, this gate is logic-only and the seam decides when
+ * to invoke it. The seam (today: NOT yet integrated into the plugin's
+ * before_tool_call hook in index.ts; tracked separately) reads the
+ * session's `postApprovalPermissions.acceptEdits` flag — that flag is
+ * only set DURING the executing phase and is cleared by close-on-
+ * complete. So the seam's "is acceptEdits granted?" check naturally
+ * scopes the gate to the right window without needing an explicit
+ * mode-comparison guard. (Equivalent in openclaw-1's
+ * pi-tools.before-tool-call.ts:295 widened from `=== "normal"` to
+ * `=== "normal" || === "executing"` per P2.5 commit 077b425966 because
+ * its seam DID hard-code a mode check.)
+ *
  * ┌─────────────────────────────────────────────────────────────────┐
  * │ INSTALLER SEAM:                                                 │
  * │                                                                 │
