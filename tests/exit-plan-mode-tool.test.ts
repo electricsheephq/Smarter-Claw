@@ -1,26 +1,27 @@
 /**
  * Ported from openclaw-1: src/agents/tools/exit-plan-mode-tool.test.ts
  *
- * Notes on what's NOT ported:
- *   - The "subagent gate" describe block is intentionally NOT ported.
- *     Smarter-Claw's exit_plan_mode tool does NOT enforce the subagent-
- *     in-flight gate; the file header explains: "subagent-in-flight
- *     gate omitted (no AgentRunContext access through the plugin SDK
- *     yet); the soft-steer in the tool description is the current
- *     enforcement". The original assertions used
- *     `clearAgentRunContext` / `registerAgentRunContext` from
- *     `../../infra/agent-events.js` which is host-side and not part of
- *     the plugin surface.
- *
  * What IS ported:
  *   - Title-required gate (Bug 2/6 fix).
  *   - All PR-10 archetype-field assertions: title clamping, analysis
  *     trim/drop-blank, assumptions trim+filter, risks both-fields-
  *     required filter, verification + references trim+drop-blank,
  *     omits-optionals when not supplied.
+ *   - Parity port #3+#8 (2026-04-24): the subagent-in-flight gate
+ *     reshaped to drive plugin-namespaced state via the
+ *     openclaw/plugin-sdk/session-store-runtime mock seam.
+ *     `blockingSubagentRunIds` is the field on
+ *     `SmarterClawSessionState` populated by
+ *     `lifecycle-hooks.handleSubagentSpawning` /
+ *     `handleSubagentEnded`. The tool reads it via
+ *     `readSmarterClawState` and refuses submission when non-empty.
+ *     Replaces the openclaw-1 `clearAgentRunContext` /
+ *     `registerAgentRunContext` test helpers (host-side, not on the
+ *     plugin surface).
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createExitPlanModeTool } from "../src/tools/exit-plan-mode-tool.js";
+import { SMARTER_CLAW_PLUGIN_ID } from "../src/types.js";
 
 describe("createExitPlanModeTool — basic happy path", () => {
   const validPlanArgs = {
@@ -193,5 +194,205 @@ describe("createExitPlanModeTool — PR-10 archetype fields", () => {
     expect(details.references).toBeUndefined();
     expect(details.status).toBe("approval_requested");
     expect(details.plan).toEqual(planSteps);
+  });
+});
+
+/**
+ * Parity ports #3 + #8: subagent-in-flight gate.
+ *
+ * Drives the gate via a mocked `openclaw/plugin-sdk/session-store-runtime`
+ * module — the same seam runtime-api and the tool body itself use to
+ * read plugin-namespaced state. Each test seeds the in-memory store with
+ * a SmarterClawSessionState slot containing the
+ * `blockingSubagentRunIds` field that the gate reads.
+ *
+ * Mirrors the openclaw-1 suite shape:
+ *   - empty list / no state → succeeds
+ *   - missing agentId/sessionKey (test/standalone path) → succeeds
+ *   - 1 in-flight → throws with that runId in message
+ *   - 5 in-flight → all 5 listed
+ *   - 7 in-flight → truncated with "and 2 more" suffix
+ *   - error message names the post-approval-poisoning concern
+ *   - drained list → succeeds on subsequent call
+ */
+describe("createExitPlanModeTool — subagent gate (parity #3)", () => {
+  const validPlanArgs = {
+    title: "Test plan",
+    plan: [{ step: "do the thing", status: "pending" }],
+  };
+
+  type StoreShape = Record<string, Record<string, unknown>>;
+
+  function buildStoreSeed(opts: {
+    sessionKey: string;
+    blockingSubagentRunIds?: readonly string[];
+  }): StoreShape {
+    const state: Record<string, unknown> = {
+      planMode: "plan",
+      planApproval: "idle",
+      autoApprove: false,
+    };
+    if (opts.blockingSubagentRunIds) {
+      state.blockingSubagentRunIds = [...opts.blockingSubagentRunIds];
+    }
+    return {
+      [opts.sessionKey]: {
+        sessionId: opts.sessionKey,
+        pluginMetadata: { [SMARTER_CLAW_PLUGIN_ID]: state },
+      },
+    };
+  }
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.doUnmock("openclaw/plugin-sdk/session-store-runtime");
+  });
+
+  afterEach(() => {
+    vi.doUnmock("openclaw/plugin-sdk/session-store-runtime");
+    vi.resetModules();
+  });
+
+  async function runToolWithSeed(
+    seed: StoreShape | undefined,
+    args: Record<string, unknown> = validPlanArgs,
+  ): Promise<{ result?: unknown; error?: Error }> {
+    vi.doMock("openclaw/plugin-sdk/session-store-runtime", () => ({
+      loadSessionStore: () => seed ?? {},
+      resolveSessionStoreEntry: ({
+        store,
+        sessionKey,
+      }: {
+        store: Record<string, Record<string, unknown>>;
+        sessionKey: string;
+      }) => ({ existing: store?.[sessionKey] }),
+      resolveStorePath: () => "/tmp/mock-store",
+      // No write API needed — exit_plan_mode body's persistFromTool
+      // call short-circuits when missing, and we only care about the
+      // gate decision.
+      updateSessionStoreEntry: undefined,
+    }));
+    const { createExitPlanModeTool: makeTool } = await import(
+      "../src/tools/exit-plan-mode-tool.js"
+    );
+    const tool = makeTool({ agentId: "default", sessionKey: "session-gate-test" });
+    try {
+      const result = await tool.execute("call-1", args, new AbortController().signal);
+      return { result };
+    } catch (err) {
+      return { error: err as Error };
+    }
+  }
+
+  it("empty blockingSubagentRunIds → succeeds", async () => {
+    const seed = buildStoreSeed({
+      sessionKey: "session-gate-test",
+      blockingSubagentRunIds: [],
+    });
+    const { result, error } = await runToolWithSeed(seed);
+    expect(error).toBeUndefined();
+    expect((result as { details: { status: string } }).details).toMatchObject({
+      status: "approval_requested",
+    });
+  });
+
+  it("no plugin state at all → succeeds (planMode never set)", async () => {
+    const seed = { "session-gate-test": { sessionId: "session-gate-test" } };
+    const { result, error } = await runToolWithSeed(seed);
+    expect(error).toBeUndefined();
+    expect((result as { details: { status: string } }).details).toMatchObject({
+      status: "approval_requested",
+    });
+  });
+
+  it("missing sessionKey/agentId on the tool factory → succeeds (standalone path)", async () => {
+    // No mock seed — the tool factory was created without
+    // agentId/sessionKey so the gate skips the store-read entirely.
+    const tool = createExitPlanModeTool();
+    const result = await tool.execute("call-1", validPlanArgs, new AbortController().signal);
+    expect(result.details).toMatchObject({ status: "approval_requested" });
+  });
+
+  it("1 in-flight subagent → throws with that runId in message", async () => {
+    const seed = buildStoreSeed({
+      sessionKey: "session-gate-test",
+      blockingSubagentRunIds: ["child-run-abc"],
+    });
+    const { error } = await runToolWithSeed(seed);
+    expect(error).toBeDefined();
+    expect(error!.message).toMatch(/child-run-abc/);
+    expect(error!.message).toMatch(/exit_plan_mode blocked/);
+  });
+
+  it("5 in-flight subagents → all 5 ids in error message", async () => {
+    const seed = buildStoreSeed({
+      sessionKey: "session-gate-test",
+      blockingSubagentRunIds: ["r1", "r2", "r3", "r4", "r5"],
+    });
+    const { error } = await runToolWithSeed(seed);
+    expect(error).toBeDefined();
+    expect(error!.message).toMatch(/r1.*r2.*r3.*r4.*r5/);
+  });
+
+  it("7 in-flight subagents → truncated with 'and 2 more' suffix", async () => {
+    const seed = buildStoreSeed({
+      sessionKey: "session-gate-test",
+      blockingSubagentRunIds: ["r1", "r2", "r3", "r4", "r5", "r6", "r7"],
+    });
+    const { error } = await runToolWithSeed(seed);
+    expect(error).toBeDefined();
+    expect(error!.message).toMatch(/and 2 more/);
+  });
+
+  it("error message names the post-approval-poisoning concern", async () => {
+    const seed = buildStoreSeed({
+      sessionKey: "session-gate-test",
+      blockingSubagentRunIds: ["rx"],
+    });
+    const { error } = await runToolWithSeed(seed);
+    expect(error).toBeDefined();
+    expect(error!.message).toMatch(/post-approval execution path will be poisoned/);
+  });
+
+  it("drained list after subagent completion → succeeds", async () => {
+    // First call blocks.
+    const blockedSeed = buildStoreSeed({
+      sessionKey: "session-gate-test",
+      blockingSubagentRunIds: ["child-x"],
+    });
+    const { error: blockedErr } = await runToolWithSeed(blockedSeed);
+    expect(blockedErr).toBeDefined();
+    expect(blockedErr!.message).toMatch(/child-x/);
+
+    // Second call after completion drain — fresh module so the doMock
+    // gets re-applied with the drained seed.
+    vi.resetModules();
+    vi.doUnmock("openclaw/plugin-sdk/session-store-runtime");
+    const drainedSeed = buildStoreSeed({
+      sessionKey: "session-gate-test",
+      blockingSubagentRunIds: [],
+    });
+    const { result: drainedResult, error: drainedErr } = await runToolWithSeed(drainedSeed);
+    expect(drainedErr).toBeUndefined();
+    expect((drainedResult as { details: { status: string } }).details).toMatchObject({
+      status: "approval_requested",
+    });
+  });
+
+  it("session-store read failure → bypasses gate (best-effort) and succeeds", async () => {
+    vi.doMock("openclaw/plugin-sdk/session-store-runtime", () => ({
+      loadSessionStore: () => {
+        throw new Error("simulated store read failure");
+      },
+      resolveSessionStoreEntry: () => ({ existing: undefined }),
+      resolveStorePath: () => "/tmp/mock-store",
+      updateSessionStoreEntry: undefined,
+    }));
+    const { createExitPlanModeTool: makeTool } = await import(
+      "../src/tools/exit-plan-mode-tool.js"
+    );
+    const tool = makeTool({ agentId: "default", sessionKey: "session-gate-test" });
+    const result = await tool.execute("call-1", validPlanArgs, new AbortController().signal);
+    expect(result.details).toMatchObject({ status: "approval_requested" });
   });
 });

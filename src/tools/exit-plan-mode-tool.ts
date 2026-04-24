@@ -1,5 +1,11 @@
 import { Type } from "@sinclair/typebox";
 import type { AnyAgentTool } from "openclaw/plugin-sdk/plugin-entry";
+import {
+  loadSessionStore,
+  resolveSessionStoreEntry,
+  resolveStorePath,
+} from "openclaw/plugin-sdk/session-store-runtime";
+import { readSmarterClawState } from "../../runtime-api.js";
 import { logPlanModeDebug } from "../debug-log.js";
 import {
   describeExitPlanModeTool,
@@ -32,15 +38,18 @@ export const SUBAGENT_SETTLE_GRACE_MS = 4_000;
  * Schema is intentionally a near-copy of update_plan's plan shape so
  * authors don't need to learn a second format.
  *
- * # Plugin-port note (2026-04-24)
+ * # Plugin-port note (2026-04-24, parity port #3)
  *
- * In the original openclaw-1 in-core impl this tool also enforced the
- * subagent-in-flight gate via `getAgentRunContext(runId).openSubagentRunIds`.
- * The plugin port doesn't have direct access to AgentRunContext yet, so
- * the subagent gate is a no-op for now — the soft-steer in the tool
- * description ("WAIT FOR SPAWNED SUBAGENTS BEFORE CALLING THIS TOOL")
- * remains. A future hook subscription that mirrors openSubagentRunIds
- * into the plugin's session-metadata slice can re-enable hard enforcement.
+ * The original openclaw-1 in-core impl enforced the subagent-in-flight
+ * gate via `getAgentRunContext(runId).openSubagentRunIds`. The plugin
+ * port now mirrors `openSubagentRunIds` into plugin-namespaced session
+ * state via the `subagent_spawning` / `subagent_ended` SDK hooks (see
+ * `src/lifecycle-hooks.ts: handleSubagentSpawning / handleSubagentEnded`).
+ * `blockingSubagentRunIds` is the field name on
+ * `SmarterClawSessionState`. This tool reads that field via
+ * `readSmarterClawState` and throws a `ToolInputError` listing pending
+ * children when non-empty, preserving Eva's "wait for research children
+ * before submitting plan" rule.
  */
 
 const ExitPlanModeToolSchema = Type.Object({
@@ -228,24 +237,68 @@ export function createExitPlanModeTool(options?: CreateExitPlanModeToolOptions):
       const plan = readPlanSteps(params);
       const archetype = readPlanArchetypeFields(params);
 
-      // Plugin-port: subagent-in-flight gate omitted (see file header
-      // comment). The soft-steer in describeExitPlanModeTool is the
-      // current enforcement; restore the hard block via a hook
-      // subscription when AgentRunContext access becomes available
-      // through the plugin SDK.
       logPlanModeDebug({
         kind: "tool_call",
         sessionKey: sessionKey ?? "unknown",
         tool: "exit_plan_mode",
       });
+
+      // Parity port #3: subagent-in-flight gate. Read
+      // `blockingSubagentRunIds` from plugin-namespaced session state
+      // (populated by lifecycle-hooks.handleSubagentSpawning /
+      // handleSubagentEnded). When non-empty, refuse the submission so
+      // the agent doesn't poison the post-approval execution path with
+      // late-arriving subagent results.
+      //
+      // Best-effort: if we can't load the session entry (no agentId,
+      // no sessionKey, store-read fail), we skip the gate rather than
+      // fail-closed — the soft-steer in the tool description plus the
+      // hook-side tracking is the safety belt. The original openclaw-1
+      // tool also bypassed the gate when no runId was supplied (the
+      // standalone/test path); we mirror that semantic here when we
+      // can't resolve session state.
+      let openSubagentIds: readonly string[] = [];
+      let gateBypassReason: string | undefined;
+      if (!persistCtx.agentId || !persistCtx.sessionKey) {
+        gateBypassReason = "missing agentId/sessionKey (standalone/test path)";
+      } else {
+        try {
+          const storePath = resolveStorePath(undefined, { agentId: persistCtx.agentId });
+          const store = loadSessionStore(storePath, { skipCache: true });
+          const entry = resolveSessionStoreEntry({
+            store: store ?? {},
+            sessionKey: persistCtx.sessionKey,
+          }).existing;
+          const state = readSmarterClawState(entry);
+          openSubagentIds = state?.blockingSubagentRunIds ?? [];
+        } catch (err) {
+          gateBypassReason = `session-store-read-failed:${(err as Error)?.message ?? String(err)}`;
+        }
+      }
+
+      const openCount = openSubagentIds.length;
       logPlanModeDebug({
         kind: "gate_decision",
         sessionKey: sessionKey ?? "unknown",
         tool: "exit_plan_mode",
-        allowed: true,
+        allowed: openCount === 0,
         planMode: "plan",
-        reason: "subagent gate disabled in plugin port (see exit-plan-mode-tool.ts header)",
+        ...(openCount > 0
+          ? { reason: `${openCount} subagent(s) in flight` }
+          : gateBypassReason
+            ? { reason: `gate bypassed: ${gateBypassReason}` }
+            : { reason: "no blocking subagents" }),
       });
+      if (openCount > 0) {
+        const ids = openSubagentIds.slice(0, 5).join(", ");
+        const more = openCount > 5 ? ` and ${openCount - 5} more` : "";
+        throw new ToolInputError(
+          `exit_plan_mode blocked: ${openCount} research subagent${openCount === 1 ? " is" : "s are"} still in flight (runIds: [${ids}${more}]).\n` +
+            `Wait for them to settle before submitting the plan, or use sessions_kill if they\n` +
+            `should be cancelled. The post-approval execution path will be poisoned if\n` +
+            `subagent results arrive AFTER the plan is approved.`,
+        );
+      }
       void runId;
 
       const stepCount = plan.length;
