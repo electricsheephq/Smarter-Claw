@@ -6,7 +6,7 @@
  import type { ChatSideResult } from "./chat/side-result.ts";
  import { executeSlashCommand } from "./chat/slash-command-executor.ts";
  import { parseSlashCommand, refreshSlashCommands } from "./chat/slash-commands.ts";
-@@ -422,6 +423,16 @@ async function dispatchSlashCommand(
+@@ -429,6 +430,16 @@ async function dispatchSlashCommand(
      await refreshChat(host);
    }
  

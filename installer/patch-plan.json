@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "expectedHostVersion": "2026.4.22",
+  "expectedHostVersion": "2026.4.23-beta.5",
   "smarterClawTargetVersion": "0.1.0",
   "_comment": "patches[] is populated as the UI/core patch authoring lands. install.mjs reads this file and dispatches each entry to applyNewFilePatch or applyDiffPatch. Each entry shape: { type: 'new-file', relPath, sourceRelPath } OR { type: 'diff', relPath, patchRelPath, expectedOriginalSha256 }.",
   "patches": [
@@ -143,7 +143,7 @@
       "type": "diff",
       "relPath": "ui/src/ui/app-chat.ts",
       "patchRelPath": "patches/ui/anchor-patches/ui-src-ui-app-chat.ts.diff",
-      "expectedOriginalSha256": "e2653fa8c3afbb2c3b60bfa7012480c54c334df4d974db9cf355b4857c5c611b"
+      "expectedOriginalSha256": "902e9c2f2eccaeb89eeb6bba1cd293ed620d2e54c149fe8e174d0389db1d718d"
     },
     {
       "type": "diff",
@@ -179,7 +179,7 @@
       "type": "diff",
       "relPath": "ui/src/ui/chat/slash-command-executor.node.test.ts",
       "patchRelPath": "patches/ui/anchor-patches/ui-src-ui-chat-slash-command-executor.node.test.ts.diff",
-      "expectedOriginalSha256": "299c0c573123546a3a92c3e9f3b20d949f177ea5757664b523e157832f990366"
+      "expectedOriginalSha256": "3f5781079fa73b183278500de73d5a144fa93377a4a99778abfb458c9a76d18f"
     },
     {
       "type": "diff",
@@ -203,7 +203,7 @@
       "type": "diff",
       "relPath": "ui/src/ui/views/chat.ts",
       "patchRelPath": "patches/ui/anchor-patches/ui-src-ui-views-chat.ts.diff",
-      "expectedOriginalSha256": "610ce97effaeb01372433922420be0eef7b8fad98c66296beb25170faec583ab"
+      "expectedOriginalSha256": "3a7804a41e91bc9126b9800babc33af474502fca2fe36b5fe04685cc135dc583"
     },
     {
       "type": "diff",
