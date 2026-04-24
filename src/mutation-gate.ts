@@ -120,6 +120,37 @@ const PLAN_MODE_ALLOWED_TOOLS = new Set([
   // and the agent shouldn't have to learn they're allowed.
   "sessions_list",
   "sessions_history",
+  // PR #70071 follow-up — Test 4a UX gap fix (issue #51, openclaw-1
+  // commit 7be42489f5). `agents_list` is a read-only directory of
+  // registered agents (used by sessions_spawn to discover valid
+  // `agentId` values). When sessions_spawn validation rejects a
+  // malformed agentId, its error message tells the agent to "use
+  // agents_list to discover valid targets" — but agents_list was
+  // blocked by the default-deny gate, creating a catch-22 (live-
+  // reproduced 2026-04-21 in Eva's Test 4a session: she guessed
+  // "openai-codex/gpt-5.4", got rejected, tried agents_list, got
+  // "Tool not in plan-mode allowlist", had to submit her plan with
+  // a fabricated subagent result). This is purely metadata read; no
+  // workspace mutation.
+  "agents_list",
+  // PR #70071 follow-up — broader allowlist audit (openclaw-1
+  // commit 7be42489f5). Pure-read analytical tools that an agent
+  // investigating visual evidence in plan mode commonly needs. Both
+  // feed media to a vision/document model and return text — no
+  // workspace state touched. Without these, an agent has to exit
+  // plan mode to inspect a screenshot or a referenced PDF, which
+  // defeats the "investigation phase" purpose.
+  "image",
+  "pdf",
+  // PR #70071 follow-up — live-blocked catch-22 audit (openclaw-1
+  // commit 3d6cbda15e). Pure-read research tools that the
+  // mutation-gate was incorrectly blocking. `sessions_yield` is the
+  // ack-only research mechanism (parallel to sessions_spawn but
+  // doesn't mutate); `lcm_grep` and `lcm_expand_query` are
+  // memory-search reads on the lossless-claw memory system.
+  "sessions_yield",
+  "lcm_grep",
+  "lcm_expand_query",
 ]);
 
 /**
@@ -151,6 +182,36 @@ const READ_ONLY_EXEC_PREFIXES = [
   "whoami",
   "hostname",
   "uname",
+  // PR #70071 follow-up — broader allowlist audit (openclaw-1 commit
+  // 7be42489f5). Structured-data + log analysis utilities. The
+  // shell-operator regex below blocks pipes (`|`), so an agent
+  // investigating logs cannot do `tail file | grep pattern`. These
+  // additions let the agent do the same work via single-command
+  // flags (`grep -A 5 pattern file`, `jq '.field' file.json`, etc.)
+  // without needing pipes. All are pure-read with no documented
+  // write modes.
+  "sort", // log line ordering
+  "uniq", // deduplication of grep output
+  "cut", // field extraction from structured logs
+  "diff", // file/output comparison (no -i / write modes)
+  "tree", // directory tree visualization
+  "jq", // JSON query (critical for structured logs / config files)
+  "column", // tabular output formatting
+  // System introspection — pure read, useful for diagnostics.
+  // Excluded per audit: `ps`, `lsof`, `top`, `dmesg`, `groups`,
+  // `last` (security-sensitive system-info exposure).
+  "env", // env var listing (not the wrapper form `env CMD ...` —
+  // that's stripped by EXEC_WRAPPER_TOKENS above)
+  "uptime", // load average + boot time
+  "date", // wall clock + timezone
+  "id", // current uid/gid
+  "nproc", // CPU count (Linux)
+  "arch", // CPU architecture
+  "vm_stat", // memory diagnostics (macOS)
+  // Excluded: `awk` and `sed` even with -n flag — both have write
+  // modes (`sed -i` is destructive) and the prefix-match logic can't
+  // reliably distinguish read-only invocations from destructive
+  // ones. Agent should use `grep`/`cut`/`jq` for the same workflows.
 ];
 
 /**
