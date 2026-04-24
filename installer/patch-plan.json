@@ -240,6 +240,12 @@
       "relPath": "src/config/schema.base.generated.ts",
       "patchRelPath": "patches/core/schema-allow-conversation-access.diff",
       "expectedOriginalSha256": "ca249d638091766d9b262d93318f33c5846155c9319cc5b15a195d0af226167c"
+    },
+    {
+      "type": "diff",
+      "relPath": "src/config/zod-schema.ts",
+      "patchRelPath": "patches/core/zod-schema-allow-conversation-access.diff",
+      "expectedOriginalSha256": "3cb6916cd44ba406605715708718dab5ea94f1e02258ebea312755accce643c9"
     }
   ]
 }
