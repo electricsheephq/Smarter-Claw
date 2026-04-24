@@ -222,6 +222,12 @@
       "relPath": "src/gateway/sessions-patch.ts",
       "patchRelPath": "patches/core/sessions-patch-handler-plan-mode.diff",
       "expectedOriginalSha256": "f1f92cf131ce183f97273cece5754d7366764e0649d4b0a1707067092ccfb1ba"
+    },
+    {
+      "type": "diff",
+      "relPath": "src/agents/pi-embedded-subscribe.handlers.tools.ts",
+      "patchRelPath": "patches/core/pi-embedded-subscribe-exit-plan-mode-emit.diff",
+      "expectedOriginalSha256": "abbd8dbff32d54b6213b4fa4af6d8afecce26181a56275793e5358f4e5cc47b8"
     }
   ]
 }

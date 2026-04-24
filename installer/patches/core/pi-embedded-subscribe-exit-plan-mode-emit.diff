@@ -1,0 +1,121 @@
+@@ -922,7 +922,119 @@
+       isError: isToolError,
+     },
+   });
+-
++  // Smarter-Claw parity port #6: emit `agent_approval_event` with the
++  // full plan archetype payload when the plugin's `exit_plan_mode`
++  // tool fires. Without this, the Control UI's inline approval card
++  // (subscribed to `agent_event { stream: "approval", kind: "plugin",
++  // phase: "requested" }`) never renders the Approve/Reject/Edit
++  // overlay because the host doesn't otherwise know the plugin tool
++  // semantically requested approval.
++  //
++  // Mirrors openclaw-1/src/agents/pi-embedded-subscribe.handlers.tools.ts
++  // exit_plan_mode emit branch. Reads the plugin tool's structured
++  // result (which carries title + plan + analysis + assumptions +
++  // risks + verification + references) and forwards it as the
++  // approval event's `data` payload. The UI patch in
++  // ui/src/ui/app-tool-stream.ts:handlePlanApprovalEvent extracts
++  // these fields to populate the inline card.
++  if (!isToolError && toolName === "exit_plan_mode") {
++    type ExitPlanModeDetails = {
++      status?: string;
++      title?: string;
++      summary?: string;
++      plan?: Array<{ step?: unknown; status?: unknown; activeForm?: unknown }>;
++      analysis?: string;
++      assumptions?: string[];
++      risks?: Array<{ risk?: unknown; mitigation?: unknown }>;
++      verification?: string[];
++      references?: string[];
++    };
++    let details: ExitPlanModeDetails | undefined;
++    if (sanitizedResult && typeof sanitizedResult === "object") {
++      const r = sanitizedResult as Record<string, unknown>;
++      const d = r.details;
++      if (d && typeof d === "object") {
++        details = d as ExitPlanModeDetails;
++      }
++    }
++    if (details && details.status === "approval_requested") {
++      const planSteps: Array<{ step: string; status: string; activeForm?: string }> = [];
++      if (Array.isArray(details.plan)) {
++        for (const entry of details.plan) {
++          if (!entry || typeof entry !== "object") continue;
++          const step = (entry as Record<string, unknown>).step;
++          const status = (entry as Record<string, unknown>).status;
++          const activeForm = (entry as Record<string, unknown>).activeForm;
++          if (typeof step !== "string" || typeof status !== "string") continue;
++          planSteps.push({
++            step,
++            status,
++            ...(typeof activeForm === "string" && activeForm.trim() ? { activeForm } : {}),
++          });
++        }
++      }
++      const cleanStrArr = (v: unknown): string[] | undefined => {
++        if (!Array.isArray(v)) return undefined;
++        const c = v
++          .filter((e): e is string => typeof e === "string")
++          .map((e) => e.trim())
++          .filter((e) => e.length > 0);
++        return c.length > 0 ? c : undefined;
++      };
++      let cleanRisks: Array<{ risk: string; mitigation: string }> | undefined;
++      if (Array.isArray(details.risks)) {
++        const c: Array<{ risk: string; mitigation: string }> = [];
++        for (const e of details.risks) {
++          if (!e || typeof e !== "object") continue;
++          const r = (e as Record<string, unknown>).risk;
++          const m = (e as Record<string, unknown>).mitigation;
++          if (typeof r === "string" && typeof m === "string" && r.trim() && m.trim()) {
++            c.push({ risk: r.trim(), mitigation: m.trim() });
++          }
++        }
++        if (c.length > 0) cleanRisks = c;
++      }
++      // Use a stable approvalId derived from the toolCallId so the UI
++      // can dedupe re-emits of the same plan submission. The plugin
++      // also writes its own approvalId into pluginMetadata; the UI's
++      // /plan accept|revise paths read from there.
++      const approvalId = `plan-${toolCallId}`;
++      const approvalData: AgentApprovalEventData = {
++        phase: "requested",
++        kind: "plugin",
++        status: "pending",
++        title: details.title ?? "Plan approval",
++        toolCallId,
++        approvalId,
++        // Cast through unknown — the AgentApprovalEventData type is
++        // exec-shaped in the baseline; the plugin extension adds the
++        // plan-shaped fields the UI patch reads.
++        ...((planSteps.length > 0 ? { plan: planSteps } : {}) as Record<string, unknown>),
++        ...((details.summary ? { summary: details.summary } : {}) as Record<string, unknown>),
++        ...((details.analysis ? { analysis: details.analysis } : {}) as Record<string, unknown>),
++        ...((cleanStrArr(details.assumptions)
++          ? { assumptions: cleanStrArr(details.assumptions) }
++          : {}) as Record<string, unknown>),
++        ...((cleanRisks ? { risks: cleanRisks } : {}) as Record<string, unknown>),
++        ...((cleanStrArr(details.verification)
++          ? { verification: cleanStrArr(details.verification) }
++          : {}) as Record<string, unknown>),
++        ...((cleanStrArr(details.references)
++          ? { references: cleanStrArr(details.references) }
++          : {}) as Record<string, unknown>),
++      } as unknown as AgentApprovalEventData;
++      emitAgentApprovalEvent({
++        runId: ctx.params.runId,
++        ...(ctx.params.sessionKey ? { sessionKey: ctx.params.sessionKey } : {}),
++        data: approvalData,
++      });
++      void ctx.params.onAgentEvent?.({
++        stream: "approval",
++        data: approvalData,
++      });
++    }
++  }
++
+   if (isExecToolName(toolName)) {
+     const execDetails = readExecToolDetails(result);
+     const commandItemId = buildCommandItemId(toolCallId);
