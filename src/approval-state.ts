@@ -194,10 +194,26 @@ export const MAX_CONCURRENT_SUBAGENTS_IN_PLAN_MODE = 1;
  */
 export function buildApprovedPlanInjection(planSteps: string[]): string {
   const stepList = planSteps.map((s, i) => `${i + 1}. ${s}`).join("\n");
+  // PR #70071 follow-up — "check and record status per step" instructions
+  // (issue #51, openclaw-1 commit 37ac8983e6). Without these instructions
+  // the agent does the work but forgets to call update_plan, leaving the
+  // plan stuck in mid-execution forever (Eva's MiniMax/David VM session
+  // log + Baoyu flyer skills failure mode). The instructions are a SOFT
+  // STEER (the agent can still skip update_plan); the close-on-complete
+  // detector in snapshot-persister is the semantic gate that auto-
+  // transitions when all steps are recorded done. But reinforcing the
+  // instruction in the approval text closes the common-case stall where
+  // the agent finishes sub-operations and goes idle without recording
+  // state.
   return (
     "[PLAN_DECISION]: approved\n\n" +
     "The user has approved the following plan. Execute it now without re-planning. " +
-    "If a step is no longer viable, mark it cancelled and add a revised step.\n\n" +
+    "Check and record the status for each step as you go. After each step " +
+    "finishes (successful or not), call `update_plan` to mark that step as " +
+    'done. The plan is not done until every step is recorded as completed ' +
+    "or cancelled. If a step is no longer viable, mark it cancelled and " +
+    "add a revised step.\n\n" +
+    "The approved plan:\n\n" +
     stepList
   );
 }

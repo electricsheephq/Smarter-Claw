@@ -148,9 +148,21 @@ describe("buildApprovedPlanInjection", () => {
     expect(result).toBe(
       "[PLAN_DECISION]: approved\n\n" +
         "The user has approved the following plan. Execute it now without re-planning. " +
-        "If a step is no longer viable, mark it cancelled and add a revised step.\n\n" +
+        "Check and record the status for each step as you go. After each step " +
+        "finishes (successful or not), call `update_plan` to mark that step as " +
+        'done. The plan is not done until every step is recorded as completed ' +
+        "or cancelled. If a step is no longer viable, mark it cancelled and " +
+        "add a revised step.\n\n" +
+        "The approved plan:\n\n" +
         "1. first\n2. second",
     );
+  });
+
+  it("includes 'check and record' instructions (P2 — Eva's MiniMax/David fix)", () => {
+    const result = buildApprovedPlanInjection(["x"]);
+    expect(result).toMatch(/check and record/i);
+    expect(result).toContain("update_plan");
+    expect(result).toMatch(/not done until every step is recorded/i);
   });
 });
 
