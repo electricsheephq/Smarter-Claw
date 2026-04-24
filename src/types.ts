@@ -36,10 +36,46 @@
 export const SMARTER_CLAW_PLUGIN_ID = "smarter-claw" as const;
 
 /**
- * Top-level mode for a session. Plan mode means proposed-write actions
- * route through the approval gate; normal mode means writes execute directly.
+ * Top-level mode for a session.
+ *
+ * 3-state union (PR #70071's Phase-2 architectural refactor — recovered
+ * via tracking issue #51):
+ *   - `"plan"`      — designing. Mutation gate ARMED, design-phase
+ *                     nudges fire, agent allowlist enforced.
+ *   - `"executing"` — plan approved, agent acting on the steps.
+ *                     Mutation gate DISARMED (mutations allowed),
+ *                     execution-phase nudges legal at tighter intervals,
+ *                     UI chip stays on the plan-mode entry so the
+ *                     visual state matches the persisted state instead
+ *                     of reverting to "Default" the instant approval
+ *                     lands.
+ *   - `"normal"`    — no plan activity (default; UI chip shows
+ *                     Default/Ask/Accept/Bypass per execSecurity).
+ *
+ * Most consumers only care about `"plan"` vs not-plan and continue to
+ * work correctly with the widened type: `"executing"` is treated like
+ * `"normal"` for mutation gating (mutations allowed). The new value
+ * unlocks:
+ *   - execution-phase nudge crons that fire only during `"executing"`
+ *   - UI chip rendering through the execution phase
+ *   - `plan_mode_status` introspection reporting accurate state
+ *   - `[PLAN_STATUS]` per-turn preamble auto-injection
+ *
+ * Transitions:
+ *   - `enter_plan_mode` tool / `/plan on`            → mode = "plan"
+ *   - approval (`approve` or `edit` action)          → mode = "executing"
+ *   - close-on-complete (all steps done/cancelled)   → mode = "normal"
+ *   - `/plan off`                                     → mode = "normal"
+ *
+ * NOTE: previously this was the 2-state union `"plan" | "normal"`. The
+ * widening conflated two cases the runtime needs to distinguish:
+ * "plan was approved + agent is executing" vs "no plan ever touched
+ * this session". That conflation was the root cause of multiple bugs
+ * Eva debugged in production (chip reverting, missed execution-phase
+ * stalls, autoApprove mis-rendering). See tracking issue #51 for the
+ * full set of follow-up fixes that depend on this widening.
  */
-export type PlanMode = "plan" | "normal";
+export type PlanMode = "plan" | "executing" | "normal";
 
 /**
  * Approval-card state machine. The plugin emits each transition as a debug
