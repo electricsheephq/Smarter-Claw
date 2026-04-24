@@ -85,7 +85,19 @@ export async function persistPlanArchetypeMarkdown(
     );
   }
 
-  const baseDir = input.baseDir ?? path.join(os.homedir(), ".openclaw", "agents");
+  // BUG #6 fix: read OPENCLAW_STATE_DIR fallback before defaulting to
+  // os.homedir(). Pre-fix, isolated profiles (e.g. QA gateways with
+  // OPENCLAW_STATE_DIR set) silently wrote into ~/.openclaw/agents/
+  // instead of their own state dir — cross-profile data leak. Adversarial
+  // QA leaked 15 plan MDs into operator's Eva profile during testing.
+  // Now: explicit baseDir wins, then env, then default. Future Sprint 2
+  // (Alternative I) will route this through ctx.paths.stateDir natively.
+  const envStateDir = process.env.OPENCLAW_STATE_DIR?.trim();
+  const baseDir =
+    input.baseDir ??
+    (envStateDir
+      ? path.join(envStateDir, "agents")
+      : path.join(os.homedir(), ".openclaw", "agents"));
   const agentDir = path.join(baseDir, agentId);
   const dir = path.join(agentDir, "plans");
   // Belt-and-suspenders confine — resolve the target and verify it
