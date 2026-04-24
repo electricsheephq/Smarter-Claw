@@ -1,0 +1,19 @@
+@@ -158,11 +158,17 @@
+ const PluginEntrySchema = z
+   .object({
+     enabled: z.boolean().optional(),
+     hooks: z
+       .object({
+         allowPromptInjection: z.boolean().optional(),
++        // Smarter-Claw conversation-access patch: companion to the
++        // schema-allow-conversation-access.diff patch on
++        // schema.base.generated.ts. The runtime config validation goes
++        // through THIS Zod schema (not the JSON schema bundle), so the
++        // field needs to be declared here too. Track upstream for
++        // removal of this patch when their codegen catches up.
++        allowConversationAccess: z.boolean().optional(),
+       })
+       .strict()
+       .optional(),
+     subagent: z
+       .object({
