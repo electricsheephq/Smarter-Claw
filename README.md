@@ -6,13 +6,52 @@ Universal across the Pi runner (`openai/*`, `openai-codex/*`) and the native Cod
 
 ## Status
 
-**`v1.0.0`** — first feature-complete release. Full parity with the original openclaw-1 in-core plan-mode (PR-7 through PR-11 history) extracted into a standalone external plugin + reversible host installer (Spicetify pattern).
+**`0.2.0-dev`** — sandbox-verified, beta deployment pending.
 
-- 7 lifecycle hooks wired (4 tools + 5 hooks via the public SDK)
-- 36-patch installer for UI components from upstream PR #70071
-- 470 unit tests across 15 files
-- 6 P0 blockers from a 38-finding adversarial review fixed
-- Verified end-to-end on a sandboxed gateway: `enter_plan_mode` → state persists → mutation gate blocks `write` → `exit_plan_mode` → markdown audit-trail lands at `~/.openclaw/agents/<id>/plans/`
+This is dev-grade software. The code works in a sandboxed OpenClaw gateway,
+but it has not yet been validated in real production use. The current commit
+is in active development; the package is not yet published to npm; CI gating
+is being set up; the first real release is the upcoming `0.2.0-beta.1` after
+the operator's primary agent ("Eva") runs it for a defined soak period.
+
+## Honesty section — what works, what doesn't, what's deferred
+
+**Works in sandbox** (verified end-to-end on `/Users/lume/repos/sc-smoke-host`,
+a clean v2026.4.22 worktree with the installer applied):
+
+- 4 plan-mode tools (`enter_plan_mode`, `exit_plan_mode`, `ask_user_question`,
+  `plan_mode_status`) registered via factory pattern with per-call session context
+- Archetype prompt + injection-queue drain via `before_prompt_build`
+- Mutation gate via `before_tool_call` (default fail-CLOSED on session-store IO errors)
+- 3-detector × 7-level escalating-retry suite (PLAN_MODE_ACK_ONLY, PLAN_APPROVED_YIELD,
+  PLANNING_ONLY) ported byte-perfect from openclaw-1
+- Subagent gate inside `exit_plan_mode` (reads `blockingSubagentRunIds`)
+- Snapshot persister with close-on-complete + `[PLAN_COMPLETE]` injection
+- Plan-archetype markdown written to `~/.openclaw/agents/<id>/plans/plan-YYYY-MM-DD-<slug>.md`
+- 39-patch installer with strict-context drift detection + reversible uninstall
+- 563 unit tests across 18 files, all passing
+
+**NOT yet validated:**
+
+- Real-world soak under Eva's actual workload (sandbox ≠ production)
+- npm publish path (package has never been pushed to the registry)
+- Webchat inline-button approval routing under live UI traffic (logic ported
+  + sandbox-tested, no real-user-clicks evidence yet)
+- Multi-host installer behavior (only tested against the single sandbox worktree)
+
+**Deferred to future milestones** (15 open issues tracked at
+[github.com/electricsheephq/Smarter-Claw/issues](https://github.com/electricsheephq/Smarter-Claw/issues)):
+
+- Per-session plan-nudge crons (today: global interval cron with payload-side filtering)
+- Atomic manifest write (`writeManifest` is currently fsync-then-rename pending fix)
+- Slash-command `/plan revise` input sanitization hardening
+- 13 P2/P3 quality issues from the adversarial review
+
+**Tagging history**: earlier commits in this repo carry `v1.0.0` and `v2.0.0`
+tags. Those were dev-snapshot tags that were inappropriately framed as
+"releases." They have been deleted; the work they marked is preserved as
+`dev-snapshot-2026-04-24` and the version reset to `0.2.0-dev`. The first real
+release will be `0.2.0-beta.1` after the Eva soak validates.
 
 ## What it adds
 
@@ -32,7 +71,7 @@ Universal across the Pi runner (`openai/*`, `openai-codex/*`) and the native Cod
 
 ## Install
 
-Smarter-Claw v1.0 ships as a plugin AND an installer that patches the host's UI for plan-card / mode-dropdown / approval-card rendering. Both are needed for the full UX; the plugin alone (without the installer) gives you tools + archetype prompt + mutation gate but no UI affordances.
+Smarter-Claw ships as a plugin AND an installer that patches the host's UI for plan-card / mode-dropdown / approval-card rendering. Both are needed for the full UX; the plugin alone (without the installer) gives you tools + archetype prompt + mutation gate but no UI affordances.
 
 ```bash
 # 1. Install the plugin (npm, or local clone):
@@ -94,7 +133,7 @@ In your `~/.openclaw/openclaw.json`:
 
 All keys are optional — defaults apply when omitted. See `openclaw.plugin.json` for the full schema.
 
-**Wired in v1.0:**
+**Wired today:**
 - `enabled` — master switch for the whole plugin
 - `archetype.enabled` — toggle the archetype prompt injection
 - `mutationGate.enabled` — toggle the before_tool_call mutation gate
@@ -103,7 +142,7 @@ All keys are optional — defaults apply when omitted. See `openclaw.plugin.json
 - `agents` — restrict the agent_end retry to specific agent ids (other handlers fall through to all-agents)
 - `debugLog` — emit verbose plan-mode debug events to gateway logs
 
-**Documented but v1.1 work** (config schema accepts but semantically no-op):
+**Schema-accepted, no-op today** (tracked as open issues for a future milestone):
 - `mutationGate.blockedTools`, `retry.limit`, `autoApprove.default`, `snapshot.persist`, `snapshot.maxStepsRendered`, `archetype.minStepCount`, full `agents` filter on every handler
 
 See `index.ts:SmarterClawConfig` for the per-knob status comments.
@@ -181,17 +220,20 @@ node ./installer/bin/install.mjs --host=/path/to/openclaw
 
 | OpenClaw | Smarter Claw |
 |---|---|
-| `2026.4.22` | `1.0.x` |
+| `2026.4.22` | `0.2.x-dev` (target for first beta release) |
 
 The installer's UI patches and the one core diff are pinned to v2026.4.22 SHAs. Newer OpenClaw versions need a Smarter-Claw patch refresh — patches will refuse to apply on drifted source (drift detection is a feature, not a bug).
 
-## Known limitations / v1.1 backlog
+## Known limitations (tracked as issues)
 
-- **Slash-command dispatch via channel** is verified for the read-only subcommands (`/plan status`, `/plan restate`, etc); mutating subcommands work end-to-end but were verified via direct `applyPatchToState` unit tests, not a live channel-message round-trip.
-- **`tool_result_persist` / `before_message_write` hooks don't fire** for plugin-registered tools through Pi (only fire for tools wrapped by `session-tool-result-guard`). The plan-markdown audit-trail write happens in the tool body itself as a workaround.
+All non-blocker work is in [open issues](https://github.com/electricsheephq/Smarter-Claw/issues) with explicit milestones (`v0.2.0-beta`, `v0.3.0`, `v1.0.0-stable`). Highlights:
+
+- **Slash-command dispatch via channel** — read-only subcommands (`/plan status`, `/plan restate`) verified; mutating subcommands proven via unit tests but not via a live channel-message round-trip.
+- **`tool_result_persist` / `before_message_write` hooks don't fire** for plugin-registered tools through Pi. Plan-markdown audit-trail write happens in the tool body as a workaround.
 - **Multi-agent `agents` filter** is honored on the `agent_end` retry handler; other handlers fall through to all-agents behavior.
-- **Per-cycle retry limit** (`retry.limit`) is documented but the queue's per-id dedup gives an effective limit of 1 today.
-- **23 P1/P2/P3 review findings** are tracked at https://github.com/electricsheephq/Smarter-Claw/issues — the v1.1 sprint will close the remaining tech debt (install lock, perf cache, SHA TOCTOU hardening, etc.).
+- **Per-cycle retry limit** (`retry.limit`) — queue's per-id dedup gives an effective limit of 1 today; multi-injection cap is roadmap.
+- **Per-session plan-nudge crons** — today uses a global interval cron with payload-side filtering; openclaw-1 used per-session one-shots scheduled inside `enter_plan_mode`.
+- **15 open P2/P3 review findings** — install-lock, perf-cache, SHA-TOCTOU hardening, etc. None block the beta deployment plan.
 
 ## License
 
