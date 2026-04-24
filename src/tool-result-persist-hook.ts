@@ -254,6 +254,76 @@ async function handleExitPlanModePersist(args: {
       details: { reason: (err as Error)?.message ?? String(err) },
     });
   }
+
+  // BUG #2 fix: autoApprove consumer. The plugin manifest advertises
+  // `autoApprove: "Toggle whether plans auto-execute without user
+  // approval"` and the chip shows "Plan ⚡" when set, but pre-this-fix
+  // ZERO code consumed the flag — `runtime-api.isAutoApproveEnabled` was
+  // exported with no callers. Result: user toggles auto, sees confirma-
+  // tion, plan still requires manual click. Cosmetic-only feature.
+  //
+  // Fix wires the consumer here, AFTER exit_plan_mode persists. We
+  // re-read the slice (the persist already wrote the
+  // pendingInteraction:approval shape via the plugin's tool body) and
+  // if `autoApprove === true`, fire a synthetic approve-equivalent
+  // state mutation that mirrors what the manual approve path produces:
+  //   - planMode → "executing"
+  //   - planApproval → "approved"
+  //   - pendingInteraction → undefined
+  //   - recentlyApprovedAt → now
+  //   - rejectionCount → 0
+  //   - retryCounters → undefined
+  //   - append [PLAN_DECISION]: approved injection
+  //
+  // Idempotency: the synthetic write is gated on `pendingInteraction`
+  // being present (the just-persisted approval). If it's already gone
+  // (concurrent UI click won the race), we no-op safely. We also gate
+  // on `planApproval !== "approved"` to avoid double-firing on
+  // duplicate hook invocation if BUG #5 dedup ever degrades.
+  try {
+    await persistSmarterClawState({
+      agentId: args.agentId,
+      sessionKey: args.sessionKey,
+      update: (current) => {
+        if (!current) return undefined;
+        if (current.autoApprove !== true) return undefined;
+        if (current.planApproval === "approved") return undefined;
+        const pending = current.pendingInteraction;
+        if (!pending || pending.kind !== "approval") return undefined;
+        const approvalId = pending.approvalId;
+        if (!approvalId) return undefined;
+        const queueHost = { pendingAgentInjections: current.pendingAgentInjections };
+        appendToInjectionQueue(queueHost, {
+          id: `plan-decision-${approvalId}`,
+          kind: "plan_decision",
+          text: `[PLAN_DECISION]: approved`,
+          createdAt: Date.now(),
+        });
+        logPlanModeDebug({
+          kind: "tool_call",
+          sessionKey: args.sessionKey,
+          tool: `tool_result_persist:auto-approved:${approvalId}`,
+        });
+        return {
+          ...current,
+          planMode: "executing",
+          planApproval: "approved",
+          pendingInteraction: undefined,
+          recentlyApprovedAt: new Date().toISOString(),
+          rejectionCount: 0,
+          retryCounters: undefined,
+          pendingAgentInjections: queueHost.pendingAgentInjections,
+        };
+      },
+    });
+  } catch (err) {
+    logPlanModeDebug({
+      kind: "tool_call",
+      sessionKey: args.sessionKey,
+      tool: `tool_result_persist:auto-approve-failed`,
+      details: { reason: (err as Error)?.message ?? String(err) },
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------

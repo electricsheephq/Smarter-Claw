@@ -1,4 +1,4 @@
-@@ -485,7 +485,200 @@
+@@ -485,7 +485,229 @@
        next.groupActivation = normalized;
      }
    }
@@ -117,9 +117,23 @@
 +      autoApprove: false,
 +    };
 +    if (pa.action === "approve" || pa.action === "edit") {
-+      const pending = slot.pendingInteraction as
++      // BUG #1 mirror fallback (Smarter-Claw v0.2.0-beta.2): the
++      // plugin's persist writes `pendingInteraction` to the slot, but
++      // the host's `mergeSessionEntry` in src/config/sessions/types.ts
++      // does a shallow spread — any agent-side `persistSessionEntry`
++      // call carrying a stale snapshot (no plugin awareness) overwrites
++      // the entire `pluginMetadata` bag and erases our slot's
++      // `pendingInteraction`. The plugin ALSO writes a top-level
++      // `entry.pendingInteraction` mirror further down (UI-compat
++      // mirror block) which the host's mergeSessionEntry preserves
++      // because it's a known SessionEntry field, not a plugin slice.
++      // So when the slot is empty due to clobber, fall back to the
++      // top-level mirror as the source of truth for the approval guard.
++      // This is a band-aid; the structural fix is in v0.3.0 (Sprint 2)
++      // when state moves to a plugin-owned file.
++      const pending = (slot.pendingInteraction as
 +        | { kind?: string; approvalId?: string }
-+        | undefined;
++        | undefined) ?? ((next as unknown as { pendingInteraction?: { kind?: string; approvalId?: string } }).pendingInteraction);
 +      if (
 +        !pending ||
 +        pending.kind !== "approval" ||
@@ -149,6 +163,9 @@
 +        pendingInteraction: undefined,
 +        recentlyApprovedAt: new Date().toISOString(),
 +        retryCounters: undefined,
++        // BUG #8: reset rejectionCount on approve/edit. Sister-fix in
++        // src/slash-command-deps.ts:applyPatchToState (slash-command path).
++        rejectionCount: 0,
 +      };
 +      appendInjection(nextSlot, {
 +        id: `plan-decision-${approvalId}`,
@@ -158,9 +175,10 @@
 +      });
 +      writeSmarterClawSlot(next as unknown as Record<string, unknown>, nextSlot);
 +    } else if (pa.action === "reject") {
-+      const pending = slot.pendingInteraction as
++      // BUG #1 mirror fallback — same rationale as approve branch above.
++      const pending = (slot.pendingInteraction as
 +        | { kind?: string; approvalId?: string }
-+        | undefined;
++        | undefined) ?? ((next as unknown as { pendingInteraction?: { kind?: string; approvalId?: string } }).pendingInteraction);
 +      if (
 +        !pending ||
 +        pending.kind !== "approval" ||
@@ -185,6 +203,17 @@
 +        ...slot,
 +        planApproval: "rejected",
 +        pendingInteraction: undefined,
++        // BUG #8: increment rejectionCount on UI-button reject (was only
++        // incremented in the slash-command path before this fix). The
++        // "clarify their goal" hint at types.ts:369 fires after 3+
++        // rejections via buildPlanDecisionInjection — without this
++        // increment, UI-rejecting users never see the auto-deescalation.
++        // Sister-fix in src/slash-command-deps.ts:applyPatchToState.
++        rejectionCount: (typeof slot.rejectionCount === "number" ? slot.rejectionCount : 0) + 1,
++        // BUG #9: clear stale recentlyApprovedAt on reject (was carried
++        // forward via `...slot` spread, causing UI to show "Recently
++        // approved" indicator even after a fresh rejection cycle).
++        recentlyApprovedAt: undefined,
 +      };
 +      appendInjection(nextSlot, {
 +        id: `plan-decision-${approvalId}`,

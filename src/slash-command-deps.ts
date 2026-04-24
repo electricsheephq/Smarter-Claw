@@ -183,12 +183,18 @@ export function applyPatchToState(
       // planning → execution boundary.
       return {
         ...base,
-        planMode: "normal",
+        // BUG-fix parity: gateway sessions-patch path writes "executing"
+        // post PR #53 (P2.4); slash-command path was left on "normal"
+        // until this PR. Now both paths produce the same state.
+        planMode: "executing",
         planApproval: "approved",
         pendingInteraction: undefined,
         recentlyApprovedAt: new Date().toISOString(),
         pendingAgentInjections: queueHost.pendingAgentInjections,
         retryCounters: undefined,
+        // BUG #8: reset rejectionCount on approve (sister-fix in
+        // installer/patches/core/sessions-patch-handler-plan-mode.diff).
+        rejectionCount: 0,
       };
     }
     if (pa.action === "reject") {
@@ -221,6 +227,17 @@ export function applyPatchToState(
         planApproval: "rejected",
         pendingInteraction: undefined,
         pendingAgentInjections: rejectHost.pendingAgentInjections,
+        // BUG #8: increment rejectionCount on slash-command reject. Was
+        // present in approval-state.ts:resolvePlanApproval but not in
+        // applyPatchToState (the actual slash-command dispatch path) —
+        // so the "clarify their goal" hint at types.ts:369 never fired
+        // for either UI-button OR slash-command rejections. Now both
+        // paths increment. Sister-fix in sessions-patch-handler-plan-mode.diff.
+        rejectionCount: (base.rejectionCount ?? 0) + 1,
+        // BUG #9: clear stale recentlyApprovedAt on reject (UI confusion
+        // when a fresh rejection cycle inherits the prior approve's
+        // timestamp via the `...base` spread).
+        recentlyApprovedAt: undefined,
       };
     }
     if (pa.action === "answer") {

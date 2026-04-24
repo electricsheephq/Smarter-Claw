@@ -168,6 +168,17 @@ export type SmarterClawSessionState = {
   planModeIntroDeliveredAt?: string;
   /** ISO timestamp of the most recent approval. */
   recentlyApprovedAt?: string;
+  /**
+   * Number of plan-mode rejection cycles in this session. Incremented
+   * by both the slash-command path (`applyPatchToState`) and the
+   * gateway-side sessions.patch handler on every reject action. Reset
+   * to 0 on approve/edit. After 3+ rejections, `buildPlanDecisionInjection`
+   * adds a "consider asking the user to clarify their goal" hint to
+   * the next [PLAN_DECISION]: rejected injection — auto-deescalation
+   * to prevent infinite re-revision loops. Was missing from this type
+   * (and the runtime increment) until v0.2.0-beta.2 fix for BUG #8.
+   */
+  rejectionCount?: number;
   /** Pending interaction (e.g. ask_user_question) awaiting response. */
   pendingInteraction?: {
     kind: "question" | "approval";
