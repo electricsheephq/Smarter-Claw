@@ -134,6 +134,21 @@ export type SmarterClawSessionState = {
   pendingAgentInjections?: import("./injections.js").PendingAgentInjectionEntry[];
   /** Pending question approval id when ask_user_question is in flight. */
   pendingQuestionApprovalId?: string;
+  /**
+   * Per-cycle retry counters used by the escalating-retry suite (see
+   * `src/escalating-retry.ts`). Track how many times each detector has
+   * fired so the resolver can pick the right escalation level
+   * (standard → firm → final). Reset on `enter_plan_mode` (fresh
+   * cycle) or on plan approval (fresh execution phase).
+   */
+  retryCounters?: {
+    /** PLANNING_ONLY detector count (0 → standard, 1 → firm, 2+ → final). */
+    planningOnly?: number;
+    /** PLAN_MODE_ACK_ONLY detector count (0 → standard, 1+ → firm). */
+    planModeAckOnly?: number;
+    /** PLAN_APPROVED_YIELD detector count (0 → standard, 1+ → firm). */
+    planApprovedYield?: number;
+  };
   /** Post-approval permission overrides (acceptEdits, etc). */
   postApprovalPermissions?: {
     acceptEdits?: boolean;

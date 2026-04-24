@@ -130,59 +130,97 @@ export async function handleSubagentEnded(
 }
 
 // ---------------------------------------------------------------------------
-// agent_end: ack-only retry detection (#37). When agent ends a turn in
-// plan mode WITHOUT having called exit_plan_mode (i.e. just chatted,
-// or tracked progress without submitting), queue a [PLANNING_RETRY]
-// injection so the next turn nudges them to actually submit.
+// agent_end: escalating retry suite (parity port #1 from openclaw-1
+// `pi-embedded-runner/run/incomplete-turn.ts`). Detects three stall
+// patterns the operator debugged for 2 weeks:
+//
+//   1. PLAN_MODE_ACK_ONLY  — in plan mode, agent says "I'll plan now"
+//      then ends turn with no tool call. Standard → firm escalation.
+//   2. PLAN_APPROVED_YIELD — within grace window post-approval, agent
+//      yields without main-lane action. Standard → firm escalation.
+//   3. PLANNING_ONLY       — outside plan mode, agent narrated a plan
+//      with bullets but no tool call. Standard → firm → final.
+//
+// Each detector tracks per-cycle attempt counts in
+// `state.retryCounters` so the escalation level matches the original.
+// Counter resets land in:
+//   - `enterPlanModeStateUpdate` (fresh planning cycle = reset all)
+//   - approve action in `applyPatchToState` (fresh execution phase =
+//     reset planApprovedYield)
 // ---------------------------------------------------------------------------
 
-const PLANNING_RETRY_INJECTION = `[PLANNING_RETRY]: You are still in plan mode but did not submit a plan via \`exit_plan_mode\` last turn. Two options:
-
-1. If your investigation is incomplete: continue with read-only tools, then call \`exit_plan_mode\` when ready.
-2. If you have enough information: call \`exit_plan_mode\` now with the title + plan + assumptions.
-
-Do NOT just narrate the plan as chat text — the user only sees plans submitted through the tool.`;
+import {
+  resolveRetryDecision,
+  type RetryDecision,
+} from "./escalating-retry.js";
 
 export async function handleAgentEnd(
-  evt: { reason?: string; toolCallCount?: number; lastToolName?: string },
+  evt: { reason?: string; toolCallCount?: number; lastToolName?: string; messages?: unknown[] },
   ctx: LifecycleCtx,
 ): Promise<void> {
   if (!ctx.agentId || !ctx.sessionKey) return;
-  // Cheap pre-check: only fire when the agent's last tool was NOT
-  // exit_plan_mode and we have no pending interaction. Keeps the
-  // session-store hot path quiet when retry isn't needed.
+  // Cheap pre-check: when the agent's last tool was exit_plan_mode it
+  // already submitted a plan — none of the three retry detectors apply.
   if (evt.lastToolName === "exit_plan_mode") return;
+
+  const messages = Array.isArray(evt.messages) ? evt.messages : [];
+
   await persistSmarterClawState({
     agentId: ctx.agentId,
     sessionKey: ctx.sessionKey,
     update: (current) => {
-      if (!current || current.planMode !== "plan") return undefined;
       // Don't retry when an interaction is already pending — the next
       // user message naturally resumes the cycle.
-      if (current.pendingInteraction) return undefined;
-      // Don't retry when the queue already has a planning-retry
-      // injection (avoid stacking them on consecutive ack-only turns).
-      const alreadyQueued = current.pendingAgentInjections?.some(
-        (e: PendingAgentInjectionEntry) => e.id === "planning-retry",
-      );
-      if (alreadyQueued) return undefined;
-      const queueHost = { pendingAgentInjections: current.pendingAgentInjections };
-      appendToInjectionQueue(queueHost, {
-        id: "planning-retry",
-        kind: "plan_decision",
-        text: PLANNING_RETRY_INJECTION,
-        createdAt: Date.now(),
-        // Expire after 10 minutes — past that, the user has likely
-        // moved on and the retry is just noise.
-        expiresAt: Date.now() + 10 * 60 * 1000,
+      if (current?.pendingInteraction) return undefined;
+
+      const decision: RetryDecision = resolveRetryDecision({
+        messages,
+        state: current,
       });
-      return { ...current, pendingAgentInjections: queueHost.pendingAgentInjections };
+      if (decision.kind === "skip") {
+        return undefined;
+      }
+
+      // Detector matched. Bump the counter, queue the injection.
+      const queueHost = { pendingAgentInjections: current?.pendingAgentInjections };
+      const queueId = `escalating-retry-${decision.kind}`;
+      // Avoid stacking duplicate same-kind injections (the queue's
+      // upsertIntoQueue already dedups by id; this is belt-and-suspenders).
+      const alreadyQueued = queueHost.pendingAgentInjections?.some(
+        (e: PendingAgentInjectionEntry) => e.id === queueId,
+      );
+      if (!alreadyQueued) {
+        appendToInjectionQueue(queueHost, {
+          id: queueId,
+          kind: "plan_decision",
+          text: decision.instruction,
+          createdAt: Date.now(),
+          // Expire after 10 minutes — past that, the user has likely
+          // moved on and the retry is just noise.
+          expiresAt: Date.now() + 10 * 60 * 1000,
+        });
+      }
+
+      const counters = { ...(current?.retryCounters ?? {}) };
+      if (decision.kind === "plan_mode_ack_only") {
+        counters.planModeAckOnly = (counters.planModeAckOnly ?? 0) + 1;
+      } else if (decision.kind === "plan_approved_yield") {
+        counters.planApprovedYield = (counters.planApprovedYield ?? 0) + 1;
+      } else if (decision.kind === "planning_only") {
+        counters.planningOnly = (counters.planningOnly ?? 0) + 1;
+      }
+      const base = ensureBase(current);
+      return {
+        ...base,
+        pendingAgentInjections: queueHost.pendingAgentInjections,
+        retryCounters: counters,
+      };
     },
   });
   logPlanModeDebug({
     kind: "tool_call",
     sessionKey: ctx.sessionKey,
-    tool: "agent_end:planning-retry-queued",
+    tool: "agent_end:escalating-retry-evaluated",
   });
 }
 
