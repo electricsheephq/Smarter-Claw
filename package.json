@@ -8,15 +8,22 @@
   "scripts": {
     "build": "tsc && cp openclaw.plugin.json dist/openclaw.plugin.json",
     "prepublishOnly": "npm run build",
+    "prepack": "node scripts/check-tarball-shape.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
+  "bin": {
+    "smarter-claw-install": "installer/bin/install.mjs",
+    "smarter-claw-uninstall": "installer/bin/uninstall.mjs",
+    "smarter-claw-verify": "installer/bin/verify.mjs"
+  },
   "files": [
     "dist/",
-    "!dist/**/__tests__/",
-    "!dist/**/*.test.js",
-    "!dist/**/*.test.d.ts",
+    "installer/bin/",
+    "installer/lib/",
+    "installer/patches/",
+    "installer/patch-plan.json",
     "openclaw.plugin.json",
     "README.md",
     "LICENSE"
