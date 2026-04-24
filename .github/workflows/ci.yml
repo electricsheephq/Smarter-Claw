@@ -1,0 +1,90 @@
+name: ci
+
+# Runs on every push to main and every pull_request. Required status check
+# (configured via branch protection on main). When this workflow's `ci` job
+# is red, no merge to main is allowed.
+#
+# Scope: cheap + deterministic. Build + tests + installer dry-run only. The
+# slower full installer round-trip lives in installer-roundtrip.yml so this
+# job stays fast on the hot path.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-flight runs of the same workflow on the same ref when a new
+# push comes in. Saves CI minutes on quick iteration.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: build + test + installer dry-run
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Run unit tests
+        run: pnpm test --run
+
+      # Installer dry-run against the host repo's structure. We don't have
+      # a real openclaw worktree available in CI, so we verify the
+      # installer can READ the patch plan + manifest schema + walk its own
+      # patches dir without exploding. Real worktree apply lives in
+      # installer-roundtrip.yml.
+      - name: Installer self-check (smoke)
+        run: |
+          node -e "
+            import('./installer/lib/manifest.mjs').then(m => {
+              const empty = m.newManifest({
+                hostPath: '/tmp/sc-ci-fake',
+                hostVersion: '2026.4.22',
+                expectedHostVersion: '2026.4.22',
+                smarterClawVersion: '0.0.0-ci',
+              });
+              if (!empty || empty.manifestVersion !== 1) {
+                throw new Error('newManifest sanity failed');
+              }
+              console.log('manifest sanity ok');
+            });
+          " --input-type=module
+          # Patch plan must be valid JSON with non-empty patches[].
+          node -e "
+            const plan = JSON.parse(require('fs').readFileSync('installer/patch-plan.json', 'utf8'));
+            if (!Array.isArray(plan.patches) || plan.patches.length === 0) {
+              throw new Error('patch-plan.json patches[] must be non-empty');
+            }
+            for (const p of plan.patches) {
+              if (!p.type || !p.relPath) throw new Error('bad patch entry: ' + JSON.stringify(p));
+            }
+            console.log('patch-plan.json: ' + plan.patches.length + ' patches valid');
+          "
+
+      - name: Run TypeScript declaration check
+        run: pnpm exec tsc --noEmit

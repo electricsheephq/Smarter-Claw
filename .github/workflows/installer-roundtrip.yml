@@ -1,0 +1,128 @@
+name: installer-roundtrip
+
+# Full installer integration test: install + verify + uninstall against an
+# actual openclaw worktree at the pinned baseline. Slower than ci.yml — runs
+# in parallel with it. Required status check (configured via branch
+# protection).
+#
+# Pulls openclaw at the SHA recorded in installer/patch-plan.json's
+# expectedHostVersion. Asserts:
+#   1. Install applies all patches
+#   2. Verify reports OK for every patch
+#   3. Uninstall reverses every patch
+#   4. Final worktree is bit-identical to baseline (git diff empty)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  installer-roundtrip:
+    name: install + verify + uninstall against openclaw v2026.4.22
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout Smarter-Claw
+        uses: actions/checkout@v4
+        with:
+          path: smarter-claw
+
+      - name: Resolve pinned host version
+        id: host_version
+        working-directory: smarter-claw
+        run: |
+          v=$(node -e "console.log(JSON.parse(require('fs').readFileSync('installer/patch-plan.json','utf8')).expectedHostVersion)")
+          if [ -z "$v" ]; then
+            echo "expectedHostVersion missing from patch-plan.json"
+            exit 1
+          fi
+          echo "host_version=$v" >> "$GITHUB_OUTPUT"
+          echo "Pinned host version: $v"
+
+      - name: Checkout openclaw at pinned baseline
+        uses: actions/checkout@v4
+        with:
+          repository: openclaw/openclaw
+          ref: v${{ steps.host_version.outputs.host_version }}
+          path: openclaw-host
+          # Shallow ok; we only need the working tree at one commit
+          fetch-depth: 1
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: smarter-claw/pnpm-lock.yaml
+
+      - name: Install Smarter-Claw deps
+        working-directory: smarter-claw
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Smarter-Claw
+        working-directory: smarter-claw
+        run: pnpm build
+
+      - name: Capture host baseline state
+        working-directory: openclaw-host
+        run: |
+          # We don't need a full openclaw build for installer apply (the
+          # installer only modifies source files). Skipping pnpm install
+          # for the host saves ~2 min and avoids dragging in transitive
+          # postinstall hooks unrelated to plan-mode patches.
+          git rev-parse HEAD > /tmp/host-baseline-sha
+          echo "host baseline: $(cat /tmp/host-baseline-sha)"
+
+      - name: Install
+        working-directory: smarter-claw
+        run: |
+          node installer/bin/install.mjs --host=$GITHUB_WORKSPACE/openclaw-host
+          echo "--- install manifest ---"
+          cat $GITHUB_WORKSPACE/openclaw-host/.smarter-claw-install-manifest.json | head -40
+
+      - name: Verify
+        working-directory: smarter-claw
+        run: |
+          node installer/bin/verify.mjs --host=$GITHUB_WORKSPACE/openclaw-host --json | tee /tmp/verify.json
+          # Assert no drift
+          drift=$(node -e "console.log(JSON.parse(require('fs').readFileSync('/tmp/verify.json','utf8')).drift?.length ?? 0)")
+          missing=$(node -e "console.log(JSON.parse(require('fs').readFileSync('/tmp/verify.json','utf8')).missing?.length ?? 0)")
+          if [ "$drift" != "0" ] || [ "$missing" != "0" ]; then
+            echo "Verify reported drift=$drift missing=$missing"
+            exit 1
+          fi
+          echo "verify clean"
+
+      - name: Uninstall
+        working-directory: smarter-claw
+        run: |
+          node installer/bin/uninstall.mjs --host=$GITHUB_WORKSPACE/openclaw-host
+
+      - name: Assert worktree restored to baseline
+        working-directory: openclaw-host
+        run: |
+          # Worktree must be bit-identical to the original commit.
+          # `git status --porcelain` empty + git diff empty proves it.
+          dirty=$(git status --porcelain)
+          if [ -n "$dirty" ]; then
+            echo "Uninstall left dirty worktree:"
+            echo "$dirty"
+            git diff --stat
+            exit 1
+          fi
+          echo "uninstall restored worktree to baseline"
