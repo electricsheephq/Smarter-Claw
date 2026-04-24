@@ -3,13 +3,13 @@
 Status: active takeover plan.
 Owner: Codex project manager and integration owner.
 Initial execution branch: `takeover/parity-architecture-plan`.
-Source of truth: OpenClaw PR #70071 behavior, implemented as plugin-owned canonical state plus an exact PR #70071 compatibility projection.
+Source of truth: OpenClaw PR #70071 behavior, implemented as plugin-owned canonical state where equivalent plus required reversible OpenClaw host patches wherever plugin hooks cannot reproduce the proven behavior.
 
 ## Summary
 
-Takeover goal: make Smarter-Claw a usable OpenClaw plugin with 100% behavioral parity against the working in-core OpenClaw PR #70071 plan-mode implementation, while avoiding code-for-code copying where a plugin-native architecture is clearly better.
+Takeover goal: make Smarter-Claw a usable OpenClaw plugin with 100% behavioral parity against the working in-core OpenClaw PR #70071 plan-mode implementation, while avoiding code-for-code copying where a plugin-native architecture is demonstrably equivalent or better.
 
-Architectural decision: use plugin-owned namespaced state as canonical, but expose an exact PR #70071 compatibility projection to OpenClaw UI/session/gateway boundaries. This is the 95%-confidence better path for a plugin: it preserves uninstall isolation and future OpenClaw compatibility, while still requiring the host-visible contract to be identical to the proven integrated implementation.
+Architectural decision: use plugin-owned namespaced state as canonical only where it can be projected back to the exact PR #70071 UI/session/gateway contract. Hook-first is an implementation preference, not a release constraint: where current OpenClaw hooks cannot reproduce the integrated behavior, Smarter-Claw must add narrow reversible host patches rather than accepting lower parity.
 
 Current live state at takeover start:
 
@@ -44,12 +44,13 @@ Core state contract:
 
 - Keep plugin metadata canonical, but create one tested adapter that projects exact PR #70071 host/UI shape.
 - Do not keep split vocabulary. UI/gateway must see `approval: "none" | "pending" | "approved" | "edited" | "rejected" | "timed_out"`.
-- Do not add an `executing` enum. Preserve the working `mode: "plan" | "normal"` model and represent post-approval execution via `recentlyApprovedAt`, `recentlyApprovedCycleId`, injections, and close-on-complete.
+- Match the PR #70071 phase model exactly. The currently audited OpenClaw target defines `mode: "plan" | "normal"` and represents post-approval execution with approval state, `recentlyApprovedAt`, `recentlyApprovedCycleId`, pending injections, and completion handling. If the source PR or selected target host exposes `executing` as a runtime/session/UI contract field, Smarter-Claw must preserve or project that state instead of removing it.
 - Adapter owns approval vocabulary, pending interaction shape, question fields, plan steps, approval IDs, and top-level session row fields.
 
 Host patch boundaries:
 
-- Patch only the seams required for parity: session row forwarding, session patch actions, approval/question event bridge, safe metadata write, and runner-adjacent injection delivery.
+- Patch the seams required for parity: session row forwarding, session patch actions, approval/question event bridge, safe metadata write, and runner-adjacent injection delivery.
+- Use hooks and plugin APIs only where a contract test or live canary proves they match PR #70071 behavior. Timing-sensitive behavior that depends on internal session, runner, or UI hydration order is eligible for host patches.
 - Replace broad `updateSessionStoreEntry` with a narrower `updatePluginMetadata` or equivalent scoped write seam once parity is stabilized.
 - Add missing row forwarding for `planMode`, `pendingInteraction`, pending question fields, and last plan steps so refresh/sidebar/slash context work.
 
@@ -250,5 +251,6 @@ Manual canary:
 - "100% parity" means behavioral parity, state contract parity, UI/session parity, and debugging parity, not line-for-line source replication.
 - PR #70071 remains the source of truth for expected plan-mode behavior.
 - OpenClaw target remains v2026.4.22 unless a new target is explicitly chosen.
-- The plugin architecture should stay uninstallable and namespaced; host patches are allowed only where current OpenClaw SDK seams cannot express the proven behavior.
+- The plugin architecture should stay uninstallable and namespaced, but plugin-only is not a release requirement. Host patches are required wherever current OpenClaw SDK seams cannot express the proven behavior.
+- Any state-field removal, including an `executing` phase if one exists in the chosen PR #70071 target, is a parity break unless a compatibility projection preserves the exact external contract.
 - The first permitted execution action is saving this plan to `/Users/lume/repos/Smarter-Claw/docs/TAKEOVER_ARCHITECTURE_PLAN.md`, then filing the release-gate and P0 runtime issues.
