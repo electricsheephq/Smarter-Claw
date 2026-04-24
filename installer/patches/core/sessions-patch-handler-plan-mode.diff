@@ -1,4 +1,4 @@
-@@ -485,7 +485,229 @@
+@@ -485,7 +485,247 @@
        next.groupActivation = normalized;
      }
    }
@@ -134,9 +134,18 @@
 +      const pending = (slot.pendingInteraction as
 +        | { kind?: string; approvalId?: string }
 +        | undefined) ?? ((next as unknown as { pendingInteraction?: { kind?: string; approvalId?: string } }).pendingInteraction);
++      // Mirror-fallback shape note: plugin's slot writes
++      // `kind: "approval"`; UI-compat top-level mirror translates to
++      // `kind: "plan"` for legacy chat slash-cmd-executor compat (see
++      // runtime-api.ts:buildUiCompatMirror line ~315). Accept BOTH so
++      // the fallback path works regardless of which mirror was the
++      // surviving source of truth.
++      const pendingKind = pending?.kind;
++      const isApprovalPending =
++        pendingKind === "approval" || pendingKind === "plan";
 +      if (
 +        !pending ||
-+        pending.kind !== "approval" ||
++        !isApprovalPending ||
 +        (pa.approvalId && pending.approvalId !== pa.approvalId)
 +      ) {
 +        return invalid(
@@ -179,9 +188,18 @@
 +      const pending = (slot.pendingInteraction as
 +        | { kind?: string; approvalId?: string }
 +        | undefined) ?? ((next as unknown as { pendingInteraction?: { kind?: string; approvalId?: string } }).pendingInteraction);
++      // Mirror-fallback shape note: plugin's slot writes
++      // `kind: "approval"`; UI-compat top-level mirror translates to
++      // `kind: "plan"` for legacy chat slash-cmd-executor compat (see
++      // runtime-api.ts:buildUiCompatMirror line ~315). Accept BOTH so
++      // the fallback path works regardless of which mirror was the
++      // surviving source of truth.
++      const pendingKind = pending?.kind;
++      const isApprovalPending =
++        pendingKind === "approval" || pendingKind === "plan";
 +      if (
 +        !pending ||
-+        pending.kind !== "approval" ||
++        !isApprovalPending ||
 +        (pa.approvalId && pending.approvalId !== pa.approvalId)
 +      ) {
 +        return invalid(
