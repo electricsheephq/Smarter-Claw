@@ -43,6 +43,7 @@ import {
   manifestPathFor,
   newManifest,
   readManifest,
+  sweepStaleTempManifests,
   writeManifest,
   writeManifestBackup,
 } from "../lib/manifest.mjs";
@@ -106,6 +107,10 @@ async function main() {
   // via the cleanup handlers wired in install-lock.mjs.
   const releaseLock = acquireInstallLock(hostPath);
   try {
+    // Best-effort cleanup of stale temp files left by a previous
+    // crashed writeJsonAtomic call (#22). Safe — only matches our
+    // exact temp-name pattern.
+    sweepStaleTempManifests(hostPath);
     await runInstall({ args, hostPath, hostVersion });
   } finally {
     releaseLock();
