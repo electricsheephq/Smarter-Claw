@@ -1,4 +1,4 @@
-@@ -1045,3 +1045,163 @@ describe("executeSlashCommand /redirect (hard kill-and-restart)", () => {
+@@ -1046,3 +1046,163 @@ describe("executeSlashCommand /redirect (hard kill-and-restart)", () => {
      expect(result.content).toBe("Failed to redirect: Error: connection lost");
    });
  });

@@ -27,7 +27,7 @@ permissions:
 
 jobs:
   installer-roundtrip:
-    name: install + verify + uninstall against openclaw v2026.4.22
+    name: install + verify + uninstall against openclaw v2026.4.23-beta.5
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

@@ -12,7 +12,7 @@
  import {
    CHAT_ATTACHMENT_ACCEPT,
    isSupportedChatAttachmentMimeType,
-@@ -16,6 +21,15 @@ import {
+@@ -16,6 +21,15 @@
    renderStreamingGroup,
  } from "../chat/grouped-render.ts";
  import { InputHistory } from "../chat/input-history.ts";
@@ -28,7 +28,7 @@
  import { PinnedMessages } from "../chat/pinned-messages.ts";
  import { getPinnedMessageSummary } from "../chat/pinned-summary.ts";
  import { renderChatRunControls } from "../chat/run-controls.ts";
-@@ -30,7 +44,7 @@ import {
+@@ -30,7 +44,7 @@
    type SlashCommandCategory,
    type SlashCommandDef,
  } from "../chat/slash-commands.ts";
@@ -37,7 +37,7 @@
  import { renderCompactionIndicator, renderFallbackIndicator } from "../chat/status-indicators.ts";
  import { buildSidebarContent } from "../chat/tool-cards.ts";
  import { getExpandedToolCards, syncToolCardExpansionState } from "../chat/tool-expansion-state.ts";
-@@ -40,9 +54,9 @@ import type { SidebarContent } from "../sidebar-content.ts";
+@@ -40,9 +54,9 @@
  import { detectTextDirection } from "../text-direction.ts";
  import type { SessionsListResult } from "../types.ts";
  import type { ChatAttachment, ChatQueueItem } from "../ui-types.ts";
@@ -48,7 +48,7 @@
  import "../components/resizable-divider.ts";
  
  export type ChatProps = {
-@@ -56,6 +70,9 @@ export type ChatProps = {
+@@ -56,6 +70,9 @@
    canAbort?: boolean;
    compactionStatus?: CompactionStatus | null;
    fallbackStatus?: FallbackStatus | null;
@@ -58,7 +58,7 @@
    messages: unknown[];
    sideResult?: ChatSideResult | null;
    toolMessages: unknown[];
-@@ -80,8 +97,6 @@ export type ChatProps = {
+@@ -80,8 +97,6 @@
    allowExternalEmbedUrls?: boolean;
    assistantName: string;
    assistantAvatar: string | null;
@@ -67,7 +67,7 @@
    localMediaPreviewRoots?: string[];
    assistantAttachmentAuthToken?: string | null;
    autoExpandToolCalls?: boolean;
-@@ -113,6 +128,49 @@ export type ChatProps = {
+@@ -113,6 +128,49 @@
    onSplitRatioChange?: (ratio: number) => void;
    onChatScroll?: (event: Event) => void;
    basePath?: string;
@@ -117,7 +117,7 @@
  };
  
  // Persistent instances keyed by session
-@@ -153,6 +211,8 @@ interface ChatEphemeralState {
+@@ -153,6 +211,8 @@
    searchOpen: boolean;
    searchQuery: string;
    pinnedExpanded: boolean;
@@ -126,7 +126,7 @@
  }
  
  function createChatEphemeralState(): ChatEphemeralState {
-@@ -169,6 +229,7 @@ function createChatEphemeralState(): ChatEphemeralState {
+@@ -169,6 +229,7 @@
      searchOpen: false,
      searchQuery: "",
      pinnedExpanded: false,
@@ -134,7 +134,7 @@
    };
  }
  
-@@ -192,6 +253,67 @@ function adjustTextareaHeight(el: HTMLTextAreaElement) {
+@@ -192,6 +253,67 @@
    el.style.height = `${Math.min(el.scrollHeight, 150)}px`;
  }
  
@@ -202,7 +202,7 @@
  function generateAttachmentId(): string {
    return `att-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
  }
-@@ -550,10 +672,6 @@ function renderPinnedSection(
+@@ -550,10 +672,6 @@
    pinned: PinnedMessages,
    requestUpdate: () => void,
  ): TemplateResult | typeof nothing {
@@ -213,7 +213,7 @@
    const messages = Array.isArray(props.messages) ? props.messages : [];
    const entries: Array<{ index: number; text: string; role: string }> = [];
    for (const idx of pinned.indices) {
-@@ -589,7 +707,7 @@ function renderPinnedSection(
+@@ -590,7 +708,7 @@
                  ({ index, text, role }) => html`
                    <div class="agent-chat__pinned-item">
                      <span class="agent-chat__pinned-role"
@@ -222,7 +222,7 @@
                      >
                      <span class="agent-chat__pinned-text"
                        >${text.slice(0, 100)}${text.length > 100 ? "..." : ""}</span
-@@ -759,7 +877,9 @@ export function renderChat(props: ChatProps) {
+@@ -760,7 +878,9 @@
    const deleted = getDeletedMessages(props.sessionKey);
    const inputHistory = getInputHistory(props.sessionKey);
    const hasAttachments = (props.attachments?.length ?? 0) > 0;
@@ -233,7 +233,7 @@
  
    const placeholder = props.connected
      ? hasAttachments
-@@ -768,7 +888,10 @@ export function renderChat(props: ChatProps) {
+@@ -769,7 +889,10 @@
      : "Connect to the gateway to start chatting...";
  
    const requestUpdate = props.onRequestUpdate ?? (() => {});
@@ -245,7 +245,7 @@
  
    const splitRatio = props.splitRatio ?? 0.6;
    const sidebarOpen = Boolean(props.sidebarOpen && props.onCloseSidebar);
-@@ -909,8 +1032,6 @@ export function renderChat(props: ChatProps) {
+@@ -910,8 +1033,6 @@
                  onRequestUpdate: requestUpdate,
                  assistantName: props.assistantName,
                  assistantAvatar: assistantIdentity.avatar,
@@ -254,7 +254,7 @@
                  basePath: props.basePath,
                  localMediaPreviewRoots: props.localMediaPreviewRoots ?? [],
                  assistantAttachmentAuthToken: props.assistantAttachmentAuthToken ?? null,
-@@ -1152,6 +1273,7 @@ export function renderChat(props: ChatProps) {
+@@ -1153,6 +1274,7 @@
          : nothing}
        ${renderSideResult(props.sideResult, props.onDismissSideResult)}
        ${renderFallbackIndicator(props.fallbackStatus)}
@@ -262,10 +262,64 @@
        ${renderCompactionIndicator(props.compactionStatus)}
        ${renderContextNotice(activeSession, props.sessions?.defaults?.contextTokens ?? null)}
        ${props.showNewMessages
-@@ -1161,120 +1283,170 @@ export function renderChat(props: ChatProps) {
+@@ -1162,121 +1284,170 @@
              </button>
            `
          : nothing}
+-
+-      <!-- Input bar -->
+-      <div class="agent-chat__input">
+-        ${renderSlashMenu(requestUpdate, props)} ${renderAttachmentPreview(props)}
+-
+-        <input
+-          type="file"
+-          accept=${CHAT_ATTACHMENT_ACCEPT}
+-          multiple
+-          class="agent-chat__file-input"
+-          @change=${(e: Event) => handleFileSelect(e, props)}
+-        />
+-
+-        ${vs.sttRecording && vs.sttInterimText
+-          ? html`<div class="agent-chat__stt-interim">${vs.sttInterimText}</div>`
+-          : nothing}
+-
+-        <textarea
+-          ${ref((el) => el && adjustTextareaHeight(el as HTMLTextAreaElement))}
+-          .value=${props.draft}
+-          dir=${detectTextDirection(props.draft)}
+-          ?disabled=${!props.connected}
+-          @keydown=${handleKeyDown}
+-          @input=${handleInput}
+-          @paste=${(e: ClipboardEvent) => handlePaste(e, props)}
+-          placeholder=${vs.sttRecording ? "Listening..." : placeholder}
+-          rows="1"
+-        ></textarea>
+-
+-        <div class="agent-chat__toolbar">
+-          <div class="agent-chat__toolbar-left">
+-            <button
+-              class="agent-chat__input-btn"
+-              @click=${() => {
+-                document.querySelector<HTMLInputElement>(".agent-chat__file-input")?.click();
+-              }}
+-              title="Attach file"
+-              aria-label="Attach file"
+-              ?disabled=${!props.connected}
+-            >
+-              ${icons.paperclip}
+-            </button>
+-
+-            ${isSttSupported()
+-              ? html`
+-                  <button
+-                    class="agent-chat__input-btn ${vs.sttRecording
+-                      ? "agent-chat__input-btn--recording"
+-                      : ""}"
+-                    @click=${() => {
+-                      if (vs.sttRecording) {
+-                        stopStt();
+-                        vs.sttRecording = false;
+-                        vs.sttInterimText = "";
 +      ${props.planApprovalRequest &&
 +      props.planApprovalRequest.sessionKey === activeSession?.key &&
 +      props.onPlanApprovalDecision
@@ -321,51 +375,7 @@
 +            onQuestionOtherSubmit: () => void props.onPlanApprovalQuestionOtherSubmit?.(),
 +          })
 +        : nothing}
- 
--      <!-- Input bar -->
--      <div class="agent-chat__input">
--        ${renderSlashMenu(requestUpdate, props)} ${renderAttachmentPreview(props)}
--
--        <input
--          type="file"
--          accept=${CHAT_ATTACHMENT_ACCEPT}
--          multiple
--          class="agent-chat__file-input"
--          @change=${(e: Event) => handleFileSelect(e, props)}
--        />
--
--        ${vs.sttRecording && vs.sttInterimText
--          ? html`<div class="agent-chat__stt-interim">${vs.sttInterimText}</div>`
--          : nothing}
--
--        <textarea
--          ${ref((el) => el && adjustTextareaHeight(el as HTMLTextAreaElement))}
--          .value=${props.draft}
--          dir=${detectTextDirection(props.draft)}
--          ?disabled=${!props.connected}
--          @keydown=${handleKeyDown}
--          @input=${handleInput}
--          @paste=${(e: ClipboardEvent) => handlePaste(e, props)}
--          placeholder=${vs.sttRecording ? "Listening..." : placeholder}
--          rows="1"
--        ></textarea>
--
--        <div class="agent-chat__toolbar">
--          <div class="agent-chat__toolbar-left">
--            <button
--              class="agent-chat__input-btn"
--              @click=${() => {
--                document.querySelector<HTMLInputElement>(".agent-chat__file-input")?.click();
--              }}
--              title="Attach file"
--              aria-label="Attach file"
--              ?disabled=${!props.connected}
--            >
--              ${icons.paperclip}
--            </button>
--
--            ${isSttSupported()
--              ? html`
++
 +      <!--
 +        Hide the chat input while a plan-approval card is showing —
 +        prevents the user from typing into the wrong surface during
@@ -436,26 +446,7 @@
 +                      menuOpen: vs.modeMenuOpen,
 +                      onToggleMenu: () => {
 +                        vs.modeMenuOpen = !vs.modeMenuOpen;
-+                        requestUpdate();
-+                      },
-+                      onSelectMode: (mode) => {
-+                        vs.modeMenuOpen = false;
-+                        props.onSetMode!(mode);
-+                        requestUpdate();
-+                      },
-+                    });
-+                  })()}
-                   <button
--                    class="agent-chat__input-btn ${vs.sttRecording
--                      ? "agent-chat__input-btn--recording"
--                      : ""}"
-+                    class="agent-chat__input-btn"
-                     @click=${() => {
--                      if (vs.sttRecording) {
--                        stopStt();
--                        vs.sttRecording = false;
--                        vs.sttInterimText = "";
--                        requestUpdate();
+                         requestUpdate();
 -                      } else {
 -                        const started = startStt({
 -                          onTranscript: (text, isFinal) => {
@@ -489,9 +480,21 @@
 -                          requestUpdate();
 -                        }
 -                      }
++                      },
++                      onSelectMode: (mode) => {
++                        vs.modeMenuOpen = false;
++                        props.onSetMode!(mode);
++                        requestUpdate();
++                      },
++                    });
++                  })()}
++                  <button
++                    class="agent-chat__input-btn"
++                    @click=${() => {
 +                      document.querySelector<HTMLInputElement>(".agent-chat__file-input")?.click();
                      }}
 -                    title=${vs.sttRecording ? "Stop recording" : "Voice input"}
+-                    aria-label=${vs.sttRecording ? "Stop recording" : "Voice input"}
 +                    title="Attach file"
 +                    aria-label="Attach file"
                      ?disabled=${!props.connected}
