@@ -241,17 +241,52 @@ export async function persistSmarterClawState(opts: {
  * coupling is visible from one place and easy to remove when the UI
  * migrates to read the namespaced field directly (post-v1.0).
  *
- * Mirror surface:
- *   - planMode: { mode, approval, approvalId } — chip + sidebar shape
- *   - pendingQuestionApprovalId: ask_user_question routing key
- *   - planApproval (top-level enum) — the slash-command-executor UI patch
- *     reads this directly instead of nested
+ * Mirror surface (audited 2026-04-24, parity port #9):
+ *   - planMode: nested object the UI hydrates the chip + sidebar +
+ *     plan-cards from. Reads from UI patches:
+ *       * `planMode.mode` (app-render.ts.diff:77, app-tool-stream)
+ *       * `planMode.approval` (app.ts.diff:718, slash-cmd-executor:110)
+ *       * `planMode.approvalId` (slash-cmd-executor:110-111)
+ *       * `planMode.title` (app.ts.diff:629, 668)
+ *       * `planMode.lastPlanSteps` (app.ts.diff:660, 711) — sidebar
+ *         re-hydrates from this on page reload
+ *       * `planMode.autoApprove` (app-render.ts.diff:78, views-chat:432)
+ *       * `planMode.blockingSubagentRunIds` (ui-types.ts.diff:37)
+ *       * `planMode.lastSubagentSettledAt` (ui-types.ts.diff:38)
+ *       * `planMode.lastPlanUpdatedAt` (ui-types.ts.diff:36)
+ *   - pendingQuestionApprovalId (top-level): ask_user_question routing
+ *     key read by slash-cmd-executor:150
+ *   - pendingInteraction (top-level): chat slash-command-executor:144
+ *     reads `row.pendingInteraction?.kind === "question"` for
+ *     `/plan answer`. Two discriminated shapes ("plan" / "question").
+ *
+ * The `lastPlanSteps` translation: the plugin's PlanProposal stores
+ * `{ index, description, done }` per step (the openclaw-1 internal
+ * shape that ports directly from agents/plan-mode/types.ts). The UI
+ * expects `{ step, status, activeForm? }` (the update_plan tool's
+ * input shape). We translate at mirror time so the UI sees the shape
+ * it was authored against without requiring a UI rewrite.
  */
 function buildUiCompatMirror(state: SmarterClawSessionState): Record<string, unknown> {
   const approvalId =
     state.pendingInteraction?.kind === "approval"
       ? state.pendingInteraction.approvalId
       : state.pendingQuestionApprovalId;
+
+  // Translate PlanProposal.steps → UI shape. Lossy on activeForm
+  // because the internal PlanStep collapsed `step` and `activeForm`
+  // into a single `description` field (per parsePlanStepsFromTool in
+  // tool-result-persist-hook.ts). We mirror description → step; the
+  // UI's "use activeForm when in_progress" branch falls through to
+  // step text in that case, which is the right visual fallback.
+  const lastPlanStepsForUi =
+    state.lastPlanSteps?.steps && state.lastPlanSteps.steps.length > 0
+      ? state.lastPlanSteps.steps.map((s) => ({
+          step: s.description,
+          status: s.done ? "completed" : "pending",
+        }))
+      : undefined;
+
   return {
     planMode: {
       mode: state.planMode,
@@ -259,9 +294,36 @@ function buildUiCompatMirror(state: SmarterClawSessionState): Record<string, unk
       ...(approvalId ? { approvalId } : {}),
       ...(state.lastPlanSteps?.title ? { title: state.lastPlanSteps.title } : {}),
       ...(state.recentlyApprovedAt ? { recentlyApprovedAt: state.recentlyApprovedAt } : {}),
+      // PR-9 audit additions: fields the UI patches read but were
+      // missing from the mirror in v1.0.0.
+      ...(state.autoApprove ? { autoApprove: state.autoApprove } : {}),
+      ...(lastPlanStepsForUi ? { lastPlanSteps: lastPlanStepsForUi } : {}),
+      ...(state.blockingSubagentRunIds && state.blockingSubagentRunIds.length > 0
+        ? { blockingSubagentRunIds: state.blockingSubagentRunIds }
+        : {}),
     },
     ...(state.pendingQuestionApprovalId
       ? { pendingQuestionApprovalId: state.pendingQuestionApprovalId }
+      : {}),
+    // Mirror pendingInteraction at the top level for the
+    // slash-command-executor `/plan answer` path
+    // (ui-src-ui-chat-slash-command-executor.ts.diff:144-148). The UI
+    // discriminates on `kind` and reads `approvalId` + `questionId`.
+    // We don't have `questionId` in our state today (it was recorded
+    // in the question-approval persist on openclaw-1) so just mirror
+    // what we have; questionId can land later via a separate field.
+    ...(state.pendingInteraction
+      ? {
+          pendingInteraction: {
+            kind:
+              state.pendingInteraction.kind === "approval"
+                ? "plan"
+                : state.pendingInteraction.kind,
+            approvalId: state.pendingInteraction.approvalId,
+            createdAt: Date.parse(state.pendingInteraction.deliveredAt) || Date.now(),
+            status: "pending" as const,
+          },
+        }
       : {}),
   };
 }
