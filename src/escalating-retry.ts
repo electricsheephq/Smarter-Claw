@@ -217,6 +217,32 @@ export type PlanningOnlyPlanDetails = {
 };
 
 const PLANNING_ONLY_BULLET_RE = /^(?:[-*•]\s+|\d+[.)]\s+)/u;
+const PLANNING_ONLY_HEADING_RE = /^(?:plan|steps?|next steps?)\s*:/i;
+const PLANNING_ONLY_PROMISE_RE =
+  /\b(?:i(?:'ll| will)|let me|i(?:'m| am)\s+going to|first[, ]+i(?:'ll| will)|next[, ]+i(?:'ll| will)|i can do that)\b/i;
+
+/**
+ * Strict structured-plan-format check (verbatim from openclaw-1's
+ * `hasStructuredPlanningOnlyFormat`). Returns true when the text either:
+ *   - has a "Plan:" / "Steps:" heading PLUS a planning cue ("I'll", "let me"), or
+ *   - has 2+ bullet/numbered lines PLUS a planning cue
+ *
+ * Without this guard, the planning_only detector false-fires on every
+ * single-sentence assistant reply that happens to contain "I'll" — way
+ * too noisy. The strict format gate matches openclaw-1's narrowing
+ * after PR-7 review feedback.
+ */
+function hasStructuredPlanningOnlyFormat(text: string): boolean {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return false;
+  const bulletLineCount = lines.filter((line) => PLANNING_ONLY_BULLET_RE.test(line)).length;
+  const hasPlanningCueLine = lines.some((line) => PLANNING_ONLY_PROMISE_RE.test(line));
+  const hasPlanningHeading = PLANNING_ONLY_HEADING_RE.test(lines[0] ?? "");
+  return (hasPlanningHeading && hasPlanningCueLine) || (bulletLineCount >= 2 && hasPlanningCueLine);
+}
 
 /**
  * Best-effort split of "I'll do X. Then Y. Then Z." prose into discrete
@@ -408,21 +434,27 @@ export function resolveRetryDecision(ctx: AgentEndContext): RetryDecision {
     }
   }
 
-  // Detector 3: planning_only — agent narrated a plan without calling
-  // any tool. Outside-plan-mode equivalent of detector 1. Only fires
-  // when text is non-empty AND no tool calls happened.
+  // Detector 3: planning_only — agent narrated a multi-step plan
+  // without calling any tool. Outside-plan-mode equivalent of detector
+  // 1. Stricter than the ack-only detector to avoid false-firing on
+  // every single-sentence chat reply: requires at least 2 distinct
+  // steps AND a planning cue (matches openclaw-1's
+  // hasStructuredPlanningOnlyFormat: bulletLineCount >= 2 OR planning
+  // heading + planning cue).
   if (!planModeActive && toolNames.length === 0 && visibleText.length > 0) {
-    const planDetails = extractPlanningOnlyPlanDetails(visibleText);
-    if (planDetails && planDetails.steps.length > 0) {
-      const attemptIndex = state?.retryCounters?.planningOnly ?? 0;
-      if (attemptIndex <= 2) {
-        return {
-          kind: "planning_only",
-          instruction: resolveEscalatingPlanningRetryInstruction(attemptIndex),
-          attemptIndex,
-        };
+    if (hasStructuredPlanningOnlyFormat(visibleText)) {
+      const planDetails = extractPlanningOnlyPlanDetails(visibleText);
+      if (planDetails && planDetails.steps.length >= 2) {
+        const attemptIndex = state?.retryCounters?.planningOnly ?? 0;
+        if (attemptIndex <= 2) {
+          return {
+            kind: "planning_only",
+            instruction: resolveEscalatingPlanningRetryInstruction(attemptIndex),
+            attemptIndex,
+          };
+        }
+        return { kind: "skip", reason: "planning_only escalation cap reached" };
       }
-      return { kind: "skip", reason: "planning_only escalation cap reached" };
     }
   }
 
