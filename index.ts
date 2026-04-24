@@ -20,6 +20,7 @@ import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { assertOpenclawVersionSupported } from "./api.js";
 import { buildArchetypePromptResult } from "./src/archetype-hook.js";
 import { isPlanModeDebugEnabled, logPlanModeDebug, setPlanModeDebugEnabled } from "./src/debug-log.js";
+import { buildExecutionStatusResult } from "./src/execution-status-injection.js";
 import { buildInjectionDrainResult } from "./src/injection-drain-hook.js";
 import {
   handleAgentEnd,
@@ -193,14 +194,20 @@ export default definePluginEntry({
     // bytes to non-plan-mode prompts.
     const archetypeEnabled = config.archetype?.enabled !== false;
     api.on("before_prompt_build", async (_event, ctx) => {
-      // Two side-by-side concerns share before_prompt_build:
+      // Three side-by-side concerns share before_prompt_build:
       //   1. Archetype prompt (constant per-turn when in plan mode)
       //   2. Injection-queue drain (per-turn variable; fires from /plan
       //      accept|revise|answer to deliver [PLAN_DECISION]:... and
       //      [QUESTION_ANSWER]:... synthetic messages on the next turn)
-      // Both append to system context; we concatenate when both fire so
-      // a single appendSystemContext payload reaches the model.
-      const [archetype, drain] = await Promise.all([
+      //   3. [PLAN_STATUS]: preamble when in executing mode (PR #70071
+      //      P2.12b — recovered via tracking issue #51). Forces fresh
+      //      plan-state visibility into every executing turn so the
+      //      agent can't conflate "did the work" with "called
+      //      update_plan to record it" — Eva's MiniMax/David VM
+      //      session log discovery case.
+      // All three append to system context; we concatenate so a single
+      // appendSystemContext payload reaches the model.
+      const [archetype, drain, executionStatus] = await Promise.all([
         Promise.resolve(
           buildArchetypePromptResult(
             { enabled: archetypeEnabled },
@@ -208,9 +215,22 @@ export default definePluginEntry({
           ),
         ),
         buildInjectionDrainResult({ agentId: ctx.agentId, sessionKey: ctx.sessionKey }),
+        Promise.resolve(
+          buildExecutionStatusResult({ agentId: ctx.agentId, sessionKey: ctx.sessionKey }),
+        ),
       ]);
       const parts: string[] = [];
       if (drain?.appendSystemContext) parts.push(drain.appendSystemContext);
+      // Execution-status preamble appears BEFORE the archetype prompt
+      // (when present): both are reference material the agent reads at
+      // turn-start; the [PLAN_STATUS] preamble takes precedence
+      // because it's specific to the current plan state (vs the
+      // archetype which is constant guidance for the design phase).
+      // In practice they don't co-occur — archetype only fires for
+      // mode === "plan", execution-status only fires for "executing".
+      if (executionStatus?.appendSystemContext) {
+        parts.push(executionStatus.appendSystemContext);
+      }
       if (archetype?.appendSystemContext) parts.push(archetype.appendSystemContext);
       if (parts.length === 0) return undefined;
       return { appendSystemContext: parts.join("\n\n") };
