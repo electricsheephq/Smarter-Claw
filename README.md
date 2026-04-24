@@ -237,4 +237,8 @@ All non-blocker work is in [open issues](https://github.com/electricsheephq/Smar
 
 ## License
 
-[MIT](./LICENSE) © 2026 Electric Sheep HQ
+[PolyForm Noncommercial 1.0.0](./LICENSE) © 2026 Electric Sheep HQ.
+
+**TL;DR**: free for noncommercial use — personal, hobby, research, education, public-interest, government. Commercial use (integrating Smarter-Claw into a paid product, hosted service, internal tooling at a for-profit company, or anything else where you make money from it) requires a separate paid commercial license. Open an issue at https://github.com/electricsheephq/Smarter-Claw/issues with the subject `[commercial]` to start that conversation.
+
+The name "Smarter Claw" is a trademark of Electric Sheep HQ — see [TRADEMARK.md](./TRADEMARK.md) for what you can and can't do with the name (you can fork the code freely under the license; you just can't ship the fork under the same or a confusingly similar name).
