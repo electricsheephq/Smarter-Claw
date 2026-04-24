@@ -266,7 +266,18 @@ type CronCreateInput = {
   name: string;
   description: string;
   enabled: boolean;
-  schedule: { kind: string; expr: string; tz?: string };
+  // openclaw v2026.4.23-beta.5 reshaped CronSchedule:
+  //   { kind: "at"; at: string }
+  //   { kind: "every"; everyMs: number; anchorMs?: number }
+  //   { kind: "cron"; expr: string; tz?: string; staggerMs?: number }
+  // The previous loose `{ kind: string; expr: string }` shape silently
+  // mis-routed our `kind: "interval", expr: "30m"` registration to the
+  // cron parser, which rejected "30m" as an invalid 5-7 part cron
+  // expression. Now correctly modeled as a discriminated union.
+  schedule:
+    | { kind: "at"; at: string }
+    | { kind: "every"; everyMs: number; anchorMs?: number }
+    | { kind: "cron"; expr: string; tz?: string; staggerMs?: number };
   sessionTarget: string;
   wakeMode: string;
   payload: { kind: "agentTurn"; message: string } | { kind: "systemEvent"; text: string };
@@ -302,9 +313,14 @@ export async function handleGatewayStart(ctx: {
         "before_prompt_build injection-queue drain. The drain itself is the gate: it only emits the " +
         "nudge when planMode === 'plan' AND no pendingInteraction.",
       enabled: true,
+      // openclaw v2026.4.23-beta.5 dropped `kind: "interval"` —
+      // replaced by `kind: "every"` with explicit milliseconds. 30
+      // minutes = 30 * 60 * 1000 = 1_800_000 ms. The previous
+      // `expr: "30m"` was being mis-routed to the cron-string parser
+      // and rejected with "CronPattern: invalid configuration format".
       schedule: {
-        kind: "interval",
-        expr: "30m",
+        kind: "every",
+        everyMs: 30 * 60 * 1000,
       },
       sessionTarget: "current",
       wakeMode: "auto",
