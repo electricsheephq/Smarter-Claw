@@ -51,7 +51,17 @@ async function main() {
   const drifts = [];
   const missing = [];
   const ok = [];
+  const skipped = [];
   for (const record of manifest.patches) {
+    // Synthetic patch types that don't have a single SHA-checkable file.
+    // bundled-openclaw-shadow records the symlink swap of the plugin's
+    // node_modules/openclaw — its relPath points at a directory (the
+    // host repo) so SHA verification doesn't apply. We trust the
+    // separate stash-rename + symlink check that uninstall does.
+    if (record.type === "bundled-openclaw-shadow") {
+      skipped.push({ relPath: record.relPath, reason: "synthetic patch, no single-file SHA" });
+      continue;
+    }
     const target = path.join(hostPath, record.relPath);
     if (!existsSync(target)) {
       missing.push(record.relPath);
@@ -77,6 +87,7 @@ async function main() {
           ok: ok.length,
           drift: drifts,
           missing,
+          skipped,
         },
         null,
         2,

@@ -1,0 +1,27 @@
+# Smarter-Claw code ownership.
+#
+# Routes PR review requests automatically. Branch protection on `main`
+# requires at least 1 review from a code owner before merge.
+#
+# Default owner for the whole repo. Add per-path entries below as the
+# project grows (e.g., separate owners for `installer/` patches vs
+# plugin source).
+
+* @100yenadmin
+
+# Plugin source — the runtime contract surface.
+/index.ts @100yenadmin
+/api.ts @100yenadmin
+/runtime-api.ts @100yenadmin
+/src/ @100yenadmin
+
+# Installer + patches. Touching anything here can break host-side
+# behavior on every existing install — always require operator review.
+/installer/ @100yenadmin
+/openclaw.plugin.json @100yenadmin
+
+# Release process + CI must not be modified by automation without
+# operator sign-off.
+/.github/ @100yenadmin
+/RELEASING.md @100yenadmin
+/package.json @100yenadmin
