@@ -228,16 +228,44 @@ export async function handleAgentEnd(
 // gateway_start: register plan-nudge cron heartbeat (Stream A5)
 // ---------------------------------------------------------------------------
 
+/**
+ * gateway_start cron registration. PluginHookGatewayCronCreateInput
+ * shape (verified against openclaw-2/src/plugins/hook-types.ts:510):
+ *   { name, description, enabled, schedule: { kind, expr, tz? },
+ *     sessionTarget, wakeMode, payload: { kind, text? } }
+ *
+ * v2.0 uses `payload.kind = "synthetic-user-message"` to inject a
+ * `[PLAN_NUDGE]` synthetic message into the active session every 30
+ * minutes. The plugin's before_prompt_build drain picks it up and the
+ * agent gets nudged to either continue the plan or exit_plan_mode if
+ * the cycle has stalled.
+ *
+ * `sessionTarget: "*"` would target all sessions; we use "current"
+ * which the host expands to the bound session. v2.0 limitation: the
+ * cron fires globally rather than per-active-plan-mode-session
+ * (openclaw-1 used per-session one-shots scheduled inside the
+ * enter_plan_mode tool body — the plugin SDK doesn't expose getCron
+ * from tool context yet, so global-scan with payload-side filtering
+ * is the right shape today). v2.1 work tracked via the plan-nudge
+ * gap doc.
+ */
+// Loose local copy of the host's PluginHookGatewayCronCreateInput so
+// we don't have to depend on the host's typed exports (which differ
+// across openclaw publishes).
+type CronCreateInput = {
+  name: string;
+  description: string;
+  enabled: boolean;
+  schedule: { kind: string; expr: string; tz?: string };
+  sessionTarget: string;
+  wakeMode: string;
+  payload: { kind: string; text?: string };
+};
+
 export async function handleGatewayStart(ctx: {
   getCron?: () => {
-    add: (input: {
-      id?: string;
-      cron: string;
-      command: string;
-      enabled?: boolean;
-      description?: string;
-    }) => Promise<unknown>;
-    list: (opts?: { includeDisabled?: boolean }) => Promise<Array<{ id: string }>>;
+    add: (input: CronCreateInput) => Promise<unknown>;
+    list: (opts?: { includeDisabled?: boolean }) => Promise<Array<{ id?: string; name?: string }>>;
   } | undefined;
 }): Promise<void> {
   const cron = ctx.getCron?.();
@@ -250,20 +278,33 @@ export async function handleGatewayStart(ctx: {
     return;
   }
   // Idempotent registration — list first, only add when missing.
+  const CRON_NAME = "smarter-claw-plan-nudge";
   try {
     const existing = await cron.list({ includeDisabled: true });
-    if (existing.some((j) => j.id === "smarter-claw-plan-nudge")) {
+    if (existing.some((j) => j.id === CRON_NAME || j.name === CRON_NAME)) {
       return;
     }
     await cron.add({
-      id: "smarter-claw-plan-nudge",
-      cron: "*/30 * * * *", // every 30 minutes
-      command: "openclaw plan nudge --check-stale-plan-mode",
-      enabled: true,
+      name: CRON_NAME,
       description:
-        "Smarter-Claw plan-mode heartbeat — nudges agents stuck in plan mode without recent activity. " +
-        "Suppressed when an approval is pending; only fires when a session has been in plan mode > 30min " +
-        "with no agent message and no pending interaction.",
+        "Smarter-Claw plan-mode heartbeat — nudges sessions stuck in plan mode without recent activity. " +
+        "Payload injects `[PLAN_NUDGE]` synthetic message; the agent's next turn sees it via the " +
+        "before_prompt_build injection-queue drain. The drain itself is the gate: it only emits the " +
+        "nudge when planMode === 'plan' AND no pendingInteraction.",
+      enabled: true,
+      schedule: {
+        kind: "interval",
+        expr: "30m",
+      },
+      sessionTarget: "current",
+      wakeMode: "auto",
+      payload: {
+        kind: "synthetic-user-message",
+        text:
+          "[PLAN_NUDGE]: This session is in plan mode but has been idle. Either (a) continue " +
+          "investigation with a read-only tool, (b) submit the proposal via exit_plan_mode, or (c) " +
+          "exit plan mode if the work is complete.",
+      },
     });
     logPlanModeDebug({
       kind: "tool_call",
