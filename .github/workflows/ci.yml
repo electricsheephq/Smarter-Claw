@@ -137,11 +137,19 @@ jobs:
             exit 1
           fi
 
-          # Version consistency: package.json vs plugin manifest
+          # Version consistency: package.json vs api.ts banner string
+          # (api.ts:assertOpenclawVersionSupported embeds the version in
+          # an error message that operators see on host-version mismatch
+          # — must match package.json).
           pkgVersion=$(node -e "console.log(require('./package.json').version)")
-          pluginVersion=$(node -e "console.log(JSON.parse(require('fs').readFileSync('/tmp/sc-extract/package/dist/openclaw.plugin.json','utf8')).version)")
-          if [ "$pkgVersion" != "$pluginVersion" ]; then
-            echo "FAIL: version drift — package.json=$pkgVersion plugin manifest=$pluginVersion"
+          apiTextVersion=$(node -e "
+            const fs=require('fs');
+            const text=fs.readFileSync('/tmp/sc-extract/package/dist/api.js','utf8');
+            const m=text.match(/Smarter-Claw v([\\d.A-Za-z-]+)/);
+            console.log(m ? m[1] : 'NOT_FOUND');
+          ")
+          if [ "$pkgVersion" != "$apiTextVersion" ]; then
+            echo "FAIL: version drift — package.json=$pkgVersion api.ts banner=$apiTextVersion"
             exit 1
           fi
-          echo "Version consistent: $pkgVersion (package.json + plugin manifest)"
+          echo "Version consistent: $pkgVersion (package.json + api.ts banner)"
