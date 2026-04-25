@@ -35,7 +35,7 @@ export {
  * `expectedHostVersion` whenever Smarter-Claw moves to a new host
  * baseline.
  */
-export const SUPPORTED_OPENCLAW_VERSION = "2026.4.22";
+export const SUPPORTED_OPENCLAW_VERSION = "2026.4.23";
 
 /**
  * Runtime guard: throw a clear error if the host version doesn't exactly

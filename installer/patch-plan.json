@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "expectedHostVersion": "2026.4.23-beta.5",
+  "expectedHostVersion": "2026.4.23",
   "smarterClawTargetVersion": "0.1.0",
   "_comment": "patches[] is populated as the UI/core patch authoring lands. install.mjs reads this file and dispatches each entry to applyNewFilePatch or applyDiffPatch. Each entry shape: { type: 'new-file', relPath, sourceRelPath } OR { type: 'diff', relPath, patchRelPath, expectedOriginalSha256 }.",
   "patches": [
@@ -239,7 +239,7 @@
       "type": "diff",
       "relPath": "src/config/schema.base.generated.ts",
       "patchRelPath": "patches/core/schema-allow-conversation-access.diff",
-      "expectedOriginalSha256": "ca249d638091766d9b262d93318f33c5846155c9319cc5b15a195d0af226167c"
+      "expectedOriginalSha256": "ac73854eef5b6b8494f31cb9aa5191d200e83cc3f8be15b6dbd95abc38a7fa22"
     },
     {
       "type": "diff",
