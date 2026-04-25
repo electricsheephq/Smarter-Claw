@@ -1,4 +1,4 @@
-@@ -485,7 +485,487 @@
+@@ -485,7 +485,500 @@
        next.groupActivation = normalized;
      }
    }
@@ -480,6 +480,19 @@
 +          ? { blockingSubagentRunIds: writtenSlot.blockingSubagentRunIds }
 +          : {}),
 +      };
++      // Wave 2 BLOCKER fix (2026-04-25): C7 mirror clear was scoped to
++      // the planMode-reset path + answer-action path, but approve / edit /
++      // reject / auto-toggle-with-pending all consume the slot's
++      // pendingInteraction without clearing the top-level mirror. Same
++      // phantom-approval bug class as the Eva live-test failure (slot
++      // says no pending, top-level mirror still says approval pending →
++      // UI loops on stale approvalId). Clear top-level mirror in lockstep
++      // when slot pendingInteraction is empty after this branch's write,
++      // covering all four consumer paths via the unified mirror block.
++      if (!writtenSlot.pendingInteraction) {
++        delete nextEntry.pendingInteraction;
++        delete nextEntry.pendingQuestionApprovalId;
++      }
 +    }
 +  }
  
