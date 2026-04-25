@@ -1,4 +1,4 @@
-@@ -132,6 +132,53 @@
+@@ -132,6 +132,71 @@
    {
      key: NonEmptyString,
      label: Type.Optional(Type.Union([SessionLabelString, Type.Null()])),
@@ -44,6 +44,24 @@
 +          {
 +            action: Type.Literal("auto"),
 +            autoEnabled: Type.Boolean(),
++          },
++          { additionalProperties: false },
++        ),
++        // Smarter-Claw issue #46 + sub-agent QA C9: /plan answer + UI
++        // answer-card route. Accept the answer payload so the slash
++        // command and inline question card can resolve a pending
++        // ask_user_question approval. The handler validates approvalId,
++        // sanitizes the answer text before injection.
++        Type.Object(
++          {
++            action: Type.Literal("answer"),
++            approvalId: Type.Optional(NonEmptyString),
++            // Codex review P1: webchat executor conditionally sends
++            // questionId on answer submissions when the pending question
++            // surfaces an id. Without accepting it, valid requests are
++            // rejected at schema validation before the handler runs.
++            questionId: Type.Optional(NonEmptyString),
++            answer: Type.String(),
 +          },
 +          { additionalProperties: false },
 +        ),

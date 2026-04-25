@@ -1,4 +1,4 @@
-@@ -1434,6 +1434,17 @@ export function buildGatewaySessionRow(params: {
+@@ -1434,6 +1434,29 @@ export function buildGatewaySessionRow(params: {
      lastAccountId: deliveryFields.lastAccountId ?? entry?.lastAccountId,
      lastThreadId: deliveryFields.lastThreadId ?? entry?.lastThreadId,
      compactionCheckpointCount: entry?.compactionCheckpoints?.length,
@@ -12,8 +12,22 @@
 +    // entry.planMode.mode and gets undefined on every list refresh.
 +    // The Smarter-Claw plugin owns the namespace so exposing these
 +    // fields doesn't leak any other plugin's data.
-+    planMode: entry?.planMode,
-+    pendingQuestionApprovalId: entry?.pendingQuestionApprovalId,
-+    pluginMetadata: entry?.pluginMetadata,
++    //
++    // Type cast: SessionEntry doesn't declare these fields nor does
++    // GatewaySessionRow accept them. Spread via a Record<string,unknown>
++    // bridge so the object literal compiles without modifying either
++    // type definition (which would be a much larger surface change to
++    // patch). Runtime semantics are identical — the fields land on the
++    // returned object exactly as they did before this cast was added.
++    // The plugin-sdk dts-build (build:plugin-sdk:dts via tsgo) is strict
++    // and rejects the un-cast object literal; spreading a typed-object
++    // bypass survives that step. Long-term: upstream RFC could declare
++    // `planMode`, `pendingQuestionApprovalId`, `pluginMetadata` as
++    // optional fields on both types.
++    ...({
++      planMode: (entry as unknown as Record<string, unknown> | undefined)?.planMode,
++      pendingQuestionApprovalId: (entry as unknown as Record<string, unknown> | undefined)?.pendingQuestionApprovalId,
++      pluginMetadata: (entry as unknown as Record<string, unknown> | undefined)?.pluginMetadata,
++    } as Record<string, unknown>),
    };
  }
