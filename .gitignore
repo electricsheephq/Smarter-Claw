@@ -1,4 +1,6 @@
-# Dependency directories
+# Dependency directories (match both directories AND the LEXAR
+# symlink we use to offload heavy installs off the root volume).
+node_modules
 node_modules/
 .pnpm-store/
 
