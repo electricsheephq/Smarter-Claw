@@ -1,5 +1,12 @@
 # Step 4 — Decision (DRAFT, awaiting Eva sign-off)
 
+> **⚠️ SUPERSEDED in part by `11-AMENDMENT_REVISIONS.md`** — Wave 3 (autonomous iteration, post Eva's `/loop` invocation) verified Amendment 1 against actual code and discovered:
+> - Amendment 1's typed-mutator must encode **~10 invariants, not 4** (Agent N read the full envelope of `persistPlanApprovalRequest`). Revised mutator signature uses a discriminated-union return type. Critical test gap: zero direct unit tests today for this function.
+> - **Amendment 2 Path B is OFF THE TABLE** — Agent O's UI catalog identified element #22 (input-bar suppression) as a correctness regression, not UX degradation. No SDK seam can intercept keystrokes from a sidebar plugin.
+> - **Path A recommended at ~85% confidence** (revised up from "my read" in this doc).
+>
+> Read `11-AMENDMENT_REVISIONS.md` for the authoritative current state. The rest of THIS doc remains the structural framing, but the BLOCKER resolutions in `11-` are now the contract.
+
 **Status**: DRAFT — 2 BLOCKERs + ~4 open decisions need Eva input before this becomes the locked plan.
 
 **Methodology**: `first-principles-architectural-decision` skill, full Steps 1 → 4 walked. Wave 1 (4 agents) + Wave 2 (3 agents) produced 7 durable artifacts in this directory.
