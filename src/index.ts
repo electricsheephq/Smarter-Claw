@@ -131,7 +131,12 @@ export default definePluginEntry({
     // `sessions.pluginPatch` RPC. The namespace is fixed at "plan-mode"
     // per architecture decision (Option C: single namespace owned by
     // PlanModeStore). See `architecture-v2/02-ARCHITECTURE_OPTIONS.md`.
-    api.registerSessionExtension({
+    //
+    // Using the new nested form `api.session.state.registerSessionExtension`
+    // (preferred since v2026.5.10-beta.5). The flat
+    // `api.registerSessionExtension` still works as a deprecated alias
+    // but will be removed in a future major.
+    api.session.state.registerSessionExtension({
       namespace: PLAN_MODE_SESSION_EXTENSION_NAMESPACE,
       description:
         "Plan-mode state — current mode, pending approval, cycle counter, " +
