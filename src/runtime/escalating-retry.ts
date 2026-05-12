@@ -26,19 +26,51 @@
  *
  * # Escalation levels (max 3 retries per cycle)
  *
- * The SDK's `before_agent_finalize` result accepts `maxAttempts`. We
- * use `idempotencyKey` keyed on (sessionKey, detector, lastAssistant
- * truncated hash) so the host counts retries for the same logical
- * situation and stops at level 3.
+ * Each detector picks an escalating instruction tier based on the
+ * SDK's per-key attempt counter. Tiers are byte-identical to in-host:
  *
- * host_ref: in-host escalating-retry semantics from PR-7 + iter-3 D2
- * landed across pi-embedded-runner/run/incomplete-turn.ts +
- * thinking.ts. Plugin port encodes the BEHAVIORAL contract; the
- * algorithmic details (toolMeta inspection, etc.) are runner-internal
- * and don't translate.
+ *   - PLANNING_RETRY: standard (0) → firm (1) → final (2+)
+ *   - PLAN_ACK_ONLY: standard (0) → firm (1+)
+ *   - PLAN_YIELD: standard (0) → firm (1+)
+ *
+ * Instruction strings + regex constants + escalation resolvers live in
+ * `./escalating-retry-constants.ts` so a future parity-harness Layer-1
+ * diff catches drift surgically.
+ *
+ * # Surgical-port rationale (2026-05-12)
+ *
+ * Wave-1 audit slice S7 found:
+ *   - Plugin had 3 ad-hoc instruction strings (no FIRM/FINAL tiers)
+ *   - Plugin's narration detection was a naive `["I'll ", "Let me "]`
+ *     array — missing the in-host's nuanced regex + structured-format
+ *     heuristic
+ *   - No PLANNING_ONLY_COMPLETION_RE guard (don't retry when agent
+ *     says "done" / "fixed")
+ *   - No max-length guard (retry on walls of text)
+ *   - No code-block bypass (retry when agent IS showing code)
+ *
+ * This PR re-ports the BYTES + escalation tiers + nuanced regex
+ * detection. The full toolMeta-level analysis (which Counts plan-only
+ * tool calls vs real ones) stays gateway-side because the SDK seam
+ * doesn't expose that signal. Documented as the remaining gap.
+ *
+ * host_ref: in-host escalating-retry from PR-7 + iter-3 D2 at
+ *   pi-embedded-runner/run/incomplete-turn.ts (instruction constants
+ *   verbatim; toolMeta detection deferred to gateway).
  */
 
 import type { PlanMode } from "../types.js";
+import {
+  isPlanningOnlyNarrationText,
+  PLANNING_ONLY_COMPLETION_RE,
+  resolveEscalatingPlanAckOnlyInstruction,
+  resolveEscalatingPlanningRetryInstruction,
+  resolveEscalatingPlanYieldInstruction,
+  PLAN_MODE_ACK_ONLY_RETRY_INSTRUCTION,
+  PLAN_APPROVED_YIELD_RETRY_INSTRUCTION,
+  DEFAULT_PLAN_MODE_ACK_ONLY_RETRY_LIMIT,
+  DEFAULT_PLAN_APPROVED_YIELD_RETRY_LIMIT,
+} from "./escalating-retry-constants.js";
 
 /**
  * Coarse-grained turn signal extracted from the
@@ -60,6 +92,12 @@ export interface TurnSignal {
   /** True if the immediately-prior turn was a [PLAN_DECISION]: approved
    *  injection (so a yield here is the "PLAN_YIELD" antipattern). */
   isPostApprovalTurn: boolean;
+  /** Optional: number of times THIS detector has fired for this cycle.
+   *  Drives the FIRM/FINAL escalation. The host's
+   *  before_agent_finalize counter is queried by idempotencyKey; the
+   *  plugin reads it through the prior-decision metadata. When
+   *  undefined, treats as 0 (first attempt). */
+  attemptIndex?: number;
 }
 
 export type RetryDetector = "PLAN_ACK_ONLY" | "PLAN_YIELD" | "PLANNING_RETRY";
@@ -77,6 +115,10 @@ export interface RetryDecision {
  *
  * Priority order: PLAN_YIELD > PLAN_ACK_ONLY > PLANNING_RETRY. Higher
  * is more specific; only one detector fires per turn.
+ *
+ * host_ref: in-host's incomplete-turn.ts dispatch — PLAN_YIELD checked
+ *   first via post-approval grace window, then PLAN_ACK_ONLY for in-
+ *   mode chat-only, then PLANNING_RETRY for the normal-mode case.
  */
 export function decideEscalatingRetry(
   sessionKey: string | undefined,
@@ -84,8 +126,12 @@ export function decideEscalatingRetry(
 ): RetryDecision | undefined {
   if (!sessionKey) return undefined;
 
+  const attemptIndex = signal.attemptIndex ?? 0;
+
   // PLAN_YIELD: post-approval turn that yielded with no execution.
-  // Most specific — check first.
+  // Most specific — check first. The in-host has a grace window
+  // (POST_APPROVAL_YIELD_GRACE_MS) AND a toolMeta check; we use the
+  // coarse "no tool call + no assistant text" signal here.
   if (
     signal.isPostApprovalTurn &&
     !signal.madeToolCall &&
@@ -93,84 +139,48 @@ export function decideEscalatingRetry(
   ) {
     return {
       detector: "PLAN_YIELD",
-      instruction:
-        "[PLAN_YIELD]: Approval was granted but you didn't begin execution. " +
-        "Continue with the plan — start the first pending step now.",
+      instruction: resolveEscalatingPlanYieldInstruction(attemptIndex),
       idempotencyKey: idempotencyKey(sessionKey, "PLAN_YIELD"),
-      maxAttempts: 3,
+      maxAttempts: DEFAULT_PLAN_APPROVED_YIELD_RETRY_LIMIT,
     };
   }
 
   // PLAN_ACK_ONLY: in plan mode, agent narrated without acting.
+  // Skip when text says "done" / "fixed" etc. — the agent may have
+  // ended the work via reasoning and the retry would be a nag.
   if (
     signal.planMode === "plan" &&
     !signal.madeToolCall &&
-    !!signal.lastAssistantMessage?.trim()
+    !!signal.lastAssistantMessage?.trim() &&
+    !PLANNING_ONLY_COMPLETION_RE.test(signal.lastAssistantMessage)
   ) {
     return {
       detector: "PLAN_ACK_ONLY",
-      instruction:
-        "[PLAN_ACK_ONLY]: You're in plan mode but your last turn was chat without a tool call. " +
-        "Take the next concrete action: investigate (read/grep/web_search), update_plan, " +
-        "ask_user_question, or exit_plan_mode with your proposal. Don't narrate without acting.",
+      instruction: resolveEscalatingPlanAckOnlyInstruction(attemptIndex),
       idempotencyKey: idempotencyKey(sessionKey, "PLAN_ACK_ONLY"),
-      maxAttempts: 3,
+      maxAttempts: DEFAULT_PLAN_MODE_ACK_ONLY_RETRY_LIMIT,
     };
   }
 
   // PLANNING_RETRY: outside plan mode, agent narrated planning-only
-  // turn (chat text but no tool call). Suggests the agent SHOULD have
-  // entered plan mode for a non-trivial task.
+  // turn (chat text but no tool call). Uses the in-host's nuanced
+  // detector: requires PLANNING_ONLY_PROMISE_RE match (or structured
+  // format with bullets + heading) + an action verb + not a
+  // completion signal + not a code block + not too long.
   if (
     signal.planMode === "normal" &&
     !signal.madeToolCall &&
-    isPlanningNarration(signal.lastAssistantMessage)
+    isPlanningOnlyNarrationText(signal.lastAssistantMessage)
   ) {
     return {
       detector: "PLANNING_RETRY",
-      instruction:
-        "[PLANNING_RETRY]: Your last turn was narration about what you're going to do without taking action. " +
-        "For non-trivial tasks consider enter_plan_mode and submitting a plan; " +
-        "for trivial tasks, just call the appropriate tool. Don't describe the work — do it (or plan it first).",
+      instruction: resolveEscalatingPlanningRetryInstruction(attemptIndex),
       idempotencyKey: idempotencyKey(sessionKey, "PLANNING_RETRY"),
       maxAttempts: 3,
     };
   }
 
   return undefined;
-}
-
-/**
- * Heuristic: is the assistant message planning-only narration? Looks
- * for phrases like "I'll", "Let me", "First I'll" etc. without any
- * concrete action signals (no code blocks, no specific file paths
- * with file extensions, no tool-result style content).
- *
- * Intentionally conservative — false-negative (skipping a retry) is
- * better than false-positive (annoying the user with a retry on
- * a legitimately-narrative reply).
- */
-function isPlanningNarration(text: string | undefined): boolean {
-  if (!text) return false;
-  const t = text.trim();
-  if (t.length === 0 || t.length > 2000) return false; // skip empty + walls of text
-  const planningStarters = [
-    /^I'll /i,
-    /^I will /i,
-    /^Let me /i,
-    /^First[,\s]/i,
-    /^Here's my plan/i,
-    /^My plan /i,
-    /^The plan /i,
-  ];
-  const hasPlanningStart = planningStarters.some((re) => re.test(t));
-  if (!hasPlanningStart) return false;
-  // Heuristic anti-false-positive: don't retry if the message
-  // contains a code block — likely the agent IS executing.
-  if (/```/.test(t)) return false;
-  // Don't retry on Q-style messages that end with a question mark.
-  if (t.endsWith("?")) return false;
-  return true;
 }
 
 function idempotencyKey(sessionKey: string, detector: RetryDetector): string {
@@ -180,3 +190,10 @@ function idempotencyKey(sessionKey: string, detector: RetryDetector): string {
   // and "I'll handle Y" both count toward the cap).
   return `smarter-claw:${detector}:${sessionKey}`;
 }
+
+// Re-export the constants so callers can pin them in tests without
+// reaching into the constants module directly.
+export {
+  PLAN_MODE_ACK_ONLY_RETRY_INSTRUCTION,
+  PLAN_APPROVED_YIELD_RETRY_INSTRUCTION,
+} from "./escalating-retry-constants.js";
