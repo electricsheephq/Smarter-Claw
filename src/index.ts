@@ -38,7 +38,8 @@ import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { checkMutationGate } from "./gates/mutation-gate.js";
 import { InMemoryGateway } from "./state/in-memory-gateway.js";
-import { PlanModeStore } from "./state/store.js";
+import { SessionStoreGateway } from "./state/session-store-gateway.js";
+import { PlanModeStore, type PlanModeStateGateway } from "./state/store.js";
 import { createEnterPlanModeTool } from "./tools/enter-plan-mode.js";
 import { createExitPlanModeTool } from "./tools/exit-plan-mode.js";
 import type { PlanMode } from "./types.js";
@@ -149,18 +150,32 @@ export default definePluginEntry({
         "etc. Schema versioned via __schemaVersion (P-3).",
     });
 
-    // P-4: PlanModeStore + the enter/exit tools.
+    // P-6: production gateway backed by the host's session-store.
     //
-    // The store needs a `PlanModeStateGateway` impl. P-4 uses
-    // InMemoryGateway (per-process; state lost on plugin reload).
-    // P-6 swaps in a gateway backed by the real session-extension write
-    // path (e.g. `api.sessions.pluginPatch`) so state survives reload
-    // and is visible to other clients. The interface is stable across
-    // the swap; tools + store don't change.
+    // Default: SessionStoreGateway — writes plan-mode state to
+    // `pluginExtensions["smarter-claw"]["plan-mode"]` on the session
+    // entry via the same `updateSessionStoreEntry` helper the in-host
+    // uses (commit ea04ea52c7). Survives plugin reload; visible to UI
+    // / channel handlers / slash commands via the session row.
     //
-    // Construct the gateway + store when the plugin is enabled (per
-    // the config guard above).
-    const gateway = new InMemoryGateway();
+    // Override: env `SMARTER_CLAW_USE_INMEMORY=1` switches to the
+    // in-memory gateway. Useful for dev + test environments without
+    // a configured session-store, and for parity-harness runs where
+    // we need deterministic state without touching disk.
+    const useInMemory = process.env.SMARTER_CLAW_USE_INMEMORY === "1";
+    const gateway: PlanModeStateGateway = useInMemory
+      ? new InMemoryGateway()
+      : new SessionStoreGateway({
+          logger: {
+            debug: (msg) => api.logger.debug?.(`[plan-mode-gateway] ${msg}`),
+            warn: (msg) => api.logger.warn(`[plan-mode-gateway] ${msg}`),
+          },
+        });
+    if (useInMemory) {
+      api.logger.warn(
+        "[smarter-claw] SMARTER_CLAW_USE_INMEMORY=1 — state NOT persisted across plugin reload. Dev/test only.",
+      );
+    }
     const store = new PlanModeStore(
       gateway,
       {
