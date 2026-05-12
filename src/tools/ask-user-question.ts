@@ -26,7 +26,7 @@
  * rejection-cycle tracking.
  */
 
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { ToolInputError, readStringParam } from "./common.js";
 
 interface ToolContext {

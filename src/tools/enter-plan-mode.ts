@@ -30,7 +30,7 @@
  * host_ref output prose: src/agents/tools/enter-plan-mode-tool.ts:62-68
  */
 
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { PlanModeStore } from "../state/store.js";
 import { readStringParam } from "./common.js";
 

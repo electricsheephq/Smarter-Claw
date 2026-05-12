@@ -30,7 +30,7 @@
  * PlanModeStore.persistApprovalRequest from the tool body directly.
  */
 
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { computePlanPayloadHash } from "../helpers/payload-hash.js";
 import { newPlanApprovalId } from "../helpers/approval-id.js";
 import { PlanModeStore } from "../state/store.js";
