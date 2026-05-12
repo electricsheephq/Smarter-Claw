@@ -37,6 +37,7 @@
  * isolation.
  */
 
+import { resolvePlanApproval } from "../plan-mode/approval.js";
 import type { PlanModeSessionState, PlanStep } from "../types.js";
 import {
   CURRENT_SCHEMA_VERSION,
@@ -448,19 +449,13 @@ export class PlanModeStore {
   /**
    * Record a plan-approval rejection.
    *
-   * Increments rejectionCount, stores the user's feedback, transitions
-   * approval state to "rejected" (session stays in mode=plan so the
-   * agent can revise). Returns the new rejectionCount so callers can
-   * decide whether to surface the deescalation hint
-   * (rejectionCount ≥ 3, added by buildPlanDecisionInjection).
+   * Delegates to `resolvePlanApproval(action: "reject")` for byte-identical
+   * parity with the in-host state machine. Returns the discriminated-union
+   * result expected by `session-actions.plan.reject`.
    *
-   * Idempotent on no-op: if the session isn't in plan mode or has no
-   * pending approval, returns kind: "skipped" without writing.
-   *
-   * host_ref: in-host rejection-cycle increments are spread across
-   *   sessions-patch.ts + resolvePlanApproval at
-   *   src/agents/plan-mode/approval.ts. We consolidate into the
-   *   typed mutator here.
+   * host_ref: src/agents/plan-mode/approval.ts:resolvePlanApproval
+   *   (commit ea04ea52c7). The surgical port at src/plan-mode/approval.ts
+   *   is byte-identical with import-path adaptation only.
    */
   async recordRejection(input: {
     sessionKey: string;
@@ -470,73 +465,32 @@ export class PlanModeStore {
     | { kind: "skipped"; reason: "not-plan-mode" | "no-pending-approval" }
     | { kind: "failed"; error: Error }
   > {
-    const { sessionKey, feedback } = input;
-    try {
-      let outcome:
-        | { kind: "recorded"; rejectionCount: number; state: PlanModeSessionState }
-        | { kind: "skipped"; reason: "not-plan-mode" | "no-pending-approval" };
-      const { transition } = await this.gateway.withLock<{
-        prev: PlanModeSessionState | undefined;
-        next: PlanModeSessionState;
-      }>(sessionKey, async (current) => {
-        if (!current || current.mode !== "plan") {
-          outcome = { kind: "skipped", reason: "not-plan-mode" };
-          return { next: null };
-        }
-        if (current.approval !== "pending") {
-          outcome = { kind: "skipped", reason: "no-pending-approval" };
-          return { next: null };
-        }
-        const now = Date.now();
-        const newRejectionCount = current.rejectionCount + 1;
-        const next: PlanModeSessionState = {
-          ...current,
-          approval: "rejected",
-          rejectionCount: newRejectionCount,
-          updatedAt: now,
-          ...(feedback ? { feedback } : {}),
-          // Clear approvalId on rejection — the user's next [PLAN_DECISION]
-          // for THIS cycle is resolved; agent must propose anew with a
-          // fresh approvalId on retry.
-          approvalId: undefined,
-        };
-        outcome = {
-          kind: "recorded",
-          rejectionCount: newRejectionCount,
-          state: next,
-        };
-        return {
-          next: stampSchemaVersion(next) as PlanModeSessionState,
-          transition: { prev: current, next },
-        };
-      });
-      if (transition && this.audit) {
-        this.audit({
-          sessionKey,
-          prev: transition.prev,
-          next: transition.next,
-          source: "smarter-claw:PlanModeStore.recordRejection",
-        });
-      }
-      return outcome!;
-    } catch (err) {
-      const wrapped = err instanceof Error ? err : new Error(String(err));
-      this.logger?.warn?.(
-        `PlanModeStore.recordRejection: failed (sessionKey=${sessionKey}): ${wrapped.message}`,
-      );
-      return { kind: "failed", error: wrapped };
+    const result = await this.applyApprovalAction({
+      sessionKey: input.sessionKey,
+      action: "reject",
+      ...(input.feedback !== undefined ? { feedback: input.feedback } : {}),
+    });
+    if (result.kind === "recorded") {
+      return {
+        kind: "recorded",
+        rejectionCount: result.state.rejectionCount,
+        state: result.state,
+      };
     }
+    return result;
   }
 
   /**
    * Record a plan-approval acceptance.
    *
-   * Transitions approval → "approved" (or "edited" when user inline-edited).
-   * The session stays in mode=plan until the runtime processes the
-   * [PLAN_DECISION]: approved injection on the next turn; at that
-   * point the agent exits plan mode and starts executing the plan.
+   * Delegates to `resolvePlanApproval(action: "approve" | "edit")` for
+   * byte-identical parity with the in-host state machine. Both approve
+   * and edit transition mode → "normal", clear feedback, and reset
+   * `rejectionCount` to 0 (the user is moving forward; cycle history
+   * is no longer relevant).
    *
-   * Idempotent on no-op: if session isn't in pending state, skips.
+   * host_ref: src/agents/plan-mode/approval.ts:resolvePlanApproval
+   *   (commit ea04ea52c7).
    */
   async recordApproval(input: {
     sessionKey: string;
@@ -546,10 +500,65 @@ export class PlanModeStore {
     | { kind: "skipped"; reason: "not-plan-mode" | "no-pending-approval" }
     | { kind: "failed"; error: Error }
   > {
-    const { sessionKey, edited } = input;
+    const action: "approve" | "edit" = input.edited ? "edit" : "approve";
+    const result = await this.applyApprovalAction({
+      sessionKey: input.sessionKey,
+      action,
+    });
+    if (result.kind === "recorded") {
+      return {
+        kind: "recorded",
+        approval: action === "edit" ? "edited" : "approved",
+        state: result.state,
+      };
+    }
+    return result;
+  }
+
+  /**
+   * Record a plan-approval timeout.
+   *
+   * Delegates to `resolvePlanApproval(action: "timeout")` for parity with
+   * the in-host state machine. Timeout only applies on `approval ===
+   * "pending"`; any other state is a no-op (returns `skipped`).
+   *
+   * host_ref: src/agents/plan-mode/approval.ts:resolvePlanApproval
+   *   (commit ea04ea52c7).
+   */
+  async recordTimeout(input: {
+    sessionKey: string;
+  }): Promise<
+    | { kind: "recorded"; state: PlanModeSessionState }
+    | { kind: "skipped"; reason: "not-plan-mode" | "no-pending-approval" }
+    | { kind: "failed"; error: Error }
+  > {
+    return this.applyApprovalAction({
+      sessionKey: input.sessionKey,
+      action: "timeout",
+    });
+  }
+
+  /**
+   * Private helper: wraps the gateway lock + the verbatim-ported
+   * `resolvePlanApproval` state machine + audit emission.
+   *
+   * No-op detection: `resolvePlanApproval` returns `current` (by
+   * reference) when its guards fire (terminal-state, stale-event, or
+   * timeout-on-non-pending). We compare `next === current` for skip.
+   */
+  private async applyApprovalAction(input: {
+    sessionKey: string;
+    action: "approve" | "edit" | "reject" | "timeout";
+    feedback?: string;
+  }): Promise<
+    | { kind: "recorded"; state: PlanModeSessionState }
+    | { kind: "skipped"; reason: "not-plan-mode" | "no-pending-approval" }
+    | { kind: "failed"; error: Error }
+  > {
+    const { sessionKey, action, feedback } = input;
     try {
       let outcome:
-        | { kind: "recorded"; approval: "approved" | "edited"; state: PlanModeSessionState }
+        | { kind: "recorded"; state: PlanModeSessionState }
         | { kind: "skipped"; reason: "not-plan-mode" | "no-pending-approval" };
       const { transition } = await this.gateway.withLock<{
         prev: PlanModeSessionState | undefined;
@@ -559,41 +568,39 @@ export class PlanModeStore {
           outcome = { kind: "skipped", reason: "not-plan-mode" };
           return { next: null };
         }
-        if (current.approval !== "pending") {
+        const next = resolvePlanApproval(current, action, feedback);
+        if (next === current) {
+          // Reference equality: resolvePlanApproval's guards fired
+          // (terminal-state for approve/edit/reject, or
+          // timeout-on-non-pending). No write.
           outcome = { kind: "skipped", reason: "no-pending-approval" };
           return { next: null };
         }
-        const now = Date.now();
-        const newApproval: "approved" | "edited" = edited ? "edited" : "approved";
-        const next: PlanModeSessionState = {
-          ...current,
-          approval: newApproval,
-          confirmedAt: now,
-          updatedAt: now,
-        };
-        outcome = {
-          kind: "recorded",
-          approval: newApproval,
-          state: next,
-        };
+        outcome = { kind: "recorded", state: next };
         return {
           next: stampSchemaVersion(next) as PlanModeSessionState,
           transition: { prev: current, next },
         };
       });
       if (transition && this.audit) {
+        const source =
+          action === "reject"
+            ? "smarter-claw:PlanModeStore.recordRejection"
+            : action === "timeout"
+              ? "smarter-claw:PlanModeStore.recordTimeout"
+              : "smarter-claw:PlanModeStore.recordApproval";
         this.audit({
           sessionKey,
           prev: transition.prev,
           next: transition.next,
-          source: "smarter-claw:PlanModeStore.recordApproval",
+          source,
         });
       }
       return outcome!;
     } catch (err) {
       const wrapped = err instanceof Error ? err : new Error(String(err));
       this.logger?.warn?.(
-        `PlanModeStore.recordApproval: failed (sessionKey=${sessionKey}): ${wrapped.message}`,
+        `PlanModeStore.applyApprovalAction[${action}]: failed (sessionKey=${sessionKey}): ${wrapped.message}`,
       );
       return { kind: "failed", error: wrapped };
     }

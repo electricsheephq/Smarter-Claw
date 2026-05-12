@@ -107,18 +107,22 @@ describe("Eva live-smoke #2 — full plan-approve-execute (P-8)", () => {
     });
     const approvalId = exitResult.details.approvalId;
 
-    // First accept succeeds.
+    // First accept succeeds — surgical-port (PR-#) brings the plugin into
+    // parity with in-host resolvePlanApproval, which transitions mode →
+    // "normal" on approve. So a second accept on the same session now
+    // hits the session-action layer's NOT_IN_PLAN_MODE check first
+    // (session has exited plan mode after the successful approve).
     await harness.invokeAction("plan.accept", {
       sessionKey: SESSION_KEY,
       payload: { approvalId },
     });
-    // Second accept should report NO_PENDING_APPROVAL.
+    // Second accept should be rejected — session is no longer in plan mode.
     const second = (await harness.invokeAction("plan.accept", {
       sessionKey: SESSION_KEY,
       payload: { approvalId },
     })) as { ok: boolean; code?: string };
     expect(second.ok).toBe(false);
-    expect(second.code).toBe("NO_PENDING_APPROVAL");
+    expect(second.code).toBe("NOT_IN_PLAN_MODE");
   });
 
   it("STALE_APPROVAL_ID when accept is called with the wrong approvalId", async () => {

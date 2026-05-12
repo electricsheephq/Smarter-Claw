@@ -617,9 +617,12 @@ describe("P-11 PlanModeStore.recordRejection — happy path", () => {
     expect(gw.peek(SESSION_KEY)?.feedback).toBe("older feedback");
   });
 
-  it("clears approvalId on rejection (current cycle resolved)", async () => {
+  it("preserves approvalId across rejection (in-host parity — the approval token continues to identify the cycle)", async () => {
+    // Surgical-port fix (Wave-1 audit S8): in-host resolvePlanApproval at
+    // approval.ts:115-124 spreads `...current` which RETAINS approvalId on
+    // reject. Previous plugin code cleared it; that was a parity drift.
     await store.recordRejection({ sessionKey: SESSION_KEY });
-    expect(gw.peek(SESSION_KEY)?.approvalId).toBeUndefined();
+    expect(gw.peek(SESSION_KEY)?.approvalId).toBe(APPROVAL_ID);
   });
 
   it("preserves mode === plan (agent stays in plan mode to revise)", async () => {
@@ -684,14 +687,23 @@ describe("P-11 PlanModeStore.recordRejection — skip paths", () => {
     expect(gw.writeCount).toBe(0);
   });
 
-  it("skips with no-pending-approval when approval is already 'rejected'", async () => {
+  it("allows rejection from 'rejected' state (in-host parity — re-rejection is valid)", async () => {
+    // Surgical-port fix (Wave-1 audit S8): in-host approval.ts:82-83
+    // accepts BOTH "pending" and "rejected" as inputs for action="reject"
+    // (`if (current.approval !== "pending" && current.approval !== "rejected")`).
+    // The "Rejected stays open for re-approval or re-rejection" comment
+    // at line 11 of in-host docstring is the contract.
     gw.seed(
       SESSION_KEY,
-      planModeSession({ mode: "plan", approval: "rejected" }),
+      planModeSession({ mode: "plan", approval: "rejected", rejectionCount: 2 }),
     );
-    const r = await store.recordRejection({ sessionKey: SESSION_KEY });
-    expect(r.kind).toBe("skipped");
-    expect(gw.writeCount).toBe(0);
+    const r = await store.recordRejection({
+      sessionKey: SESSION_KEY,
+      feedback: "still wrong",
+    });
+    expect(r.kind).toBe("recorded");
+    if (r.kind === "recorded") expect(r.rejectionCount).toBe(3);
+    expect(gw.peek(SESSION_KEY)?.approval).toBe("rejected");
   });
 
   it("skips with no-pending-approval when approval is 'approved'", async () => {
@@ -789,9 +801,46 @@ describe("P-11 PlanModeStore.recordApproval — happy path", () => {
     expect(gw.peek(SESSION_KEY)?.approvalId).toBe(APPROVAL_ID);
   });
 
-  it("preserves mode === plan (runtime processes injection before exiting)", async () => {
+  it("transitions mode → normal on approve + clears feedback + resets rejectionCount (in-host parity)", async () => {
+    // Surgical-port fix (Wave-1 audit S8): in-host approval.ts:89-101
+    // sets mode: "normal", feedback: undefined, rejectionCount: 0 on
+    // approve. Prior plugin code kept mode: "plan", retained feedback,
+    // and didn't touch rejectionCount — all 4 P0 parity drifts.
+    gw.seed(
+      SESSION_KEY,
+      planModeSession({
+        mode: "plan",
+        approval: "pending",
+        approvalId: APPROVAL_ID,
+        rejectionCount: 2,
+        feedback: "lingering feedback",
+      }),
+    );
     await store.recordApproval({ sessionKey: SESSION_KEY });
-    expect(gw.peek(SESSION_KEY)?.mode).toBe("plan");
+    const next = gw.peek(SESSION_KEY)!;
+    expect(next.mode).toBe("normal");
+    expect(next.approval).toBe("approved");
+    expect(next.rejectionCount).toBe(0);
+    expect(next.feedback).toBeUndefined();
+  });
+
+  it("transitions mode → normal on edit (same reset behavior as approve)", async () => {
+    gw.seed(
+      SESSION_KEY,
+      planModeSession({
+        mode: "plan",
+        approval: "pending",
+        approvalId: APPROVAL_ID,
+        rejectionCount: 3,
+        feedback: "old fb",
+      }),
+    );
+    await store.recordApproval({ sessionKey: SESSION_KEY, edited: true });
+    const next = gw.peek(SESSION_KEY)!;
+    expect(next.mode).toBe("normal");
+    expect(next.approval).toBe("edited");
+    expect(next.rejectionCount).toBe(0);
+    expect(next.feedback).toBeUndefined();
   });
 
   it("emits audit event on the recorded path", async () => {
@@ -853,13 +902,29 @@ describe("P-11 PlanModeStore.recordApproval — skip paths", () => {
     expect(gw.writeCount).toBe(0);
   });
 
-  it("skips when approval is 'rejected' (revise-and-resubmit flow, not approve)", async () => {
+  it("allows approval from 'rejected' state (in-host parity — user changes mind)", async () => {
+    // Surgical-port fix (Wave-1 audit S8): in-host approval.ts:82-83
+    // accepts BOTH "pending" and "rejected" as inputs for action="approve".
+    // The "Rejected stays open for re-approval or re-rejection" contract
+    // (in-host approval.ts:11). The "user changes mind" path was blocked
+    // by the prior plugin code; resolvePlanApproval restores it.
     gw.seed(
       SESSION_KEY,
-      planModeSession({ mode: "plan", approval: "rejected" }),
+      planModeSession({
+        mode: "plan",
+        approval: "rejected",
+        rejectionCount: 2,
+        feedback: "old feedback",
+      }),
     );
     const r = await store.recordApproval({ sessionKey: SESSION_KEY });
-    expect(r.kind).toBe("skipped");
+    expect(r.kind).toBe("recorded");
+    if (r.kind === "recorded") expect(r.approval).toBe("approved");
+    const next = gw.peek(SESSION_KEY)!;
+    expect(next.approval).toBe("approved");
+    expect(next.mode).toBe("normal"); // approve transitions to normal
+    expect(next.rejectionCount).toBe(0); // reset on approve
+    expect(next.feedback).toBeUndefined(); // cleared on approve
   });
 });
 
