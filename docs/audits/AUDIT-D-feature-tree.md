@@ -107,28 +107,42 @@ The B.5 step of the Phase B plan ([../../glistening-swimming-rivest.md](../../..
 4. **Test coverage check** — confirm the slice's test file(s) pass (use the most recent CI run — don't burn local resources).
 5. **Boundary check** — any inter-slice integration (e.g. S2 mutation gate reads state written by S3 persist) — verify the read/write contract is consistent.
 
-Output per slice (filled in B.5):
+## Slice-by-slice verdicts (filled in B.5, 2026-05-12)
+
+Methodology: for each slice, verified (1) architecture-doc statement, (2) plugin implementation, (3) in-host citation (`host_ref:` or "Parity contract" wording), (4) test coverage per the catalog table, (5) inter-slice boundary (where applicable). All checks read-only. Test counts confirmed via `pnpm test` reporter JSON (most recent CI run on `main` is green at `f496273`).
 
 | Slice | Status | Notes |
 |---|---|---|
-| S1 | ☐ | enter/exit tools |
-| S2 | ☐ | mutation gate (load-bearing — security boundary) |
-| S3 | ☐ | persistApprovalRequest 10 invariants (load-bearing — race-fix) |
-| S4 | ☐ | archetype injection |
-| S5 | ☐ | plan archetype + ask_user_question |
-| S6 | ☐ | plan-tier model override (turn-limit deferred) |
-| S7 | ☐ | escalating retry (load-bearing — "tests pass but real gateway doesn't fire" risk) |
-| S8 | ☐ | rejection UX + cycle tracking |
-| S9 | ☐ | sidebar UI |
-| S10 | ☐ | exec allowlist (load-bearing — security) |
-| S11 | ☐ | grant ledger + debug log |
-| S12 | ☐ | shell-escape layered defense (load-bearing — security) |
-| S13 | ☐ | plugin foundation |
-| S14 | ☐ | public types + helpers |
-| S15 | ☐ | real persistence gateway |
+| S1 | ✅ | `src/tools/enter-plan-mode.ts:90`, `src/tools/exit-plan-mode.ts`, `src/tools/ask-user-question.ts` all carry parity-contract docstrings citing the in-host source. 25 tests pass. |
+| S2 | ✅ | 7 explicit `host_ref:` citations in `src/gates/mutation-gate.ts` (lines 53, 75, 83, 91, 116, 148, 176). 116 vitest cases pass (table-driven; `grep "^  it("` undercounts). Fail-CLOSED posture verified at `src/index.ts:before_tool_call` hook. |
+| S3 | ✅ | All 10 invariants explicitly marked in `src/state/store.ts` (lines 203, 212, 222, 235, 244, 274, 296, etc.). 67 tests with one `describe()` per invariant. Race-fix anchor `1081067476` cited in module docstring. |
+| S4 | ✅ | `host_ref:` in `src/prompt/plan-mode-injection.ts`. 17 tests verify byte-identical archetype injection. `before_prompt_build` hook in `src/index.ts` consumes `appendSystemContext` per AUDIT-E hook-shape verification. |
+| S5 | ✅ | Parity-contract citations in `src/prompt/reference-card.ts`, `src/prompt/archetype-prompt.ts`, `src/prompt/pending-injections.ts`, `src/tools/ask-user-question.ts`. 34 tests pass. |
+| S6 | ⚠️ | `src/runtime/plan-tier-model.ts` ✅ (10 tests); turn-limit watchdog **deferred** from P-9 (documented gap; needs `registerSessionSchedulerJob` wiring at P-final). v0.x acceptable per RELEASE_NOTES.md. |
+| S7 | ✅ | 3 detectors (PLAN_YIELD, PLAN_ACK_ONLY, PLANNING_RETRY) + precedence + idempotency-key tests in `src/runtime/escalating-retry.ts`. `host_ref:` at module top. 21 tests pass. `before_agent_finalize` hook wiring at `src/index.ts` verified — uses `stopHookActive` as the tool-call proxy per the comment block. |
+| S8 | ✅ | `src/prompt/plan-decision-injection.ts` byte-identical port (3 host_ref citations). 25 tests pass. `recordRejection` in `src/state/store.ts` (P-11) increments + clears `approvalId` + sets approval="rejected" with the deescalation-hint threshold at rejectionCount≥3. |
+| S9 | ✅ | All 3 UI files (`src/ui/{sidebar-descriptor,session-actions,sweep-command}.ts`) carry parity-contract citations. 41 tests pass. **Inline UI deferred** to P-final (upstream-blocked on `openclaw/openclaw#80982`). |
+| S10 | ✅ | Mutation gate fail-CLOSED layer (P-5, 116 tests) + accept-edits gate fail-OPEN layer (P-13, 72 tests). Total 188. Combined gates implement F10 fully — see `src/index.ts:before_tool_call` for the layered dispatch order. |
+| S11 | ✅ | `src/runtime/grant-ledger.ts` (14 tests) + `src/runtime/debug-log.ts` (17 tests). Audit emitter in `src/index.ts` writes to both on every PlanModeStore transition. Cross-event correlation via approvalId verified in `tests/runtime/grant-ledger.test.ts`. |
+| S12 | ✅ | `src/gates/accept-edits-gate.ts` byte-identical 572-LOC verbatim port. C4 shell-escape layered defense described `describe()` block + the 16-case smoke-4 Eva live-smoke test in `tests/eva-live-smokes/smoke-4-accept-edits-adversarial.test.ts`. |
+| S13 | ✅ | `src/index.ts` + `openclaw.plugin.json` + manifest validation. 15 tests in `tests/p1-skeleton.test.ts`. Degraded-state advisory fires on `session_start` per `src/index.ts:402-414`. |
+| S14 | ✅ | All 5 type/helper files have parity-contract citations (sanitize, payload-hash, approval-id) or are plugin-only abstractions with no in-host equivalent (schema-version). 47 tests pass. |
+| S15 | ✅ | `src/state/session-store-gateway.ts` references `pi-embedded-subscribe.handlers.tools.ts:156` (the in-host `updateSessionStoreEntry` callsite). 6 tests verify the read-update-write path matches the in-host pattern. |
 
-Load-bearing slices reviewed first: **S3, S2, S10, S12, S7.**
-Foundation slices reviewed last: **S13, S14, S6.**
+**Verdict**: 14 of 15 slices ✅. 1 ⚠️ (S6 turn-limit watchdog, documented gap per RELEASE_NOTES.md; v0.x acceptable). **0 ❌ gaps.**
+
+### Boundary checks performed
+
+- **S3 ↔ S2**: mutation gate reads `mode` from PlanModeStore (`src/index.ts:before_tool_call` hook). Read contract verified: gateway uses `withLock` for fresh-read; store's `readSnapshot` is non-locking but reads through the gateway. Both paths return the same shape.
+- **S3 ↔ S8**: `recordRejection` increments `rejectionCount` on the persisted state; the `plan-decision-injection` builder reads that count to decide whether to emit the deescalation hint. Tested end-to-end in `tests/eva-live-smokes/smoke-3-rejection-cycle.test.ts`.
+- **S2 ↔ S10**: Layer 1 mutation gate (plan mode) precedes Layer 2 accept-edits gate (autoApprove === true OR approval === "edited") in `src/index.ts:before_tool_call`. Conditional ordering verified.
+- **S11 ↔ S3**: audit emitter in `src/index.ts` is invoked by every PlanModeStore typed-mutator (`persistApprovalRequest`, `enterPlanMode`, `exitPlanMode`, `recordRejection`, `recordApproval`, `setAutoApprove`). Grant ledger updates on approvalId rotations + prunes on terminal transitions.
+
+### What's NOT in this audit
+
+- Real-gateway live-smokes (Eva running the plugin against a real openclaw gateway). Tests run via SDK-stubbed harness in CI; real-gateway exercise is downstream of this audit.
+- Performance / memory benchmarks. Not in scope; deferred to post-v1.0.
+- Tools' tool-execute output text byte-comparison against in-host. The tool factories are tested for input handling + state mutation; the text output is reviewed in commit messages but not byte-diffed against an in-host snapshot. Acceptable since the contracts are stable.
 
 ---
 
