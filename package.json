@@ -11,11 +11,18 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "parity-harness": "vitest run tests/parity/parity-harness.test.ts"
+    "parity-harness": "vitest run tests/parity/parity-harness.test.ts",
+    "patch:chat-stream-seam": "node scripts/install-chat-stream-seam.mjs",
+    "patch:chat-stream-seam:verify": "node scripts/verify-chat-stream-seam.mjs",
+    "patch:chat-stream-seam:uninstall": "node scripts/uninstall-chat-stream-seam.mjs"
   },
   "files": [
     "dist/",
     "openclaw.plugin.json",
+    "patches/",
+    "scripts/install-chat-stream-seam.mjs",
+    "scripts/verify-chat-stream-seam.mjs",
+    "scripts/uninstall-chat-stream-seam.mjs",
     "README.md",
     "LICENSE",
     "TRADEMARK.md",

@@ -51,6 +51,35 @@ start when the flag is missing.
 Minimum host version: `openclaw >= 2026.5.10-beta.5` (declared via
 `minHostVersion` in `openclaw.plugin.json`).
 
+## Optional: chat-stream seam patch (for inline UI before upstream merges)
+
+The plugin's v0.x sidebar UI works out of the box. For the v1.0 **inline UI** (mode-switcher chip, inline plan cards, input-bar suppression on pending approval), Smarter-Claw needs SDK seams that aren't in the upstream openclaw release yet — they're filed as draft PR [openclaw/openclaw#80982](https://github.com/openclaw/openclaw/pull/80982).
+
+Until that merges, you can tactically apply the seam to your local `node_modules/openclaw/` via a small, reversible patcher:
+
+```bash
+# From the Smarter-Claw clone directory:
+npm run patch:chat-stream-seam              # apply patch (with SHA pre-flight)
+npm run patch:chat-stream-seam:verify       # check applied state
+npm run patch:chat-stream-seam:uninstall    # restore originals
+```
+
+Or directly:
+
+```bash
+node scripts/install-chat-stream-seam.mjs --host /path/to/your/openclaw
+```
+
+What the patcher does:
+- Validates the installed openclaw version matches the patcher's manifest (refuses on mismatch)
+- SHA256-checks the 2 dist files that will be replaced against the manifest's expected baseline (refuses on drift — use `--force` to override at your own risk)
+- Backs up the originals into `node_modules/openclaw/.smarter-claw-backups/`
+- Replaces 2 compiled JS bundle files with seam-built equivalents (~370KB total; ~80 lines of new code inside larger bundles)
+- Writes a sentinel at `node_modules/openclaw/.smarter-claw-chat-stream-seam-applied.json`
+- The plugin's startup advisory reports whether the patch is applied
+
+The patch is a **temporary tactical unblock**. When upstream openclaw merges PR #80982 into a published release, we'll bump `peerDependencies.openclaw` + drop the patcher.
+
 ## What works in 1.0.0-port.14
 
 | Feature | Status |
