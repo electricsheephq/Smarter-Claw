@@ -1,44 +1,33 @@
 {
   "name": "@electricsheephq/smarter-claw",
-  "version": "0.2.0-dev",
-  "description": "Smarter Claw — Plan Mode, Auto-Plan Mode, and every mode for OpenClaw 🦞. Plan-then-execute workflow with archetype prompting, mutation gate, ack-only retry, and cross-channel /plan slash commands.",
+  "version": "1.0.0-port.0",
+  "description": "Smarter-Claw — Plan-Mode plugin for OpenClaw. v1 port-in-progress (P-1 skeleton). Source-of-truth parity at openclaw-pr70071-rebase tip ea04ea52c7.",
   "type": "module",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
   "scripts": {
     "build": "tsc && cp openclaw.plugin.json dist/openclaw.plugin.json",
     "prepublishOnly": "npm run build",
-    "prepack": "node scripts/check-tarball-shape.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
-  "bin": {
-    "smarter-claw-install": "installer/bin/install.mjs",
-    "smarter-claw-uninstall": "installer/bin/uninstall.mjs",
-    "smarter-claw-verify": "installer/bin/verify.mjs"
-  },
   "files": [
-    "dist/",
-    "installer/bin/",
-    "installer/lib/",
-    "installer/patches/",
-    "installer/patch-plan.json",
+    "dist/src/",
     "openclaw.plugin.json",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "TRADEMARK.md"
   ],
-  "dependencies": {
-    "@sinclair/typebox": "^0.34.49"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "openclaw": "*",
+    "openclaw": "2026.5.7",
     "typescript": "^5.6.0",
     "vitest": "^3.2.0"
   },
   "peerDependencies": {
-    "openclaw": "2026.4.23-beta.5"
+    "openclaw": ">=2026.5.0"
   },
   "keywords": [
     "openclaw",
@@ -61,7 +50,7 @@
   },
   "openclaw": {
     "extensions": [
-      "./dist/index.js"
+      "./dist/src/index.js"
     ]
   },
   "engines": {

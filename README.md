@@ -6,13 +6,45 @@ Universal across the Pi runner (`openai/*`, `openai-codex/*`) and the native Cod
 
 ## Status
 
-**`0.2.0-dev`** — sandbox-verified, beta deployment pending.
+**`1.0.0-port.0` — v1 SDK-seam port in progress (2026-05-12 onward).**
 
-This is dev-grade software. The code works in a sandboxed OpenClaw gateway,
-but it has not yet been validated in real production use. The current commit
-is in active development; the package is not yet published to npm; CI gating
-is being set up; the first real release is the upcoming `0.2.0-beta.1` after
-the operator's primary agent ("Eva") runs it for a defined soak period.
+The plugin is being **completely rebuilt** from scratch against the
+plugin-SDK seams that landed in upstream openclaw. The prior `0.2.0-dev`
+attempt is preserved under `legacy/` for reference; do not use it. The
+v1 port is on branch `v1-port` and is being built incrementally PR-by-PR
+per the plan at
+[architecture-v2-planning](https://github.com/electricsheephq/Smarter-Claw/tree/architecture-v2-planning/architecture-v2).
+
+Public release of v1.0 is gated on companion upstream openclaw PRs landing
+(see the plan's "Upstream SDK gap PRs" section). v0.x dev installs work
+locally; do NOT install this v1-port branch in production yet.
+
+## Required Operator Config
+
+The plugin's full plan-mode behavior (archetype injection, auto-continue,
+escalating-retry) requires the conversation-access flag:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "smarter-claw": {
+        "hooks": {
+          "allowConversationAccess": true
+        }
+      }
+    }
+  }
+}
+```
+
+The mutation gate (`before_tool_call`) works without this flag, but the
+plugin is built around the assumption that operators have set it. The
+plugin emits an advisory message on every new session start until you
+do (per [Wave-6 P2 mitigation](https://github.com/electricsheephq/Smarter-Claw/blob/architecture-v2-planning/architecture-v2/17-FINAL_ADVERSARIAL.md)).
+
+Minimum host version: `openclaw >= 2026.4.24` (declared via `minHostVersion`
+in `openclaw.plugin.json`).
 
 ## Honesty section — what works, what doesn't, what's deferred
 
