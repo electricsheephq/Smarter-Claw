@@ -4,6 +4,10 @@ node_modules
 node_modules/
 .pnpm-store/
 
+# Per-machine pnpm overrides (e.g. LEXAR store-dir on Eva's machine).
+# See .npmrc for the template.
+.npmrc.local
+
 # Build output
 dist/
 *.tsbuildinfo
