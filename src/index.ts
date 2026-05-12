@@ -46,6 +46,9 @@ import { decidePlanTierModel } from "./runtime/plan-tier-model.js";
 import { createAskUserQuestionTool } from "./tools/ask-user-question.js";
 import { createEnterPlanModeTool } from "./tools/enter-plan-mode.js";
 import { createExitPlanModeTool } from "./tools/exit-plan-mode.js";
+import { createPlanModeSessionActions } from "./ui/session-actions.js";
+import { buildPlanModeSidebarDescriptor } from "./ui/sidebar-descriptor.js";
+import { createPlanClearCli } from "./ui/sweep-command.js";
 import type { PlanMode } from "./types.js";
 
 export const SMARTER_CLAW_PLUGIN_ID = "smarter-claw";
@@ -225,12 +228,32 @@ export default definePluginEntry({
       name: "exit_plan_mode",
     });
     // P-8: ask_user_question — non-blocking clarification tool.
-    // Question→answer wiring (pendingAgentInjections write on user
-    // reply) lands at P-11 alongside rejection-cycle tracking; the
-    // tool itself is stateless input-validation in P-8.
+    // P-12 wires the question→answer flow via the `plan.answer`
+    // session-action below; this registration is the model-facing tool.
     api.registerTool(createAskUserQuestionTool(), {
       name: "ask_user_question",
     });
+
+    // P-12: session-actions — operator-side resolution surface.
+    // /plan accept|reject|cancel|edit|answer + plan.auto.toggle. UI
+    // clients dispatch these by (pluginId, actionId). Each handler
+    // verifies the approvalId (stale-event guard), then calls the
+    // PlanModeStore mutator + the appropriate injection-writer.
+    for (const action of createPlanModeSessionActions({ api, store })) {
+      api.session.controls.registerSessionAction(action);
+    }
+
+    // P-12: sidebar UI descriptor. Declares the "Plan Mode" surface so
+    // operator UI clients can render the widget. Rendering is
+    // host/client-side; the plugin owns data (via the session-extension
+    // projection) + actions (the registrations above).
+    api.session.controls.registerControlUiDescriptor(
+      buildPlanModeSidebarDescriptor(),
+    );
+
+    // P-12: sweep CLI command — `openclaw plan-clear -s <sessionKey>`.
+    // Operator rollback drain for sessions stuck in plan mode.
+    api.registerCli(createPlanClearCli({ store }));
 
     // P-5: mutation gate (`before_tool_call` hook). Blocks mutating
     // tools when planMode === "plan". Algorithm is byte-identical to
