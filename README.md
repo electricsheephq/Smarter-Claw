@@ -7,20 +7,25 @@ Plan Mode plugin for [OpenClaw](https://github.com/openclaw/openclaw) — plan-t
 **`1.0.0-port.14` — v0.x internal-release prep (2026-05-12).**
 
 End of the backend-first ladder. All 14 backend PRs (P-1 through P-14)
-have shipped. The plugin is **internally usable** against
+have shipped to `main` via [PR #80](https://github.com/electricsheephq/Smarter-Claw/pull/80). The plugin is **internally usable** against
 `openclaw@2026.5.10-beta.5`+; sidebar UI + slash commands work
-end-to-end. **551 tests pass across 26 test files.**
+end-to-end. **585 tests pass across 30 test files** (551 unit + 34 Eva live-smoke integration; all green on Ubuntu CI).
 
-`v1.0` public release is gated on upstream OpenClaw SDK seams (chat-stream
-rendering) — see [RELEASE_NOTES.md](./RELEASE_NOTES.md) "deferred to v1.0"
-table.
+`v1.0` public release is gated on the upstream OpenClaw chat-stream renderer
+SDK seam — see [RELEASE_NOTES.md](./RELEASE_NOTES.md) "deferred to v1.0" +
+[upstream draft PR `openclaw/openclaw#80982`](https://github.com/openclaw/openclaw/pull/80982).
 
 For implementation history + the architecture rationale see
 [architecture-v2-planning](https://github.com/electricsheephq/Smarter-Claw/tree/architecture-v2-planning/architecture-v2)
-(17 architecture artifacts, ~9,800 lines).
+(17 architecture artifacts, ~9,800 lines covering parity catalog,
+options analysis, adversarial review, parity-harness design, and the
+final ship-ready verdict). [Epic #77](https://github.com/electricsheephq/Smarter-Claw/issues/77)
+is the v1-port → v1.0.0 tracking issue.
 
-The prior `0.2.0-dev` attempt is preserved under `legacy/` for reference;
-**do not install it** — it predates the SDK seams.
+The pre-v1 `0.2.0-dev` attempt (legacy installer-model plugin) has been
+removed from `main` as of [PR #80](https://github.com/electricsheephq/Smarter-Claw/pull/80).
+Anyone needing the legacy code can recover it from `main` history before
+commit `47f3b73` — do not install it; it predates the SDK seams.
 
 ## Required Operator Config
 
