@@ -37,6 +37,7 @@
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { checkMutationGate } from "./gates/mutation-gate.js";
+import { buildPlanModeSystemContext } from "./prompt/plan-mode-injection.js";
 import { InMemoryGateway } from "./state/in-memory-gateway.js";
 import { SessionStoreGateway } from "./state/session-store-gateway.js";
 import { PlanModeStore, type PlanModeStateGateway } from "./state/store.js";
@@ -261,6 +262,40 @@ export default definePluginEntry({
         return { block: true, blockReason: result.reason };
       }
       return undefined;
+    });
+
+    // P-7: before_prompt_build hook — injects the plan-mode archetype
+    // system-prompt fragment when planMode === "plan".
+    //
+    // REQUIRES `plugins.entries.smarter-claw.hooks.allowConversationAccess: true`
+    // in operator config. before_prompt_build is in the conversation-
+    // access list (docs/plugins/hooks.md:308-310); without the flag,
+    // this hook silently no-ops.
+    //
+    // Output uses `appendSystemContext` (prompt-cached prefix) rather
+    // than `prependContext` (per-turn token cost) so the archetype
+    // bytes hash into the cache key and don't burn tokens on every
+    // turn.
+    //
+    // Byte-identical parity: the appended fragment must match the
+    // in-host inline injection at attempt.ts:702-732 (header + hard
+    // rules + PLAN_ARCHETYPE_PROMPT). Tests pin this.
+    //
+    // P-8 will extend this with PLAN_MODE_REFERENCE_CARD + the
+    // pendingAgentInjections drain queue (composePromptWithPendingInjections).
+    api.on("before_prompt_build", async (_event, ctx) => {
+      // before_prompt_build's PluginHookAgentContext doesn't expose
+      // getSessionExtension (that's on PluginHookToolContext only).
+      // Read via the plugin's own store; P-6's SessionStoreGateway
+      // routes through the same on-disk slot the host projection
+      // reads, so this is consistent with the mutation gate's path.
+      if (!ctx.sessionKey) return undefined;
+      const snap = await store.readSnapshot(ctx.sessionKey);
+      const mode: PlanMode = snap?.mode ?? "normal";
+      if (mode !== "plan") return undefined;
+      return {
+        appendSystemContext: buildPlanModeSystemContext(),
+      };
     });
 
     // P-1 degraded-state warning. Logs on every new session start so
