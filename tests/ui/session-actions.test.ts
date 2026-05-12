@@ -180,7 +180,7 @@ describe("P-12 session-actions — plan.accept", () => {
     expect(r.code).toBe(SESSION_ACTION_ERROR_CODES.NO_PENDING_APPROVAL);
   });
 
-  it("enqueues an approved injection with the right text + idempotency key", async () => {
+  it("enqueues an approved injection with the right text + idempotency key (no plan steps → bare opener fallback)", async () => {
     await acceptHandler({
       pluginId: "smarter-claw",
       actionId: "plan.accept",
@@ -192,6 +192,52 @@ describe("P-12 session-actions — plan.accept", () => {
     expect(call.idempotencyKey).toBe(
       `smarter-claw:plan_decision:${APPROVAL_ID}:approved`,
     );
+  });
+
+  it("emits the FULL buildApprovedPlanInjection preamble when lastPlanSteps is set (surgical-port S5 fix)", async () => {
+    gw.seed(
+      SESSION_KEY,
+      planModeSession({
+        lastPlanSteps: [
+          { step: "Update package.json", status: "pending" },
+          { step: "Run pnpm install", status: "pending" },
+        ],
+      }),
+    );
+    await acceptHandler({
+      pluginId: "smarter-claw",
+      actionId: "plan.accept",
+      sessionKey: SESSION_KEY,
+    });
+    const call = enqueue.mock.calls[0][0];
+    expect(call.text).toMatch(/^\[PLAN_DECISION\]: approved\n/);
+    expect(call.text).toContain(
+      "The user has approved the following plan. Execute it now without re-planning",
+    );
+    expect(call.text).toContain("1. Update package.json");
+    expect(call.text).toContain("2. Run pnpm install");
+  });
+
+  it("annotates non-pending step statuses in the injection (in-host parity)", async () => {
+    gw.seed(
+      SESSION_KEY,
+      planModeSession({
+        lastPlanSteps: [
+          { step: "Investigation", status: "completed" },
+          { step: "Apply patch", status: "in_progress" },
+          { step: "Run tests", status: "pending" },
+        ],
+      }),
+    );
+    await acceptHandler({
+      pluginId: "smarter-claw",
+      actionId: "plan.accept",
+      sessionKey: SESSION_KEY,
+    });
+    const call = enqueue.mock.calls[0][0];
+    expect(call.text).toContain("1. Investigation (completed)");
+    expect(call.text).toContain("2. Apply patch (in_progress)");
+    expect(call.text).toContain("3. Run tests"); // pending → no annotation
   });
 });
 
@@ -219,7 +265,7 @@ describe("P-12 session-actions — plan.edit", () => {
     );
   });
 
-  it("omits body when not provided (bare opener)", async () => {
+  it("omits body when not provided AND no plan steps stored (bare opener fallback)", async () => {
     const gw = new InMemoryGateway();
     const store = new PlanModeStore(gw);
     const { api, enqueueNextTurnInjection } = makeStubApi();
@@ -235,6 +281,63 @@ describe("P-12 session-actions — plan.edit", () => {
     });
     const call = enqueueNextTurnInjection.mock.calls[0][0];
     expect(call.text).toBe("[PLAN_DECISION]: edited");
+  });
+
+  it("emits the FULL buildAcceptEditsPlanInjection preamble when no body but lastPlanSteps set (surgical-port S5 fix)", async () => {
+    const gw = new InMemoryGateway();
+    const store = new PlanModeStore(gw);
+    const { api, enqueueNextTurnInjection } = makeStubApi();
+    const actions = createPlanModeSessionActions({ api, store });
+    const handler = actions.find((a) => a.id === "plan.edit")!.handler;
+    gw.seed(
+      SESSION_KEY,
+      planModeSession({
+        lastPlanSteps: [
+          { step: "Refactor reconnect logic", status: "pending" },
+          { step: "Add retry test", status: "pending" },
+        ],
+      }),
+    );
+
+    await handler({
+      pluginId: "smarter-claw",
+      actionId: "plan.edit",
+      sessionKey: SESSION_KEY,
+      payload: { approvalId: APPROVAL_ID },
+    });
+    const call = enqueueNextTurnInjection.mock.calls[0][0];
+    expect(call.text).toMatch(/^\[PLAN_DECISION\]: edited\n/);
+    expect(call.text).toContain(
+      "The user has approved the following plan with acceptEdits permission",
+    );
+    expect(call.text).toContain("Hard constraints");
+    expect(call.text).toContain("No destructive actions");
+    expect(call.text).toContain("1. Refactor reconnect logic");
+    expect(call.text).toContain("2. Add retry test");
+  });
+
+  it("body field takes priority over acceptEdits preamble (manual user edit)", async () => {
+    const gw = new InMemoryGateway();
+    const store = new PlanModeStore(gw);
+    const { api, enqueueNextTurnInjection } = makeStubApi();
+    const actions = createPlanModeSessionActions({ api, store });
+    const handler = actions.find((a) => a.id === "plan.edit")!.handler;
+    gw.seed(
+      SESSION_KEY,
+      planModeSession({
+        lastPlanSteps: [{ step: "X", status: "pending" }],
+      }),
+    );
+
+    await handler({
+      pluginId: "smarter-claw",
+      actionId: "plan.edit",
+      sessionKey: SESSION_KEY,
+      payload: { approvalId: APPROVAL_ID, body: "My edited body" },
+    });
+    const call = enqueueNextTurnInjection.mock.calls[0][0];
+    expect(call.text).toBe("[PLAN_DECISION]: edited\nMy edited body");
+    expect(call.text).not.toContain("acceptEdits permission");
   });
 });
 

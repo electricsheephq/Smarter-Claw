@@ -209,6 +209,32 @@ describe("P-11 enqueuePlanApprovedInjection", () => {
     expect(call.text).toBe("[PLAN_DECISION]: edited");
   });
 
+  it("fullText overrides opener+body (surgical-port S5 fix)", async () => {
+    const { api, enqueueNextTurnInjection } = makeStubApi();
+    await enqueuePlanApprovedInjection(api, {
+      sessionKey: SESSION_KEY,
+      approvalId: APPROVAL_ID,
+      fullText:
+        "[PLAN_DECISION]: approved\n\nThe user has approved the following plan. Execute it now.\n\n1. Step one",
+    });
+    const call = enqueueNextTurnInjection.mock.calls[0][0];
+    expect(call.text).toBe(
+      "[PLAN_DECISION]: approved\n\nThe user has approved the following plan. Execute it now.\n\n1. Step one",
+    );
+  });
+
+  it("fullText takes priority over bodyText when both are supplied", async () => {
+    const { api, enqueueNextTurnInjection } = makeStubApi();
+    await enqueuePlanApprovedInjection(api, {
+      sessionKey: SESSION_KEY,
+      approvalId: APPROVAL_ID,
+      fullText: "FULL TEXT WINS",
+      bodyText: "ignored body",
+    });
+    const call = enqueueNextTurnInjection.mock.calls[0][0];
+    expect(call.text).toBe("FULL TEXT WINS");
+  });
+
   it("idempotency-key namespaces by approvalId + 'approved'", async () => {
     const { api, enqueueNextTurnInjection } = makeStubApi();
     await enqueuePlanApprovedInjection(api, {

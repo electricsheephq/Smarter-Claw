@@ -99,13 +99,31 @@ export async function enqueuePlanDecisionInjection(
 /**
  * Enqueue a `[PLAN_DECISION]: approved` (or `: edited`) injection.
  *
- * Note: in-host, approved/edited carries the FULL approved-plan
- * preamble (the steps list + "mark cancelled if blocked" instruction).
- * For P-11 we ship the one-line opener; the full preamble lands when
- * the session-action handler at P-12 wires the body.
+ * Three ways to specify the injection content (in priority order):
  *
- * host_ref: src/agents/plan-mode/approval.ts:195-244
- *   (buildApprovedPlanInjection — full body to be ported at P-12).
+ *   1. `fullText` — caller has already built the complete injection
+ *      text (e.g. via `buildApprovedPlanInjection(planSteps)` which
+ *      includes the opener + preamble + step list). Used by plan.accept
+ *      and plan.edit handlers to emit the full in-host-parity preamble.
+ *
+ *   2. `bodyText` — caller supplies just the body; we prepend
+ *      `[PLAN_DECISION]: <decision>\n` automatically. Used by callers
+ *      that have user-typed text to splice in (e.g. inline-edited
+ *      plan body).
+ *
+ *   3. Neither — emit the bare one-line opener `[PLAN_DECISION]: approved`.
+ *      Fallback for tests / harness paths that don't need the preamble.
+ *
+ * # In-host parity (surgical-port S5)
+ *
+ * The in-host emits the FULL `buildApprovedPlanInjection(planSteps)`
+ * text — opener + "The user has approved..." + step list. The bare
+ * opener path was a plugin shortcut that dropped the agent's
+ * execution-guidance preamble. plan.accept now uses `fullText` with
+ * the full preamble; the bare-opener path remains as a fallback only.
+ *
+ * host_ref: src/agents/plan-mode/approval.ts:185-238
+ *   (buildApprovedPlanInjection + buildAcceptEditsPlanInjection)
  */
 export async function enqueuePlanApprovedInjection(
   api: OpenClawPluginApi,
@@ -113,15 +131,25 @@ export async function enqueuePlanApprovedInjection(
     sessionKey: string;
     approvalId: string;
     edited?: boolean;
-    /** Optional already-built body text (P-12 wiring); defaults to
-     *  the bare opener for now. */
+    /** Complete pre-built injection text (highest priority). Use this
+     *  to emit `buildApprovedPlanInjection(planSteps)` etc. */
+    fullText?: string;
+    /** Optional body text; we prepend the `[PLAN_DECISION]:` opener.
+     *  Used by inline-edit callers that have user-typed plan text. */
     bodyText?: string;
     ttlMs?: number;
   },
 ): Promise<{ enqueued: boolean; id: string; sessionKey: string }> {
   const decision = input.edited ? "edited" : "approved";
   const opener = `[PLAN_DECISION]: ${decision}`;
-  const text = input.bodyText ? `${opener}\n${input.bodyText}` : opener;
+  let text: string;
+  if (input.fullText !== undefined) {
+    text = input.fullText;
+  } else if (input.bodyText !== undefined) {
+    text = `${opener}\n${input.bodyText}`;
+  } else {
+    text = opener;
+  }
   const idempotencyKey = `smarter-claw:plan_decision:${input.approvalId}:${decision}`;
   return api.session.workflow.enqueueNextTurnInjection({
     sessionKey: input.sessionKey,
