@@ -41,6 +41,7 @@ import { buildPlanModeSystemContext } from "./prompt/plan-mode-injection.js";
 import { InMemoryGateway } from "./state/in-memory-gateway.js";
 import { SessionStoreGateway } from "./state/session-store-gateway.js";
 import { PlanModeStore, type PlanModeStateGateway } from "./state/store.js";
+import { decidePlanTierModel } from "./runtime/plan-tier-model.js";
 import { createAskUserQuestionTool } from "./tools/ask-user-question.js";
 import { createEnterPlanModeTool } from "./tools/enter-plan-mode.js";
 import { createExitPlanModeTool } from "./tools/exit-plan-mode.js";
@@ -64,17 +65,37 @@ type SmarterClawConfig = {
    * without manifest removal).
    */
   enabled?: boolean;
+  /**
+   * Optional model override for plan-mode turns (P-9). Routed via
+   * before_model_resolve. Requires allowConversationAccess.
+   */
+  planTierModel?: string;
+  /**
+   * Optional provider override paired with planTierModel.
+   */
+  planTierProvider?: string;
 };
 
-const DEFAULT_CONFIG: Required<SmarterClawConfig> = {
+const DEFAULT_CONFIG: Required<Pick<SmarterClawConfig, "enabled">> & SmarterClawConfig = {
   enabled: true,
 };
 
-function resolveConfig(raw: unknown): Required<SmarterClawConfig> {
-  if (!raw || typeof raw !== "object") return DEFAULT_CONFIG;
+function resolveConfig(raw: unknown): Required<Pick<SmarterClawConfig, "enabled">> & SmarterClawConfig {
+  if (!raw || typeof raw !== "object") return { ...DEFAULT_CONFIG };
   const partial = raw as Partial<SmarterClawConfig>;
+  const planTierModel =
+    typeof partial.planTierModel === "string" && partial.planTierModel.trim().length > 0
+      ? partial.planTierModel.trim()
+      : undefined;
+  const planTierProvider =
+    typeof partial.planTierProvider === "string" && partial.planTierProvider.trim().length > 0
+      ? partial.planTierProvider.trim()
+      : undefined;
   return {
-    enabled: typeof partial.enabled === "boolean" ? partial.enabled : DEFAULT_CONFIG.enabled,
+    enabled:
+      typeof partial.enabled === "boolean" ? partial.enabled : DEFAULT_CONFIG.enabled,
+    ...(planTierModel ? { planTierModel } : {}),
+    ...(planTierProvider ? { planTierProvider } : {}),
   };
 }
 
@@ -291,6 +312,23 @@ export default definePluginEntry({
     //
     // P-8 will extend this with PLAN_MODE_REFERENCE_CARD + the
     // pendingAgentInjections drain queue (composePromptWithPendingInjections).
+    // P-9: plan-tier model override. before_model_resolve hook —
+    // REQUIRES allowConversationAccess (same as before_prompt_build).
+    // When the operator has set `planTierModel`, route plan-mode turns
+    // to that model. When not set, host's default resolves.
+    if (config.planTierModel) {
+      api.on("before_model_resolve", async (_event, ctx) => {
+        const decision = await decidePlanTierModel(ctx.sessionKey, {
+          store,
+          planTierModel: config.planTierModel,
+          ...(config.planTierProvider
+            ? { planTierProvider: config.planTierProvider }
+            : {}),
+        });
+        return decision;
+      });
+    }
+
     api.on("before_prompt_build", async (_event, ctx) => {
       // before_prompt_build's PluginHookAgentContext doesn't expose
       // getSessionExtension (that's on PluginHookToolContext only).

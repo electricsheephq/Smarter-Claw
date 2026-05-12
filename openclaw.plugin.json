@@ -11,6 +11,14 @@
         "type": "boolean",
         "default": true,
         "description": "Globally enable or disable Smarter-Claw. When false, the plugin registers zero hooks (effectively uninstalled without manifest removal)."
+      },
+      "planTierModel": {
+        "type": "string",
+        "description": "Optional model override for plan-mode turns. Routed via the before_model_resolve hook. Examples: 'anthropic/claude-opus-4-7'. Requires allowConversationAccess. Leave empty to use the host's default model."
+      },
+      "planTierProvider": {
+        "type": "string",
+        "description": "Optional provider override paired with planTierModel. Use when the override model lives on a different provider than the session's default."
       }
     }
   },
@@ -19,6 +27,14 @@
       "enabled": {
         "label": "Enabled",
         "help": "Globally enable or disable Smarter-Claw plan-mode behavior."
+      },
+      "planTierModel": {
+        "label": "Plan-Tier Model",
+        "help": "Optional higher-tier model routed for plan-mode turns (e.g. 'anthropic/claude-opus-4-7'). Requires allowConversationAccess."
+      },
+      "planTierProvider": {
+        "label": "Plan-Tier Provider",
+        "help": "Optional provider override paired with Plan-Tier Model."
       }
     }
   },
