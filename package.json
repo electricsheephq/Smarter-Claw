@@ -1,6 +1,6 @@
 {
   "name": "@electricsheephq/smarter-claw",
-  "version": "1.0.0-port.14",
+  "version": "1.0.0-port.15",
   "description": "Smarter-Claw — Plan-Mode plugin for OpenClaw. v1 port (P-14 v0.x internal-release prep). Source-of-truth parity at openclaw-pr70071-rebase tip ea04ea52c7. v1.0 public release gated on upstream chat-stream SDK seam.",
   "type": "module",
   "main": "dist/src/index.js",
