@@ -1,0 +1,28 @@
+{
+  "_doc": "Chat-stream seam overlay manifest. Maps openclaw version → file replacements + expected SHAs. The patcher in scripts/install-chat-stream-seam.mjs reads this to apply, verify, or revert. Each version of openclaw needs its own entry — when openclaw bumps a beta, regenerate the overlay against the new baseline and add a new entry here.",
+  "openclawVersion": "2026.5.10-beta.5",
+  "seamSource": {
+    "upstreamPR": "https://github.com/openclaw/openclaw/pull/80982",
+    "branch": "feat/plugin-sdk-chat-stream-renderer",
+    "commits": [
+      "e873855d5de feat(plugin-sdk): add chat-stream Control UI surfaces for plugin-owned inline UI",
+      "a114083ae85 fix: drop unused import + regenerate Swift protocol bindings",
+      "e23f6af81ae fix(contracts-test): drop unused oxlint-disable directive"
+    ],
+    "buildHEAD": "fb9af69ea2b (cherry-picked onto v2026.5.10-beta.5 = 1ba689376ac, built 2026-05-12)"
+  },
+  "files": [
+    {
+      "relativePath": "dist/loader-DdN5GTsW.js",
+      "baselineSha256": "6261d5bfb3985b930ca4b6fd70da2ded6541ba62939fe4678b6ae22d77e875b3",
+      "patchedSha256": "c7b2020399c53934a8fa1f27cd132ce43039f8d5537b2216d0d500f906174a29",
+      "description": "Plugin loader bundle. Adds chatStreamSurfaces set + activeWhen validation + priority parsing (~70 LOC of new code inside ~6000-line bundle)."
+    },
+    {
+      "relativePath": "dist/protocol-BBwaRnfZ.js",
+      "baselineSha256": "2d22a827ff37d6194b1116a6f5c4eddc0b5e30832fd4008f962f9b6921e6dc42",
+      "patchedSha256": "178b3f4786e6f4712b87041a55ebc88b740eebd646b84fbe03477e8f15456754",
+      "description": "Gateway wire-protocol schema bundle. Adds PluginControlUiActiveWhenSchema + 3 new surface Literals + priority/activeWhen optional fields (~10 LOC of new code)."
+    }
+  ]
+}

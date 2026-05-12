@@ -550,8 +550,78 @@ export default definePluginEntry({
       `[smarter-claw] registered v1-port skeleton — namespace="${PLAN_MODE_SESSION_EXTENSION_NAMESPACE}"`,
     );
     api.logger.info(`[smarter-claw] ${buildAdvisorySessionMessage()}`);
+
+    // Chat-stream seam patch advisory: report whether the operator has
+    // applied the tactical patch (`npm run patch:chat-stream-seam`) that
+    // enables inline chat-stream UI surfaces. Fires once at register-time
+    // (not per session) to keep log noise low.
+    //
+    // The patch is required for the v1.0 inline-UI experience. v0.x
+    // sidebar UX works without it. The advisory ONLY informs; it does NOT
+    // try to auto-apply (operator opt-in is the contract).
+    //
+    // Detection is best-effort: looks for the patcher sentinel at
+    // `node_modules/openclaw/.smarter-claw-chat-stream-seam-applied.json`.
+    // If the openclaw install path can't be resolved (e.g. unusual layout),
+    // the advisory is skipped silently.
+    api.logger.info(`[smarter-claw] ${buildChatStreamSeamAdvisory()}`);
   },
 });
+
+/**
+ * Best-effort advisory for whether the chat-stream seam patch is applied
+ * to the operator's installed openclaw. Reads a sentinel at
+ * `node_modules/openclaw/.smarter-claw-chat-stream-seam-applied.json`.
+ *
+ * Behavior:
+ *   - Sentinel present + parseable: "chat-stream seam patch applied (openclaw X, applied Y)"
+ *   - Sentinel absent: "chat-stream seam patch not applied — run `npm run patch:chat-stream-seam` to enable inline UI (v1.0 surface). Sidebar UI works without the patch."
+ *   - Detection fails (can't find openclaw): silent no-op (returns generic message)
+ */
+function buildChatStreamSeamAdvisory(): string {
+  // Lazy-require fs to keep the plugin entry side-effect-free at import
+  // time for tests + parity harness.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const fs = require("node:fs") as typeof import("node:fs");
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const pathModule = require("node:path") as typeof import("node:path");
+
+  // Resolve openclaw install dir from this module's location.
+  // The plugin imports `openclaw/plugin-sdk/...`, so Node has resolved
+  // openclaw's package directory. We walk up from `require.resolve` if
+  // available; otherwise fall back to relative path heuristic.
+  let openclawDir: string | null = null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const req = require("node:module").createRequire(import.meta.url) as NodeRequire;
+    const openclawPkg = req.resolve("openclaw/package.json");
+    openclawDir = pathModule.dirname(openclawPkg);
+  } catch {
+    return "chat-stream seam patch: could not detect openclaw install path (advisory skipped).";
+  }
+
+  const sentinelPath = pathModule.join(
+    openclawDir,
+    ".smarter-claw-chat-stream-seam-applied.json",
+  );
+  if (!fs.existsSync(sentinelPath)) {
+    return (
+      "chat-stream seam patch: NOT applied. Sidebar UI works as-is. " +
+      "For v1.0 inline-UI surfaces, run `npm run patch:chat-stream-seam` (or `node scripts/install-chat-stream-seam.mjs --host=" +
+      openclawDir +
+      "`). Patch is reversible via `npm run patch:chat-stream-seam:uninstall`."
+    );
+  }
+  try {
+    const sentinel = JSON.parse(fs.readFileSync(sentinelPath, "utf8")) as {
+      appliedAt?: string;
+      openclawVersion?: string;
+    };
+    return `chat-stream seam patch: APPLIED (openclaw ${sentinel.openclawVersion ?? "?"}, ${sentinel.appliedAt ?? "?"}). Inline UI surfaces enabled.`;
+  } catch (err) {
+    return `chat-stream seam patch: sentinel present but unreadable (${(err as Error).message}).`;
+  }
+}
 
 /**
  * Test-only exports. Internal API; not part of the plugin's public
@@ -560,6 +630,7 @@ export default definePluginEntry({
  */
 export const __testing = {
   buildAdvisorySessionMessage,
+  buildChatStreamSeamAdvisory,
   resolveConfig,
   DEFAULT_CONFIG,
 };
