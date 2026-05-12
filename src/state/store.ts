@@ -1,0 +1,342 @@
+/**
+ * PlanModeStore — typed state mutators for the plan-mode session-extension.
+ *
+ * **Parity contract**: this module encodes the 10 co-located invariants
+ * of the in-host `persistPlanApprovalRequest` at
+ * `/Users/lume/repos/openclaw-pr70071-rebase/src/agents/pi-embedded-subscribe.handlers.tools.ts:130-237`
+ * (commit `ea04ea52c7`, the empty-plan-body race-fix anchor `1081067476`).
+ *
+ * Per `architecture-v2/09-AMENDMENT_1_VERIFICATION.md`, those invariants
+ * are:
+ *   1. Sync bundle write of approvalId + lastPlanSteps + title + payloadHash
+ *   2. mode === "plan" precondition guard (returns null → no write)
+ *   3. Payload-hash idempotency (reuse approvalId on hash-match cycle)
+ *   4. Audit-event emission via logPlanModeApprovalTransition
+ *   5. Atomic lock-around-the-read+update (encapsulated by the gateway)
+ *   6. Fresh-read inside the lock (encapsulated by the gateway)
+ *   7. 4-conjoined-condition idempotency decomposition
+ *   8. Try/catch IO-error swallow — returns candidate approvalId anyway
+ *   9. Deliberate audit-skip on the reuse path
+ *  10. Lazy-imports (N/A here — plugin is self-contained; preserved as
+ *      a discipline note for future state-module extensions)
+ *
+ * Architecture-v2/02 selected Option C (Hybrid): single namespace owned
+ * by this store, decomposed feature surfaces consume the store's typed
+ * API. State mutations route ONLY through this store — no free-form
+ * write paths.
+ *
+ * # Why a gateway interface
+ *
+ * The in-host writes via `updateSessionStoreEntry({ storePath,
+ * sessionKey, update })`. The plugin SDK's equivalent (whatever it
+ * turns out to be at P-6 — `api.runtime.session.update`, gateway RPC
+ * `sessions.pluginPatch`, or future `api.session.state.patch`) is
+ * abstracted behind `PlanModeStateGateway`. Tests use an in-memory
+ * gateway; P-6 wires the real seam. This keeps P-3 unblocked from
+ * SDK-spelunking and makes the 10-invariant logic testable in
+ * isolation.
+ */
+
+import type { PlanModeSessionState, PlanStep } from "../types.js";
+import {
+  CURRENT_SCHEMA_VERSION,
+  readSchemaVersion,
+  stampSchemaVersion,
+} from "./schema-version.js";
+
+/**
+ * Gateway for atomic read+update of plan-mode state.
+ *
+ * Encapsulates invariants 5 (atomic lock) and 6 (fresh-read inside
+ * the lock). The gateway impl is responsible for:
+ *   - Acquiring a per-sessionKey lock BEFORE calling `update(current)`
+ *   - Reading `current` AFTER the lock acquires (fresh, not cached)
+ *   - If `update` returns `{next: ...}`, writing those fields atomically
+ *   - If `update` returns `{next: null}`, NO write (skipped path)
+ *   - Releasing the lock AFTER the write (or skip)
+ *
+ * Invariant 5+6 violations would re-introduce the empty-plan-body race.
+ */
+export interface PlanModeStateGateway {
+  /**
+   * Atomic read-then-conditionally-update.
+   *
+   * @param sessionKey — the session whose plan-mode state is being mutated.
+   * @param update — callback receiving the FRESH current state (or undefined
+   *   if the session has no plan-mode payload yet). Must return one of:
+   *   - `{ next: PlanModeSessionState }` to write atomically
+   *   - `{ next: null }` to skip writing (idempotency path)
+   *   - And optionally a `transition` object capturing the prev/next
+   *     pair for audit emission (handled outside the gateway).
+   */
+  withLock<TTransition>(
+    sessionKey: string,
+    update: (current: PlanModeSessionState | undefined) => Promise<{
+      next: PlanModeSessionState | null;
+      transition?: TTransition;
+    }>,
+  ): Promise<{ transition?: TTransition }>;
+}
+
+/**
+ * Optional audit emitter. Mirrors the in-host
+ * `logPlanModeApprovalTransition` callsite. Called ONLY on the persist
+ * path; deliberately SKIPPED on the reuse path (in-host comment at
+ * line 202: "Skip the approval_transition event too since nothing
+ * transitioned").
+ *
+ * host_ref: src/agents/pi-embedded-subscribe.handlers.tools.ts:222-227
+ */
+export type AuditEmitter = (event: {
+  sessionKey: string;
+  prev: PlanModeSessionState | undefined;
+  next: PlanModeSessionState;
+  source: string;
+}) => void;
+
+/**
+ * Optional logger. Matches the SDK's PluginLogger.warn shape.
+ */
+export interface StoreLogger {
+  warn?: (message: string) => void;
+  info?: (message: string) => void;
+  debug?: (message: string) => void;
+}
+
+/**
+ * Input to `persistApprovalRequest`. Required: approvalId (candidate),
+ * sessionKey. Optional: title, payloadHash, lastPlanSteps.
+ *
+ * host_ref: src/agents/pi-embedded-subscribe.handlers.tools.ts:132-149
+ */
+export interface PersistApprovalRequestInput {
+  sessionKey: string;
+  /** Candidate approvalId minted by `newPlanApprovalId()` upstream. */
+  approvalId: string;
+  /** Plan title — persisted synchronously per the race-fix invariant. */
+  title?: string;
+  /**
+   * Plan payload hash — used for invariant 3 + 7 (idempotency match).
+   * Compute via `computePlanPayloadHash` from helpers/payload-hash.ts.
+   */
+  payloadHash?: string;
+  /** Plan steps — persisted synchronously per the race-fix invariant. */
+  lastPlanSteps?: PlanStep[];
+}
+
+/**
+ * Discriminated-union result of `persistApprovalRequest`. The shape is
+ * part of the caller-contract: callers (P-4 exit_plan_mode tool) read
+ * `kind` to decide whether to emit a duplicate-detected warning, and
+ * `approvalId` to bind the UI's approval card.
+ *
+ * host_ref: caller-contract at
+ *   src/agents/pi-embedded-subscribe.handlers.tools.ts:1881-1886
+ *   (uses the `reused` flag from the returned object to emit warning)
+ */
+export type PersistApprovalRequestResult =
+  | {
+      /** Fresh write happened. Audit event emitted. */
+      kind: "persisted";
+      approvalId: string;
+    }
+  | {
+      /** Hash matched existing pending cycle; existing approvalId reused.
+       *  Audit event was DELIBERATELY SKIPPED (invariant 9). */
+      kind: "reused";
+      approvalId: string;
+    }
+  | {
+      /** Precondition failed (mode !== "plan" or missing required
+       *  fields). No write, no audit. Caller may proceed with candidate
+       *  approvalId or treat as a soft no-op. */
+      kind: "skipped";
+      reason: "not-plan-mode" | "missing-fields";
+      approvalId: string;
+    }
+  | {
+      /** IO error during write. Per invariant 8: returns candidate
+       *  approvalId so caller can proceed; logs warning; does NOT throw. */
+      kind: "failed";
+      error: Error;
+      approvalId: string;
+    };
+
+/**
+ * The PlanModeStore. Owns ALL state mutations for the "plan-mode"
+ * session-extension namespace.
+ *
+ * Construction: pass a gateway impl + optional logger + optional audit
+ * emitter. Tests use an in-memory gateway; production wires the SDK
+ * seam at P-6.
+ */
+export class PlanModeStore {
+  constructor(
+    private readonly gateway: PlanModeStateGateway,
+    private readonly logger?: StoreLogger,
+    private readonly audit?: AuditEmitter,
+  ) {}
+
+  /**
+   * Persist a plan-approval-pending state on the session.
+   *
+   * Encodes invariants 1-9 (10 is N/A here — see module-level docstring).
+   *
+   * @example
+   *   const result = await store.persistApprovalRequest({
+   *     sessionKey: "agent:main:main",
+   *     approvalId: newPlanApprovalId(),
+   *     title: "Bump deps",
+   *     payloadHash: computePlanPayloadHash({title, summary, steps}),
+   *     lastPlanSteps: steps,
+   *   });
+   *   if (result.kind === "reused") {
+   *     log.warn(`exit_plan_mode duplicate detected; reused ${result.approvalId}`);
+   *   }
+   *   // Use result.approvalId for downstream UI binding (works for all 4 kinds).
+   */
+  async persistApprovalRequest(
+    input: PersistApprovalRequestInput,
+  ): Promise<PersistApprovalRequestResult> {
+    const { sessionKey, approvalId, title, payloadHash, lastPlanSteps } = input;
+
+    // Invariant 5+6 (encapsulated in gateway.withLock): lock acquires
+    // BEFORE the read; fresh-read inside the lock; write atomic with
+    // read.
+    let txResult: PersistApprovalRequestResult;
+    try {
+      const { transition } = await this.gateway.withLock<{
+        prev: PlanModeSessionState | undefined;
+        next: PlanModeSessionState;
+      }>(sessionKey, async (current) => {
+        // Invariant 2: mode === "plan" precondition guard.
+        if (!current || current.mode !== "plan") {
+          txResult = {
+            kind: "skipped",
+            reason: "not-plan-mode",
+            approvalId,
+          };
+          return { next: null };
+        }
+
+        // Invariant 3+7: 4-conjoined-condition idempotency guard.
+        // ALL FOUR must hold to reuse — partial match falls through to
+        // the rotate path. The conjunction is load-bearing: a 3-of-4
+        // match would either re-emit a stale approvalId (false-reuse)
+        // or rotate when we should preserve (false-overwrite, the
+        // orphan-card regression Eva surfaced 2026-04-28).
+        const hashMatch =
+          payloadHash !== undefined &&
+          current.lastPlanPayloadHash === payloadHash;
+        const stillPending = current.approval === "pending";
+        const hasApprovalId =
+          typeof current.approvalId === "string" && current.approvalId.length > 0;
+        if (hashMatch && stillPending && hasApprovalId) {
+          // Invariant 9: deliberate audit-skip on reuse. No transition
+          // object → no audit event downstream.
+          txResult = {
+            kind: "reused",
+            approvalId: current.approvalId as string,
+          };
+          return { next: null };
+        }
+
+        // Invariant 1: sync bundle write of approvalId + title +
+        // payloadHash + lastPlanSteps. ALL the race-fix-critical
+        // fields land in a single update so the sessions-patch.ts
+        // equivalent (P-6) reads the populated steps when the user
+        // approves fast.
+        const now = Date.now();
+        const next: PlanModeSessionState = {
+          ...current,
+          approval: "pending",
+          approvalId,
+          updatedAt: now,
+          ...(title !== undefined && title !== "" ? { title } : {}),
+          ...(payloadHash !== undefined && payloadHash !== ""
+            ? { lastPlanPayloadHash: payloadHash }
+            : {}),
+          ...(lastPlanSteps && lastPlanSteps.length > 0
+            ? { lastPlanSteps }
+            : {}),
+        };
+        txResult = {
+          kind: "persisted",
+          approvalId,
+        };
+        return {
+          // Stamp schema version on every successful write.
+          next: stampSchemaVersion(next) as PlanModeSessionState,
+          transition: { prev: current, next },
+        };
+      });
+
+      // Invariant 4: audit emission ONLY on the persist path (invariant 9
+      // excludes reuse + skip + failed paths).
+      if (transition && this.audit) {
+        this.audit({
+          sessionKey,
+          prev: transition.prev,
+          next: transition.next,
+          source: "smarter-claw:PlanModeStore.persistApprovalRequest",
+        });
+      }
+
+      // The `txResult` is assigned in every branch above. The TS
+      // analyzer can't prove it, so assert non-null here. Behavior:
+      // if a future refactor leaves it unassigned, the throw fires
+      // loud and we know to add the missing branch.
+      if (!txResult!) {
+        throw new Error(
+          "PlanModeStore.persistApprovalRequest: txResult not assigned — refactor bug",
+        );
+      }
+      return txResult;
+    } catch (err) {
+      // Invariant 8: IO-error fail-soft. Log + return candidate
+      // approvalId so the caller proceeds. NEVER throws.
+      const wrapped =
+        err instanceof Error ? err : new Error(String(err));
+      this.logger?.warn?.(
+        `PlanModeStore.persistApprovalRequest: failed to persist (sessionKey=${sessionKey}): ${wrapped.message}`,
+      );
+      return { kind: "failed", error: wrapped, approvalId };
+    }
+  }
+
+  /**
+   * Read the current plan-mode state for a session. Returns undefined
+   * when no payload exists yet (fresh session, or one that has never
+   * touched plan mode).
+   *
+   * Forward-compat: if the persisted payload has a schema version we
+   * don't know how to read, returns undefined and logs a warning.
+   * Future major versions can extend this with migration logic.
+   *
+   * NOTE: this is a non-locking READ. Use only for projection / display.
+   * For mutations, use the typed mutators (persistApprovalRequest,
+   * etc.) which lock internally.
+   */
+  async readSnapshot(
+    sessionKey: string,
+  ): Promise<PlanModeSessionState | undefined> {
+    // Snapshot via the gateway's withLock with a no-op update. This
+    // gives us the lock-protected fresh read even though we're not
+    // mutating. Future PRs may add a non-locking `read(sessionKey)`
+    // method on the gateway if the projection path needs to be hotter.
+    let snapshot: PlanModeSessionState | undefined;
+    await this.gateway.withLock(sessionKey, async (current) => {
+      snapshot = current;
+      return { next: null };
+    });
+    if (!snapshot) return undefined;
+    const version = readSchemaVersion(snapshot);
+    if (version > CURRENT_SCHEMA_VERSION) {
+      this.logger?.warn?.(
+        `PlanModeStore.readSnapshot: persisted schemaVersion=${version} is newer than this plugin's CURRENT_SCHEMA_VERSION=${CURRENT_SCHEMA_VERSION}; returning undefined to avoid type-unsafe access`,
+      );
+      return undefined;
+    }
+    return snapshot;
+  }
+}
