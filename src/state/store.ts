@@ -305,6 +305,147 @@ export class PlanModeStore {
   }
 
   /**
+   * Transition the session INTO plan mode.
+   *
+   * Idempotent: if the session is already in plan mode, returns a
+   * `noop` outcome without writing. Else writes the fresh plan-mode
+   * payload (mode=plan, approval=none, rejectionCount=0, enteredAt=now).
+   *
+   * host_ref: src/agents/tools/enter-plan-mode-tool.ts (the tool surface)
+   *   + the runtime's session-state transition wired in
+   *   pi-embedded-runner/run.ts (the actual write — we encode the
+   *   write logic here directly since the plugin owns the state).
+   */
+  async enterPlanMode(input: {
+    sessionKey: string;
+    reason?: string;
+  }): Promise<
+    | { kind: "entered"; state: PlanModeSessionState }
+    | { kind: "noop"; state: PlanModeSessionState }
+    | { kind: "failed"; error: Error }
+  > {
+    const { sessionKey, reason } = input;
+    try {
+      let outcome:
+        | { kind: "entered"; state: PlanModeSessionState }
+        | { kind: "noop"; state: PlanModeSessionState };
+
+      const { transition } = await this.gateway.withLock<{
+        prev: PlanModeSessionState | undefined;
+        next: PlanModeSessionState;
+      }>(sessionKey, async (current) => {
+        // Idempotent: already in plan mode.
+        if (current && current.mode === "plan") {
+          outcome = { kind: "noop", state: current };
+          return { next: null };
+        }
+        const now = Date.now();
+        const next: PlanModeSessionState = {
+          ...(current ?? {}),
+          mode: "plan",
+          approval: "none",
+          rejectionCount: current?.rejectionCount ?? 0,
+          enteredAt: now,
+          updatedAt: now,
+          // Reason is not persisted on the state (it's a one-shot tool
+          // arg used in the event payload). Reserved for future telemetry.
+          ...(reason && reason.length > 0 ? {} : {}),
+        };
+        outcome = { kind: "entered", state: next };
+        return {
+          next: stampSchemaVersion(next) as PlanModeSessionState,
+          transition: { prev: current, next },
+        };
+      });
+
+      if (transition && this.audit) {
+        this.audit({
+          sessionKey,
+          prev: transition.prev,
+          next: transition.next,
+          source: "smarter-claw:PlanModeStore.enterPlanMode",
+        });
+      }
+      return outcome!;
+    } catch (err) {
+      const wrapped =
+        err instanceof Error ? err : new Error(String(err));
+      this.logger?.warn?.(
+        `PlanModeStore.enterPlanMode: failed to persist (sessionKey=${sessionKey}): ${wrapped.message}`,
+      );
+      return { kind: "failed", error: wrapped };
+    }
+  }
+
+  /**
+   * Transition the session OUT of plan mode. Clears the approval-pending
+   * payload (approvalId, lastPlanSteps, lastPlanPayloadHash) so a future
+   * enterPlanMode starts clean.
+   *
+   * Idempotent: if the session is already in normal mode, returns `noop`.
+   *
+   * host_ref: src/agents/tools/exit-plan-mode-tool.ts (the tool surface).
+   *   In-host the state-transition is wired in the runner; we encode it
+   *   in the store directly.
+   */
+  async exitPlanMode(input: { sessionKey: string }): Promise<
+    | { kind: "exited"; state: PlanModeSessionState }
+    | { kind: "noop"; state: PlanModeSessionState | undefined }
+    | { kind: "failed"; error: Error }
+  > {
+    const { sessionKey } = input;
+    try {
+      let outcome:
+        | { kind: "exited"; state: PlanModeSessionState }
+        | { kind: "noop"; state: PlanModeSessionState | undefined };
+
+      const { transition } = await this.gateway.withLock<{
+        prev: PlanModeSessionState | undefined;
+        next: PlanModeSessionState;
+      }>(sessionKey, async (current) => {
+        // Idempotent: no payload, or already in normal mode.
+        if (!current || current.mode === "normal") {
+          outcome = { kind: "noop", state: current };
+          return { next: null };
+        }
+        const now = Date.now();
+        // Clear plan-mode-specific fields; preserve enteredAt only for
+        // post-mortem (the next enterPlanMode resets it).
+        const next: PlanModeSessionState = {
+          mode: "normal",
+          approval: "none",
+          rejectionCount: 0,
+          updatedAt: now,
+          // approvalId / title / lastPlanSteps / lastPlanPayloadHash /
+          // approvalRunId / feedback all deliberately OMITTED.
+        };
+        outcome = { kind: "exited", state: next };
+        return {
+          next: stampSchemaVersion(next) as PlanModeSessionState,
+          transition: { prev: current, next },
+        };
+      });
+
+      if (transition && this.audit) {
+        this.audit({
+          sessionKey,
+          prev: transition.prev,
+          next: transition.next,
+          source: "smarter-claw:PlanModeStore.exitPlanMode",
+        });
+      }
+      return outcome!;
+    } catch (err) {
+      const wrapped =
+        err instanceof Error ? err : new Error(String(err));
+      this.logger?.warn?.(
+        `PlanModeStore.exitPlanMode: failed to persist (sessionKey=${sessionKey}): ${wrapped.message}`,
+      );
+      return { kind: "failed", error: wrapped };
+    }
+  }
+
+  /**
    * Read the current plan-mode state for a session. Returns undefined
    * when no payload exists yet (fresh session, or one that has never
    * touched plan mode).

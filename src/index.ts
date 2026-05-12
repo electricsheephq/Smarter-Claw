@@ -36,6 +36,10 @@
 
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
+import { InMemoryGateway } from "./state/in-memory-gateway.js";
+import { PlanModeStore } from "./state/store.js";
+import { createEnterPlanModeTool } from "./tools/enter-plan-mode.js";
+import { createExitPlanModeTool } from "./tools/exit-plan-mode.js";
 
 export const SMARTER_CLAW_PLUGIN_ID = "smarter-claw";
 export const PLAN_MODE_SESSION_EXTENSION_NAMESPACE = "plan-mode";
@@ -141,6 +145,43 @@ export default definePluginEntry({
       description:
         "Plan-mode state — current mode, pending approval, cycle counter, " +
         "etc. Schema versioned via __schemaVersion (P-3).",
+    });
+
+    // P-4: PlanModeStore + the enter/exit tools.
+    //
+    // The store needs a `PlanModeStateGateway` impl. P-4 uses
+    // InMemoryGateway (per-process; state lost on plugin reload).
+    // P-6 swaps in a gateway backed by the real session-extension write
+    // path (e.g. `api.sessions.pluginPatch`) so state survives reload
+    // and is visible to other clients. The interface is stable across
+    // the swap; tools + store don't change.
+    //
+    // Construct the gateway + store when the plugin is enabled (per
+    // the config guard above).
+    const gateway = new InMemoryGateway();
+    const store = new PlanModeStore(
+      gateway,
+      {
+        warn: (msg: string) => api.logger.warn(`[plan-mode-store] ${msg}`),
+        info: (msg: string) => api.logger.info(`[plan-mode-store] ${msg}`),
+      },
+      (event) => {
+        // P-4 audit: log structured. P-14 wires the grant ledger +
+        // approvalRunId correlation for debug-log surfacing.
+        api.logger.info(
+          `[plan-mode-audit] ${event.source}: ` +
+            `${event.prev?.mode ?? "(none)"}/${event.prev?.approval ?? "(none)"} → ` +
+            `${event.next.mode}/${event.next.approval} ` +
+            `(session=${event.sessionKey})`,
+        );
+      },
+    );
+
+    api.registerTool(createEnterPlanModeTool({ store }), {
+      name: "enter_plan_mode",
+    });
+    api.registerTool(createExitPlanModeTool({ store }), {
+      name: "exit_plan_mode",
     });
 
     // P-1 degraded-state warning. Logs on every new session start so
