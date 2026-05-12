@@ -37,6 +37,22 @@ describe("P-4 enter_plan_mode — tool shape", () => {
     const params = tool.parameters as { additionalProperties?: boolean };
     expect(params.additionalProperties).toBe(false);
   });
+
+  it("description contains TOOL LIFECYCLE clause (surgical-port S1 fix)", () => {
+    const { factory } = build();
+    const tool = factory({ sessionKey: SESSION_KEY });
+    expect(tool.description).toMatch(/TOOL LIFECYCLE/);
+    expect(tool.description).toMatch(/enter_plan_mode = ONCE/);
+    expect(tool.description).toMatch(/update_plan = DURING/);
+    expect(tool.description).toMatch(/exit_plan_mode = ONCE when ready to propose/);
+  });
+
+  it("description points to reference card + plan_mode_status diagnostic", () => {
+    const { factory } = build();
+    const tool = factory({ sessionKey: SESSION_KEY });
+    expect(tool.description).toMatch(/reference card/);
+    expect(tool.description).toMatch(/plan_mode_status/);
+  });
 });
 
 describe("P-4 enter_plan_mode — state transitions", () => {

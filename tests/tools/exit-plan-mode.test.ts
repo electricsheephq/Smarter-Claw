@@ -1,20 +1,29 @@
 /**
- * P-4 exit_plan_mode tool tests.
+ * exit_plan_mode tool tests.
  *
- * Covers schema validation (plan steps, at-most-one in_progress), the
- * payloadHash + approvalId minting + PlanModeStore wiring. The full
- * Invariant 1-10 behavior is covered by tests/state/store.test.ts +
- * parity-harness; here we test the TOOL-level wrapping (input
- * validation, output shape, error mapping).
+ * Covers schema validation (title-required + 80-char clamp, plan steps,
+ * at-most-one in_progress, archetype fields), the payloadHash +
+ * approvalId minting + PlanModeStore wiring. The full Invariant 1-10
+ * behavior is covered by tests/state/store.test.ts + parity-harness;
+ * here we test the TOOL-level wrapping (input validation, output
+ * shape, error mapping).
+ *
+ * Parity contract: title check + 80-char clamp + archetype echoing
+ * are byte-identical to in-host (`src/agents/tools/exit-plan-mode-tool.ts`
+ * at commit ea04ea52c7). Tests pin the in-host order: title check
+ * runs BEFORE plan validation so the most common omission (no title)
+ * surfaces first rather than after the agent has fixed an unrelated
+ * plan-schema error.
  */
 
 import { describe, expect, it } from "vitest";
 import { createExitPlanModeTool } from "../../src/tools/exit-plan-mode.js";
+import { isPlanApprovalId } from "../../src/helpers/approval-id.js";
 import { InMemoryGateway } from "../../src/state/in-memory-gateway.js";
 import { PlanModeStore } from "../../src/state/store.js";
-import { isPlanApprovalId } from "../../src/helpers/approval-id.js";
 
 const SESSION_KEY = "agent:main:main";
+const TITLE = "Test plan";
 
 function build() {
   const gw = new InMemoryGateway();
@@ -30,7 +39,7 @@ function build() {
   return { gw, store, factory };
 }
 
-describe("P-4 exit_plan_mode — tool shape", () => {
+describe("exit_plan_mode — tool shape", () => {
   it("factory returns a tool definition with required fields", () => {
     const { factory } = build();
     const tool = factory({ sessionKey: SESSION_KEY });
@@ -46,13 +55,81 @@ describe("P-4 exit_plan_mode — tool shape", () => {
     const params = tool.parameters as { additionalProperties?: boolean };
     expect(params.additionalProperties).toBe(false);
   });
+
+  it("description contains the STOP AFTER / chat-text-banned clauses (anti-halt steer)", () => {
+    const { factory } = build();
+    const tool = factory({ sessionKey: SESSION_KEY });
+    expect(tool.description).toMatch(/STOP AFTER THIS TOOL CALL/);
+    expect(tool.description).toMatch(/do NOT write the plan as a markdown list/);
+    expect(tool.description).toMatch(/WAIT FOR SPAWNED SUBAGENTS/);
+  });
 });
 
-describe("P-4 exit_plan_mode — input validation", () => {
-  it("rejects missing plan array", async () => {
+describe("exit_plan_mode — title required (surgical-port S1 fix)", () => {
+  it("rejects when title is missing", async () => {
+    const { factory } = build();
+    const tool = factory({ sessionKey: SESSION_KEY });
+    const result = await tool.execute("call-1", {
+      plan: [{ step: "a", status: "pending" }],
+    });
+    expect(result.details).toEqual(
+      expect.objectContaining({ status: "invalid-input" }),
+    );
+    expect(result.content[0]?.text).toMatch(/requires a `title` field/);
+    expect(result.content[0]?.text).toMatch(/Re-call exit_plan_mode/);
+  });
+
+  it("rejects when title is whitespace-only", async () => {
+    const { factory } = build();
+    const tool = factory({ sessionKey: SESSION_KEY });
+    const result = await tool.execute("call-1", {
+      title: "   ",
+      plan: [{ step: "a", status: "pending" }],
+    });
+    expect((result.details as { status: string }).status).toBe("invalid-input");
+  });
+
+  it("title check runs BEFORE plan validation (in-host order)", async () => {
+    // No title + no plan → should see the title error, not a plan error.
+    // This pins the in-host order: title is the most common omission and
+    // should be reported first.
     const { factory } = build();
     const tool = factory({ sessionKey: SESSION_KEY });
     const result = await tool.execute("call-1", {});
+    expect(result.content[0]?.text).toMatch(/requires a `title` field/);
+    expect(result.content[0]?.text).not.toMatch(/plan required/);
+  });
+
+  it("clamps title to 80 chars (in-host parity)", async () => {
+    const { factory } = build();
+    const tool = factory({ sessionKey: SESSION_KEY });
+    const longTitle = "A".repeat(120);
+    const result = await tool.execute("call-1", {
+      title: longTitle,
+      plan: [{ step: "a", status: "pending" }],
+    });
+    const details = result.details as { title?: string; status: string };
+    expect(details.status).toBe("approval-requested");
+    expect(details.title).toBe("A".repeat(80));
+    expect(details.title?.length).toBe(80);
+  });
+
+  it("trims whitespace before clamping (preserves intent)", async () => {
+    const { factory } = build();
+    const tool = factory({ sessionKey: SESSION_KEY });
+    const result = await tool.execute("call-1", {
+      title: "   Bump deps   ",
+      plan: [{ step: "a", status: "pending" }],
+    });
+    expect((result.details as { title: string }).title).toBe("Bump deps");
+  });
+});
+
+describe("exit_plan_mode — plan input validation", () => {
+  it("rejects missing plan array", async () => {
+    const { factory } = build();
+    const tool = factory({ sessionKey: SESSION_KEY });
+    const result = await tool.execute("call-1", { title: TITLE });
     expect(result.details).toEqual(
       expect.objectContaining({ status: "invalid-input" }),
     );
@@ -62,7 +139,7 @@ describe("P-4 exit_plan_mode — input validation", () => {
   it("rejects empty plan array", async () => {
     const { factory } = build();
     const tool = factory({ sessionKey: SESSION_KEY });
-    const result = await tool.execute("call-1", { plan: [] });
+    const result = await tool.execute("call-1", { title: TITLE, plan: [] });
     expect(result.details).toEqual(
       expect.objectContaining({ status: "invalid-input" }),
     );
@@ -72,6 +149,7 @@ describe("P-4 exit_plan_mode — input validation", () => {
     const { factory } = build();
     const tool = factory({ sessionKey: SESSION_KEY });
     const result = await tool.execute("call-1", {
+      title: TITLE,
       plan: [
         { step: "a", status: "in_progress" },
         { step: "b", status: "in_progress" },
@@ -87,6 +165,7 @@ describe("P-4 exit_plan_mode — input validation", () => {
     const { factory } = build();
     const tool = factory({ sessionKey: SESSION_KEY });
     const result = await tool.execute("call-1", {
+      title: TITLE,
       plan: [{ step: "a", status: "bogus_status" }],
     });
     expect(result.details).toEqual(
@@ -99,6 +178,7 @@ describe("P-4 exit_plan_mode — input validation", () => {
     const { factory } = build();
     const tool = factory({ sessionKey: SESSION_KEY });
     const result = await tool.execute("call-1", {
+      title: TITLE,
       plan: [
         { step: "a", status: "completed" },
         { step: "b", status: "in_progress" },
@@ -111,11 +191,12 @@ describe("P-4 exit_plan_mode — input validation", () => {
   });
 });
 
-describe("P-4 exit_plan_mode — happy path", () => {
+describe("exit_plan_mode — happy path", () => {
   it("mints a valid plan-approvalId via newPlanApprovalId", async () => {
     const { factory } = build();
     const tool = factory({ sessionKey: SESSION_KEY });
     const result = await tool.execute("call-1", {
+      title: TITLE,
       plan: [{ step: "do thing", status: "pending" }],
     });
     const approvalId = (result.details as { approvalId?: string }).approvalId;
@@ -156,9 +237,13 @@ describe("P-4 exit_plan_mode — happy path", () => {
   it("step count reflected in result text", async () => {
     const { factory } = build();
     const tool = factory({ sessionKey: SESSION_KEY });
-    const r1 = await tool.execute("c1", { plan: [{ step: "a", status: "pending" }] });
+    const r1 = await tool.execute("c1", {
+      title: TITLE,
+      plan: [{ step: "a", status: "pending" }],
+    });
     expect(r1.content[0]?.text).toMatch(/1 step/);
     const r2 = await tool.execute("c2", {
+      title: TITLE,
       plan: [
         { step: "a", status: "pending" },
         { step: "b", status: "pending" },
@@ -166,9 +251,116 @@ describe("P-4 exit_plan_mode — happy path", () => {
     });
     expect(r2.content[0]?.text).toMatch(/2 steps/);
   });
+
+  it("result text includes the title (in-host parity)", async () => {
+    const { factory } = build();
+    const tool = factory({ sessionKey: SESSION_KEY });
+    const result = await tool.execute("c1", {
+      title: "Bump deps",
+      plan: [{ step: "a", status: "pending" }],
+    });
+    expect(result.content[0]?.text).toMatch(/Bump deps/);
+  });
 });
 
-describe("P-4 exit_plan_mode — duplicate detection (Invariant 3)", () => {
+describe("exit_plan_mode — archetype fields (surgical-port S1 fix)", () => {
+  it("echoes analysis when provided", async () => {
+    const { factory } = build();
+    const tool = factory({ sessionKey: SESSION_KEY });
+    const result = await tool.execute("c1", {
+      title: TITLE,
+      plan: [{ step: "a", status: "pending" }],
+      analysis: "Current state shows N issues; chosen approach is X because Y.",
+    });
+    expect((result.details as { analysis?: string }).analysis).toBe(
+      "Current state shows N issues; chosen approach is X because Y.",
+    );
+  });
+
+  it("trims and drops blank entries from assumptions array", async () => {
+    const { factory } = build();
+    const tool = factory({ sessionKey: SESSION_KEY });
+    const result = await tool.execute("c1", {
+      title: TITLE,
+      plan: [{ step: "a", status: "pending" }],
+      assumptions: ["  first  ", "", "   ", "second"],
+    });
+    expect((result.details as { assumptions?: string[] }).assumptions).toEqual([
+      "first",
+      "second",
+    ]);
+  });
+
+  it("echoes risks (objects with risk + mitigation)", async () => {
+    const { factory } = build();
+    const tool = factory({ sessionKey: SESSION_KEY });
+    const result = await tool.execute("c1", {
+      title: TITLE,
+      plan: [{ step: "a", status: "pending" }],
+      risks: [
+        { risk: "tests may flake", mitigation: "retry the suite" },
+        { risk: "", mitigation: "drop" }, // dropped (blank risk)
+      ],
+    });
+    expect((result.details as { risks?: Array<unknown> }).risks).toEqual([
+      { risk: "tests may flake", mitigation: "retry the suite" },
+    ]);
+  });
+
+  it("echoes verification array (trimmed, blanks dropped)", async () => {
+    const { factory } = build();
+    const tool = factory({ sessionKey: SESSION_KEY });
+    const result = await tool.execute("c1", {
+      title: TITLE,
+      plan: [{ step: "a", status: "pending" }],
+      verification: ["pnpm test passes", "", "  manual smoke ok  "],
+    });
+    expect(
+      (result.details as { verification?: string[] }).verification,
+    ).toEqual(["pnpm test passes", "manual smoke ok"]);
+  });
+
+  it("echoes references array", async () => {
+    const { factory } = build();
+    const tool = factory({ sessionKey: SESSION_KEY });
+    const result = await tool.execute("c1", {
+      title: TITLE,
+      plan: [{ step: "a", status: "pending" }],
+      references: ["src/agents/plan-mode/types.ts:42", "PR #67538"],
+    });
+    expect(
+      (result.details as { references?: string[] }).references,
+    ).toEqual(["src/agents/plan-mode/types.ts:42", "PR #67538"]);
+  });
+
+  it("omits archetype fields from details when not provided (minimal payload)", async () => {
+    const { factory } = build();
+    const tool = factory({ sessionKey: SESSION_KEY });
+    const result = await tool.execute("c1", {
+      title: TITLE,
+      plan: [{ step: "a", status: "pending" }],
+    });
+    const details = result.details as Record<string, unknown>;
+    expect(details.analysis).toBeUndefined();
+    expect(details.assumptions).toBeUndefined();
+    expect(details.risks).toBeUndefined();
+    expect(details.verification).toBeUndefined();
+    expect(details.references).toBeUndefined();
+  });
+
+  it("drops archetype field with all-blank entries (no empty arrays in result)", async () => {
+    const { factory } = build();
+    const tool = factory({ sessionKey: SESSION_KEY });
+    const result = await tool.execute("c1", {
+      title: TITLE,
+      plan: [{ step: "a", status: "pending" }],
+      assumptions: ["", "   ", ""],
+    });
+    expect((result.details as { assumptions?: string[] }).assumptions).toBeUndefined();
+  });
+});
+
+describe("exit_plan_mode — duplicate detection (Invariant 3)", () => {
   it("returns duplicate-detected status + reuses existing approvalId on identical re-submit", async () => {
     const { factory } = build();
     const tool = factory({ sessionKey: SESSION_KEY });
@@ -190,10 +382,12 @@ describe("P-4 exit_plan_mode — duplicate detection (Invariant 3)", () => {
     const { factory } = build();
     const tool = factory({ sessionKey: SESSION_KEY });
     const first = await tool.execute("c1", {
+      title: TITLE,
       plan: [{ step: "v1", status: "pending" }],
     });
     const firstId = (first.details as { approvalId: string }).approvalId;
     const second = await tool.execute("c2", {
+      title: TITLE,
       plan: [{ step: "v2", status: "pending" }],
     });
     expect((second.details as { approvalId: string }).approvalId).not.toBe(firstId);
@@ -201,13 +395,14 @@ describe("P-4 exit_plan_mode — duplicate detection (Invariant 3)", () => {
   });
 });
 
-describe("P-4 exit_plan_mode — error paths", () => {
+describe("exit_plan_mode — error paths", () => {
   it("returns not-in-plan-mode when session has no plan-mode payload", async () => {
     const gw = new InMemoryGateway(); // unseeded
     const store = new PlanModeStore(gw);
     const factory = createExitPlanModeTool({ store });
     const tool = factory({ sessionKey: SESSION_KEY });
     const result = await tool.execute("c1", {
+      title: TITLE,
       plan: [{ step: "a", status: "pending" }],
     });
     expect((result.details as { status: string }).status).toBe("not-in-plan-mode");
@@ -218,6 +413,7 @@ describe("P-4 exit_plan_mode — error paths", () => {
     const { factory } = build();
     const tool = factory({ sessionKey: undefined });
     const result = await tool.execute("c1", {
+      title: TITLE,
       plan: [{ step: "a", status: "pending" }],
     });
     expect((result.details as { status: string }).status).toBe("no-session");
@@ -233,6 +429,7 @@ describe("P-4 exit_plan_mode — error paths", () => {
     const factory = createExitPlanModeTool({ store });
     const tool = factory({ sessionKey: SESSION_KEY });
     const result = await tool.execute("c1", {
+      title: TITLE,
       plan: [{ step: "a", status: "pending" }],
     });
     expect((result.details as { status: string }).status).toBe("failed");
