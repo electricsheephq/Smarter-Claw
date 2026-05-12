@@ -36,6 +36,10 @@
 
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
+import {
+  checkAcceptEditsConstraint,
+  extractApplyPatchTargetPaths,
+} from "./gates/accept-edits-gate.js";
 import { checkMutationGate } from "./gates/mutation-gate.js";
 import { buildPlanModeSystemContext } from "./prompt/plan-mode-injection.js";
 import { InMemoryGateway } from "./state/in-memory-gateway.js";
@@ -283,19 +287,29 @@ export default definePluginEntry({
       const ns = PLAN_MODE_SESSION_EXTENSION_NAMESPACE;
       // 1. Host projection.
       const fromHost = ctx.getSessionExtension?.(ns) as
-        | { mode?: PlanMode }
+        | {
+            mode?: PlanMode;
+            approval?: string;
+            autoApprove?: boolean;
+          }
         | undefined
         | null;
       // 2. Plugin's own store (authoritative until P-6).
       let mode: PlanMode = "normal";
+      let approval: string | undefined;
+      let autoApprove = false;
       if (fromHost?.mode) {
         mode = fromHost.mode;
+        approval = fromHost.approval;
+        autoApprove = fromHost.autoApprove === true;
       } else if (ctx.sessionKey) {
         const snap = await store.readSnapshot(ctx.sessionKey);
-        if (snap?.mode) mode = snap.mode;
+        if (snap?.mode) {
+          mode = snap.mode;
+          approval = snap.approval;
+          autoApprove = snap.autoApprove === true;
+        }
       }
-      // Fast path: not in plan mode → no gate check.
-      if (mode !== "plan") return undefined;
 
       // Extract exec command for bash/exec checks. Look at common
       // param names; in-host uses `command` for both bash + exec.
@@ -307,12 +321,62 @@ export default definePluginEntry({
             ? params.cmd
             : undefined;
 
-      const result = checkMutationGate(event.toolName, mode, command);
-      if (result.blocked) {
+      // Layer 1: plan-mode mutation gate (fail-CLOSED).
+      // Fires when mode === "plan" — blocks mutations during plan
+      // proposal/revision.
+      if (mode === "plan") {
+        const result = checkMutationGate(event.toolName, mode, command);
+        if (result.blocked) {
+          api.logger.info(
+            `[smarter-claw] mutation gate blocked tool="${event.toolName}" sessionKey="${ctx.sessionKey ?? "?"}" — ${result.reason}`,
+          );
+          return { block: true, blockReason: result.reason };
+        }
+        // Pass-through: tool is allowed in plan mode.
+        return undefined;
+      }
+
+      // Layer 2: accept-edits constraint gate (fail-OPEN).
+      // Fires AFTER plan approval, when the agent is in the
+      // post-approval execution phase with acceptEdits permission.
+      // We approximate "acceptEdits granted" via:
+      //   - autoApprove === true (operator pre-toggled auto-mode), OR
+      //   - approval === "edited" (user inline-edited + approved with edits)
+      // Either signal indicates the runtime is in a "permissive
+      // execution" phase where the 3 hard constraints (destructive,
+      // self-restart, config-change) need explicit re-confirmation.
+      //
+      // host_ref: gates/accept-edits-gate.ts (layer 2 of the two-layer
+      // defense; the prompt-layer teaching landed in approval-prompt.ts
+      // not yet ported in P-13 — for P-13 we ship layer 2 alone, which
+      // is the actual enforcement boundary).
+      const isAcceptEditsPhase =
+        autoApprove === true || approval === "edited";
+      if (!isAcceptEditsPhase) return undefined;
+
+      // Extract filePath for write/edit/apply_patch tools.
+      const filePath =
+        typeof params.file_path === "string"
+          ? params.file_path
+          : typeof params.path === "string"
+            ? params.path
+            : typeof params.target === "string"
+              ? params.target
+              : undefined;
+      // apply_patch carries multi-target paths inside its input envelope.
+      const additionalPaths = extractApplyPatchTargetPaths(params.input);
+
+      const aeResult = checkAcceptEditsConstraint({
+        toolName: event.toolName,
+        ...(command !== undefined ? { execCommand: command } : {}),
+        ...(filePath !== undefined ? { filePath } : {}),
+        ...(additionalPaths.length > 0 ? { additionalPaths } : {}),
+      });
+      if (aeResult.blocked) {
         api.logger.info(
-          `[smarter-claw] mutation gate blocked tool="${event.toolName}" sessionKey="${ctx.sessionKey ?? "?"}" — ${result.reason}`,
+          `[smarter-claw] accept-edits gate blocked tool="${event.toolName}" constraint=${aeResult.constraint ?? "?"} sessionKey="${ctx.sessionKey ?? "?"}"`,
         );
-        return { block: true, blockReason: result.reason };
+        return { block: true, blockReason: aeResult.reason };
       }
       return undefined;
     });

@@ -880,3 +880,129 @@ describe("P-11 PlanModeStore.recordApproval — IO-error fail-soft", () => {
     expect(log.warn).toHaveBeenCalled();
   });
 });
+
+describe("P-13 PlanModeStore.setAutoApprove — toggle behavior", () => {
+  let gw: InMemoryGateway;
+  let store: PlanModeStore;
+  let audit: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    gw = new InMemoryGateway();
+    audit = vi.fn();
+    store = new PlanModeStore(gw, undefined, audit);
+  });
+
+  it("enables autoApprove on a session with no existing payload (lazy-init in normal mode)", async () => {
+    const r = await store.setAutoApprove({
+      sessionKey: SESSION_KEY,
+      enabled: true,
+    });
+    expect(r.kind).toBe("updated");
+    if (r.kind === "updated") {
+      expect(r.enabled).toBe(true);
+      expect(r.state.autoApprove).toBe(true);
+      expect(r.state.mode).toBe("normal");
+    }
+    expect(gw.peek(SESSION_KEY)?.autoApprove).toBe(true);
+  });
+
+  it("enables autoApprove on an existing plan-mode payload (preserves mode + approval)", async () => {
+    gw.seed(
+      SESSION_KEY,
+      planModeSession({
+        mode: "plan",
+        approval: "pending",
+        approvalId: APPROVAL_ID,
+        title: "Bump deps",
+      }),
+    );
+    const r = await store.setAutoApprove({
+      sessionKey: SESSION_KEY,
+      enabled: true,
+    });
+    if (r.kind !== "updated") throw new Error("expected updated");
+    expect(r.state.autoApprove).toBe(true);
+    expect(r.state.mode).toBe("plan");
+    expect(r.state.approval).toBe("pending");
+    expect(r.state.title).toBe("Bump deps");
+  });
+
+  it("disables autoApprove on an existing payload", async () => {
+    gw.seed(
+      SESSION_KEY,
+      planModeSession({ mode: "plan", autoApprove: true }),
+    );
+    const r = await store.setAutoApprove({
+      sessionKey: SESSION_KEY,
+      enabled: false,
+    });
+    if (r.kind !== "updated") throw new Error("expected updated");
+    expect(r.state.autoApprove).toBe(false);
+  });
+
+  it("noop when toggling to the same value (no write, no audit)", async () => {
+    gw.seed(
+      SESSION_KEY,
+      planModeSession({ mode: "plan", autoApprove: true }),
+    );
+    const r = await store.setAutoApprove({
+      sessionKey: SESSION_KEY,
+      enabled: true,
+    });
+    expect(r.kind).toBe("noop");
+    expect(gw.writeCount).toBe(0);
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it("emits audit on the updated path", async () => {
+    gw.seed(SESSION_KEY, planModeSession({ mode: "plan" }));
+    await store.setAutoApprove({
+      sessionKey: SESSION_KEY,
+      enabled: true,
+    });
+    expect(audit).toHaveBeenCalledTimes(1);
+    const call = audit.mock.calls[0][0];
+    expect(call.source).toContain("setAutoApprove");
+    expect(call.next.autoApprove).toBe(true);
+  });
+
+  it("stamps __schemaVersion on the write", async () => {
+    gw.seed(SESSION_KEY, planModeSession({ mode: "plan" }));
+    await store.setAutoApprove({
+      sessionKey: SESSION_KEY,
+      enabled: true,
+    });
+    const state = gw.peek(SESSION_KEY) as PlanModeSessionState & {
+      __schemaVersion?: number;
+    };
+    expect(state.__schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+  });
+
+  it("survives across multiple toggles (idempotent state)", async () => {
+    await store.setAutoApprove({ sessionKey: SESSION_KEY, enabled: true });
+    await store.setAutoApprove({ sessionKey: SESSION_KEY, enabled: false });
+    await store.setAutoApprove({ sessionKey: SESSION_KEY, enabled: true });
+    expect(gw.peek(SESSION_KEY)?.autoApprove).toBe(true);
+  });
+});
+
+describe("P-13 PlanModeStore.setAutoApprove — IO-error fail-soft", () => {
+  it("returns kind:'failed' when gateway throws (never throws)", async () => {
+    const brokenGw = {
+      withLock: vi.fn(async () => {
+        throw new Error("simulated disk failure");
+      }),
+    };
+    const log = { warn: vi.fn() };
+    const store = new PlanModeStore(brokenGw as never, log as never);
+    const r = await store.setAutoApprove({
+      sessionKey: SESSION_KEY,
+      enabled: true,
+    });
+    expect(r.kind).toBe("failed");
+    if (r.kind === "failed") {
+      expect(r.error.message).toBe("simulated disk failure");
+    }
+    expect(log.warn).toHaveBeenCalled();
+  });
+});

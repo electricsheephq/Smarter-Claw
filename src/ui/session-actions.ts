@@ -438,24 +438,26 @@ export function createPlanModeSessionActions(
           "plan.auto.toggle requires { enabled: boolean }",
         );
       }
-      // Auto-approve toggle doesn't need a full mutator method on the
-      // store — it's an additive flag on the state. We read+rewrite
-      // through the store's persistApprovalRequest path for the lock
-      // semantics. For P-12 we expose a thin store extension below;
-      // until that lands we keep the toggle a no-op flag-only operation
-      // and let P-13 wire the actual gate (the runtime side that
-      // auto-resolves approval when autoApprove=true).
-      //
-      // For now we just log + return ok. The state flip belongs in a
-      // typed mutator (P-13 will add `setAutoApprove`); ahead of that,
-      // operators can manually patch the extension or use a flag in
-      // their workflow.
+      // P-13: typed mutator wires the flag through PlanModeStore so
+      // the runtime accept-edits-gate (gates/accept-edits-gate.ts) can
+      // read it via readSnapshot when deciding whether to fire layer-2
+      // hard constraints during post-approval execution.
+      const result = await store.setAutoApprove({
+        sessionKey: sk.sessionKey,
+        enabled,
+      });
+      if (result.kind === "failed") {
+        return err(
+          SESSION_ACTION_ERROR_CODES.STORE_ERROR,
+          `setAutoApprove failed: ${result.error.message}`,
+        );
+      }
       log.info(
-        `[smarter-claw] plan.auto.toggle requested sessionKey=${sk.sessionKey} enabled=${enabled} (no-op pending P-13 mutator)`,
+        `[smarter-claw] plan.auto.toggle sessionKey=${sk.sessionKey} enabled=${enabled} kind=${result.kind}`,
       );
       return {
         ok: true,
-        result: { enabled, note: "autoApprove toggle wiring lands at P-13" },
+        result: { enabled: result.enabled, kind: result.kind },
       };
     },
   };

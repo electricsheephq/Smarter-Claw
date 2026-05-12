@@ -600,6 +600,97 @@ export class PlanModeStore {
   }
 
   /**
+   * Toggle the autoApprove flag on the session's plan-mode state.
+   *
+   * When `autoApprove === true`, the next `exit_plan_mode` will resolve
+   * approval immediately without waiting for user input — the runtime
+   * (P-13 wiring) skips the pending-state intermediate and goes
+   * straight to approved + enqueues the [PLAN_DECISION]: approved
+   * injection on the agent's next turn.
+   *
+   * Idempotent: setting the flag to its current value still writes
+   * (to refresh updatedAt) but emits no audit event (transition is
+   * a no-op).
+   *
+   * @example
+   *   await store.setAutoApprove({ sessionKey, enabled: true });
+   *   // Next exit_plan_mode auto-approves; agent self-executes.
+   *
+   * host_ref: in-host `auto-enable.ts` toggle wiring (PR-10 auto-mode).
+   */
+  async setAutoApprove(input: {
+    sessionKey: string;
+    enabled: boolean;
+  }): Promise<
+    | { kind: "updated"; enabled: boolean; state: PlanModeSessionState }
+    | { kind: "noop"; enabled: boolean }
+    | { kind: "failed"; error: Error }
+  > {
+    const { sessionKey, enabled } = input;
+    try {
+      let outcome:
+        | { kind: "updated"; enabled: boolean; state: PlanModeSessionState }
+        | { kind: "noop"; enabled: boolean };
+      const { transition } = await this.gateway.withLock<{
+        prev: PlanModeSessionState | undefined;
+        next: PlanModeSessionState;
+      }>(sessionKey, async (current) => {
+        // Auto-approve toggle requires a plan-mode payload. Allow
+        // toggling regardless of approval state — operator can pre-set
+        // auto-approve before the next exit_plan_mode cycle.
+        if (!current) {
+          // Lazy-init: create a fresh plan-mode payload in normal
+          // mode with autoApprove set. The next enterPlanMode will
+          // preserve the flag (via spread).
+          const now = Date.now();
+          const next: PlanModeSessionState = {
+            mode: "normal",
+            approval: "none",
+            rejectionCount: 0,
+            updatedAt: now,
+            autoApprove: enabled,
+          };
+          outcome = { kind: "updated", enabled, state: next };
+          return {
+            next: stampSchemaVersion(next) as PlanModeSessionState,
+            transition: { prev: current, next },
+          };
+        }
+        if (current.autoApprove === enabled) {
+          outcome = { kind: "noop", enabled };
+          return { next: null };
+        }
+        const now = Date.now();
+        const next: PlanModeSessionState = {
+          ...current,
+          autoApprove: enabled,
+          updatedAt: now,
+        };
+        outcome = { kind: "updated", enabled, state: next };
+        return {
+          next: stampSchemaVersion(next) as PlanModeSessionState,
+          transition: { prev: current, next },
+        };
+      });
+      if (transition && this.audit) {
+        this.audit({
+          sessionKey,
+          prev: transition.prev,
+          next: transition.next,
+          source: "smarter-claw:PlanModeStore.setAutoApprove",
+        });
+      }
+      return outcome!;
+    } catch (err) {
+      const wrapped = err instanceof Error ? err : new Error(String(err));
+      this.logger?.warn?.(
+        `PlanModeStore.setAutoApprove: failed (sessionKey=${sessionKey}): ${wrapped.message}`,
+      );
+      return { kind: "failed", error: wrapped };
+    }
+  }
+
+  /**
    * Read the current plan-mode state for a session. Returns undefined
    * when no payload exists yet (fresh session, or one that has never
    * touched plan mode).
