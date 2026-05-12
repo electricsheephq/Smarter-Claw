@@ -629,7 +629,7 @@ const DEFAULT_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
 const MAX_ATTACHMENT_FILES = 10;
 let sendMessagePromise;
 async function loadSendMessage() {
-	sendMessagePromise ??= import("./message-C4KecB6y.js").then((module) => module.sendMessage);
+	sendMessagePromise ??= import("./message-5jxTTzxB.js").then((module) => module.sendMessage);
 	return sendMessagePromise;
 }
 let getChannelPluginPromise;
@@ -3069,12 +3069,12 @@ function createPluginRegistry(registryParams) {
 		"settings",
 		"chat-message",
 		"chat-input-bar",
-		"chat-header-chip"
+		"chat-input-toolbar-chip"
 	]);
 	const chatStreamSurfaces = new Set([
 		"chat-message",
 		"chat-input-bar",
-		"chat-header-chip"
+		"chat-input-toolbar-chip"
 	]);
 	const registerSessionExtension = (record, extension) => {
 		const namespace = normalizeHostHookString(extension.namespace);
