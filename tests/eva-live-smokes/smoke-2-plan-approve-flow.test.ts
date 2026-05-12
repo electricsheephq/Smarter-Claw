@@ -90,7 +90,16 @@ describe("Eva live-smoke #2 — full plan-approve-execute (P-8)", () => {
       placement: string;
     };
     expect(inj.sessionKey).toBe(SESSION_KEY);
-    expect(inj.text).toBe("[PLAN_DECISION]: approved");
+    // Surgical-port S5 (2026-05-12): plan.accept now emits the FULL
+    // buildApprovedPlanInjection text (opener + "execute it now"
+    // preamble + numbered step list) to match in-host parity. The
+    // prior bare-opener test was pinning a regression.
+    expect(inj.text).toMatch(/^\[PLAN_DECISION\]: approved\n/);
+    expect(inj.text).toMatch(
+      /The user has approved the following plan\. Execute it now without re-planning\./,
+    );
+    expect(inj.text).toMatch(/1\. Update package\.json/);
+    expect(inj.text).toMatch(/2\. Run pnpm install/);
     expect(inj.idempotencyKey).toBe(
       `smarter-claw:plan_decision:${approvalId}:approved`,
     );

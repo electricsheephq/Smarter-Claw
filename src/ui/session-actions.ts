@@ -43,11 +43,40 @@ import type {
   PluginSessionActionResult,
 } from "openclaw/plugin-sdk/plugin-entry";
 import {
+  buildAcceptEditsPlanInjection,
+  buildApprovedPlanInjection,
+} from "../plan-mode/approval.js";
+import {
   enqueuePlanApprovedInjection,
   enqueuePlanDecisionInjection,
   enqueueQuestionAnswerInjection,
 } from "../runtime/injection-writer.js";
 import type { PlanModeStore } from "../state/store.js";
+import type { PlanStep } from "../types.js";
+
+/**
+ * Format planSteps into the string array consumed by
+ * buildApprovedPlanInjection / buildAcceptEditsPlanInjection. The
+ * in-host builders take `string[]` (each entry is one step) and
+ * emit a numbered list. We project the stored PlanStep[] (which
+ * carries status + activeForm) into that flat-string shape, keeping
+ * status as a parenthetical so the agent retains visibility of
+ * completed/cancelled steps when resuming.
+ *
+ * host_ref: src/agents/plan-mode/approval.ts:187-194 — the in-host's
+ *   `planSteps.map((s, i) => \`${i + 1}. ${s}\`)` rendering.
+ */
+function planStepsToInjectionLines(steps: PlanStep[]): string[] {
+  return steps.map((s) => {
+    // Match in-host's per-step format: "<step> (<status>)" when
+    // status is anything other than the default "pending". Lets
+    // the agent see what's already done when resuming a partial plan.
+    if (s.status === "pending") {
+      return s.step;
+    }
+    return `${s.step} (${s.status})`;
+  });
+}
 
 /**
  * Common error codes returned by `ok: false` results. UI clients can
@@ -219,6 +248,14 @@ export function createPlanModeSessionActions(
       const expectedApprovalId = readStringField(p.value, "approvalId");
       const check = await checkApprovalId(store, sk.sessionKey, expectedApprovalId);
       if (!check.ok) return check.result;
+      // Surgical-port S5 (2026-05-12): read planSteps BEFORE recordApproval
+      // mutates so we can build the full buildApprovedPlanInjection
+      // preamble. The plugin previously emitted only the bare opener
+      // line `[PLAN_DECISION]: approved`, which dropped the
+      // "execute it now without re-planning" guidance + step list
+      // that the in-host injects. Restoring parity here.
+      const snapBefore = await store.readSnapshot(sk.sessionKey);
+      const planSteps = snapBefore?.lastPlanSteps ?? [];
       const persist = await store.recordApproval({
         sessionKey: sk.sessionKey,
         edited: false,
@@ -235,13 +272,23 @@ export function createPlanModeSessionActions(
           `recordApproval skipped: ${persist.reason}`,
         );
       }
+      // Build the full in-host approved-plan injection. Falls back to
+      // the bare opener only when lastPlanSteps is empty (which
+      // shouldn't happen in a real session — exit_plan_mode required
+      // a non-empty plan — but defensive against test paths).
+      const stepLines = planStepsToInjectionLines(planSteps);
+      const fullText =
+        stepLines.length > 0
+          ? buildApprovedPlanInjection(stepLines)
+          : undefined;
       const enqueue = await enqueuePlanApprovedInjection(api, {
         sessionKey: sk.sessionKey,
         approvalId: check.currentApprovalId,
         edited: false,
+        ...(fullText ? { fullText } : {}),
       });
       log.info(
-        `[smarter-claw] plan.accept resolved sessionKey=${sk.sessionKey} approvalId=${check.currentApprovalId} enqueued=${enqueue.enqueued}`,
+        `[smarter-claw] plan.accept resolved sessionKey=${sk.sessionKey} approvalId=${check.currentApprovalId} steps=${stepLines.length} enqueued=${enqueue.enqueued}`,
       );
       return {
         ok: true,
@@ -256,6 +303,22 @@ export function createPlanModeSessionActions(
   };
 
   // ---------- plan.edit ----------
+  // Two semantic variants:
+  //
+  //   (a) Manual inline-edit: `body` field carries the user's edited
+  //       plan text. The agent is instructed to use that body verbatim
+  //       as the approved plan. Used by webchat + sidebar plan-edit UI.
+  //
+  //   (b) Accept-with-edits permission: no `body` field. The user
+  //       clicked the "Accept (edits)" button which grants the AGENT
+  //       acceptEdits permission (≥95%-confidence self-modify). We
+  //       inject the full `buildAcceptEditsPlanInjection(planSteps)`
+  //       preamble, which teaches the agent the acceptEdits contract
+  //       and the 3 hard constraints (no destructive / no self-restart
+  //       / no config changes). Surgical-port S5 (2026-05-12).
+  //
+  // host_ref: src/agents/plan-mode/approval.ts:214-238
+  //   (buildAcceptEditsPlanInjection)
   const editAction: PluginSessionActionRegistration = {
     id: "plan.edit",
     description:
@@ -269,6 +332,8 @@ export function createPlanModeSessionActions(
       const editedBody = readStringField(p.value, "body");
       const check = await checkApprovalId(store, sk.sessionKey, expectedApprovalId);
       if (!check.ok) return check.result;
+      const snapBefore = await store.readSnapshot(sk.sessionKey);
+      const planSteps = snapBefore?.lastPlanSteps ?? [];
       const persist = await store.recordApproval({
         sessionKey: sk.sessionKey,
         edited: true,
@@ -285,14 +350,23 @@ export function createPlanModeSessionActions(
           `recordApproval skipped: ${persist.reason}`,
         );
       }
-      const enqueue = await enqueuePlanApprovedInjection(api, {
+      // Manual inline-edit takes priority — the user typed text and
+      // expects to see THEIR text returned, not the acceptEdits preamble.
+      // No body → acceptEdits permission injection (steps preamble).
+      const stepLines = planStepsToInjectionLines(planSteps);
+      const enqueueOpts: Parameters<typeof enqueuePlanApprovedInjection>[1] = {
         sessionKey: sk.sessionKey,
         approvalId: check.currentApprovalId,
         edited: true,
-        ...(editedBody ? { bodyText: editedBody } : {}),
-      });
+      };
+      if (editedBody) {
+        enqueueOpts.bodyText = editedBody;
+      } else if (stepLines.length > 0) {
+        enqueueOpts.fullText = buildAcceptEditsPlanInjection(stepLines);
+      }
+      const enqueue = await enqueuePlanApprovedInjection(api, enqueueOpts);
       log.info(
-        `[smarter-claw] plan.edit resolved sessionKey=${sk.sessionKey} approvalId=${check.currentApprovalId} enqueued=${enqueue.enqueued}`,
+        `[smarter-claw] plan.edit resolved sessionKey=${sk.sessionKey} approvalId=${check.currentApprovalId} steps=${stepLines.length} editedBody=${editedBody ? "yes" : "no"} enqueued=${enqueue.enqueued}`,
       );
       return {
         ok: true,

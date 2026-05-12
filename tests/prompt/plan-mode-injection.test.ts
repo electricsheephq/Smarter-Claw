@@ -1,56 +1,98 @@
 /**
- * P-7 plan-mode injection tests.
+ * plan-mode injection tests.
  *
  * Covers the system-prompt fragment composition + byte-identity vs
- * in-host inline injection at attempt.ts:702-732.
+ * in-host inline injection at attempt.ts:689-749.
+ *
+ * Surgical-port S5 (2026-05-12): expanded coverage for the full
+ * in-host block including ACTION CONTRACT, Investigation Phase, and
+ * PLAN MODE AVAILABLE branch.
  */
 
 import { describe, expect, it } from "vitest";
 import {
+  buildPlanModeActiveSystemContext,
+  buildPlanModeAvailableSystemContext,
   buildPlanModeSystemContext,
   _testing,
 } from "../../src/prompt/plan-mode-injection.js";
 import { PLAN_ARCHETYPE_PROMPT } from "../../src/prompt/archetype-prompt.js";
 
-describe("P-7 plan-mode injection — shape", () => {
+describe("plan-mode injection (active) — shape", () => {
   it("returns a non-empty string", () => {
-    const s = buildPlanModeSystemContext();
+    const s = buildPlanModeActiveSystemContext();
     expect(typeof s).toBe("string");
     expect(s.length).toBeGreaterThan(100);
   });
 
   it("contains the PLAN MODE ACTIVE header", () => {
-    expect(buildPlanModeSystemContext()).toContain("═══ PLAN MODE ACTIVE ═══");
+    expect(buildPlanModeActiveSystemContext()).toContain("═══ PLAN MODE ACTIVE ═══");
+  });
+
+  it("contains the 'session IS in plan mode RIGHT NOW' preamble (surgical-port S4 fix)", () => {
+    const s = buildPlanModeActiveSystemContext();
+    expect(s).toContain("This session IS in plan mode RIGHT NOW");
+    expect(s).toContain("Every user message in this session is a plan-mode message");
+  });
+
+  it("contains the ACTION CONTRACT block (surgical-port S4 fix)", () => {
+    const s = buildPlanModeActiveSystemContext();
+    expect(s).toContain("ACTION CONTRACT");
+    expect(s).toContain("Briefly acknowledge in one short sentence");
+    expect(s).toContain(
+      'CALL `exit_plan_mode(title="…", summary="…", plan=[...])` IN THE SAME TURN',
+    );
+    expect(s).toContain("Stop after the tool call");
+    expect(s).toContain(
+      "Treat acknowledgement-without-tool-call as a defect, not as 'staying conversational'",
+    );
+  });
+
+  it("contains the Investigation phase block with LOGS heuristic (surgical-port S4 fix)", () => {
+    const s = buildPlanModeActiveSystemContext();
+    expect(s).toContain("Investigation phase (when needed):");
+    expect(s).toContain("Use read-only tools first");
+    expect(s).toContain("For LOGS: start at the END (tail)");
+    expect(s).toContain("`tail -n 100`");
+    expect(s).toContain(
+      "Use `ask_user_question` ONLY for tradeoffs you can't resolve via local investigation",
+    );
   });
 
   it("contains the hard rules block", () => {
-    const s = buildPlanModeSystemContext();
+    const s = buildPlanModeActiveSystemContext();
     expect(s).toContain("Hard rules:");
     expect(s).toContain("Mutating tools (write, edit, exec/bash");
     expect(s).toContain("Do NOT call enter_plan_mode");
   });
 
   it("contains the full archetype prompt", () => {
-    expect(buildPlanModeSystemContext()).toContain(PLAN_ARCHETYPE_PROMPT);
+    expect(buildPlanModeActiveSystemContext()).toContain(PLAN_ARCHETYPE_PROMPT);
   });
 
-  it("ordering: header, hard rules, separator, archetype", () => {
-    const s = buildPlanModeSystemContext();
+  it("ordering: header, preamble, ACTION CONTRACT, Investigation, hard rules, separator, archetype", () => {
+    const s = buildPlanModeActiveSystemContext();
     const headerIdx = s.indexOf("═══ PLAN MODE ACTIVE ═══");
+    const preambleIdx = s.indexOf("This session IS in plan mode RIGHT NOW");
+    const actionIdx = s.indexOf("ACTION CONTRACT");
+    const investigationIdx = s.indexOf("Investigation phase");
     const rulesIdx = s.indexOf("Hard rules:");
     const sepIdx = s.indexOf("═════════════════════════");
     const archetypeIdx = s.indexOf("## Plan Mode — Decision-Complete Plan Standard");
     expect(headerIdx).toBeGreaterThanOrEqual(0);
-    expect(rulesIdx).toBeGreaterThan(headerIdx);
+    expect(preambleIdx).toBeGreaterThan(headerIdx);
+    expect(actionIdx).toBeGreaterThan(preambleIdx);
+    expect(investigationIdx).toBeGreaterThan(actionIdx);
+    expect(rulesIdx).toBeGreaterThan(investigationIdx);
     expect(sepIdx).toBeGreaterThan(rulesIdx);
     expect(archetypeIdx).toBeGreaterThan(sepIdx);
   });
 });
 
-describe("P-7 plan-mode injection — byte stability (cache-bust prevention)", () => {
+describe("plan-mode injection (active) — byte stability (cache-bust prevention)", () => {
   it("two calls produce IDENTICAL bytes (no per-call drift)", () => {
-    const a = buildPlanModeSystemContext();
-    const b = buildPlanModeSystemContext();
+    const a = buildPlanModeActiveSystemContext();
+    const b = buildPlanModeActiveSystemContext();
     expect(a).toBe(b);
     expect(a.length).toBe(b.length);
   });
@@ -76,9 +118,68 @@ describe("P-7 plan-mode injection — byte stability (cache-bust prevention)", (
     expect(lines[4]).toMatch(/After `exit_plan_mode` in this turn: STOP/);
     expect(lines).toHaveLength(5);
   });
+
+  it("ACTION_CONTRACT bytes pin the 3-step contract + defect clause", () => {
+    const text = _testing.PLAN_MODE_ACTION_CONTRACT;
+    expect(text).toMatch(/^ACTION CONTRACT/);
+    expect(text).toContain("1. Briefly acknowledge in one short sentence");
+    expect(text).toContain("2. CALL `exit_plan_mode(");
+    expect(text).toContain("3. Stop after the tool call");
+    expect(text).toContain(
+      "Treat acknowledgement-without-tool-call as a defect",
+    );
+  });
+
+  it("INVESTIGATION_PHASE bytes pin the read-only tools + LOGS heuristic", () => {
+    const text = _testing.PLAN_MODE_INVESTIGATION_PHASE;
+    expect(text).toMatch(/^Investigation phase \(when needed\):/);
+    expect(text).toContain("read, web_search, web_fetch, lcm_grep");
+    expect(text).toContain("start at the END (tail)");
+    expect(text).toContain("`tail -n 100`");
+  });
 });
 
-describe("P-7 plan-mode injection — PLAN_ARCHETYPE_PROMPT byte-parity", () => {
+describe("plan-mode injection (available) — surgical-port S4 fix", () => {
+  it("returns a non-empty string", () => {
+    const s = buildPlanModeAvailableSystemContext();
+    expect(typeof s).toBe("string");
+    expect(s.length).toBeGreaterThan(100);
+  });
+
+  it("contains the PLAN MODE AVAILABLE header (not the ACTIVE header)", () => {
+    const s = buildPlanModeAvailableSystemContext();
+    expect(s).toContain("═══ PLAN MODE AVAILABLE ═══");
+    expect(s).not.toContain("═══ PLAN MODE ACTIVE ═══");
+  });
+
+  it("instructs the agent to call enter_plan_mode when user requests a plan", () => {
+    const s = buildPlanModeAvailableSystemContext();
+    expect(s).toContain("call `enter_plan_mode`");
+    expect(s).toContain("start a fresh planning cycle");
+  });
+
+  it("warns against re-entering plan mode when already executing", () => {
+    const s = buildPlanModeAvailableSystemContext();
+    expect(s).toContain("do NOT re-enter plan mode");
+    expect(s).toContain("just continue executing the work");
+  });
+
+  it("byte-stable across calls (cache-bust prevention)", () => {
+    expect(buildPlanModeAvailableSystemContext()).toBe(
+      buildPlanModeAvailableSystemContext(),
+    );
+  });
+});
+
+describe("plan-mode injection — backward-compat alias", () => {
+  it("buildPlanModeSystemContext() === buildPlanModeActiveSystemContext()", () => {
+    expect(buildPlanModeSystemContext()).toBe(
+      buildPlanModeActiveSystemContext(),
+    );
+  });
+});
+
+describe("plan-mode injection — PLAN_ARCHETYPE_PROMPT byte-parity", () => {
   // Anti-pattern guard: the archetype prompt is the in-host's PR-10
   // fragment. Bytes matter. Pin individual sections so paraphrases
   // are caught.
