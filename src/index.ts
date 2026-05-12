@@ -45,7 +45,12 @@ import { buildPlanModeSystemContext } from "./prompt/plan-mode-injection.js";
 import { InMemoryGateway } from "./state/in-memory-gateway.js";
 import { SessionStoreGateway } from "./state/session-store-gateway.js";
 import { PlanModeStore, type PlanModeStateGateway } from "./state/store.js";
+import {
+  logPlanModeApprovalTransition,
+  logPlanModeDebug,
+} from "./runtime/debug-log.js";
 import { decideEscalatingRetry } from "./runtime/escalating-retry.js";
+import { GrantLedger } from "./runtime/grant-ledger.js";
 import { decidePlanTierModel } from "./runtime/plan-tier-model.js";
 import { createAskUserQuestionTool } from "./tools/ask-user-question.js";
 import { createEnterPlanModeTool } from "./tools/enter-plan-mode.js";
@@ -207,6 +212,11 @@ export default definePluginEntry({
         "[smarter-claw] SMARTER_CLAW_USE_INMEMORY=1 — state NOT persisted across plugin reload. Dev/test only.",
       );
     }
+    // P-14: grant ledger — in-memory correlation of approvalId →
+    // (approvalRunId, sessionKey). Populated on exit_plan_mode persist
+    // path; queried in debug-log emit for correlation enrichment.
+    const grantLedger = new GrantLedger();
+
     const store = new PlanModeStore(
       gateway,
       {
@@ -214,14 +224,50 @@ export default definePluginEntry({
         info: (msg: string) => api.logger.info(`[plan-mode-store] ${msg}`),
       },
       (event) => {
-        // P-4 audit: log structured. P-14 wires the grant ledger +
-        // approvalRunId correlation for debug-log surfacing.
+        // P-4 base audit: human-readable log line for operators.
         api.logger.info(
           `[plan-mode-audit] ${event.source}: ` +
             `${event.prev?.mode ?? "(none)"}/${event.prev?.approval ?? "(none)"} → ` +
             `${event.next.mode}/${event.next.approval} ` +
             `(session=${event.sessionKey})`,
         );
+
+        // P-14: structured debug-log emit. No-op when plan-mode debug
+        // is disabled (env var or pluginConfig.debug).
+        logPlanModeApprovalTransition(
+          api.logger,
+          api.pluginConfig,
+          event.sessionKey,
+          event.prev,
+          event.next,
+          event.source,
+        );
+
+        // P-14: grant-ledger updates on persist-approval transitions
+        // (where approvalId rotates) and pruning on terminal states.
+        if (
+          event.next.approval === "pending" &&
+          event.next.approvalId &&
+          event.next.approvalId !== event.prev?.approvalId
+        ) {
+          grantLedger.record({
+            approvalId: event.next.approvalId,
+            ...(event.next.approvalRunId
+              ? { approvalRunId: event.next.approvalRunId }
+              : {}),
+            sessionKey: event.sessionKey,
+          });
+        }
+        // Prune on terminal states — frees memory after cycle resolves.
+        if (
+          event.prev?.approvalId &&
+          (event.next.approval === "approved" ||
+            event.next.approval === "edited" ||
+            event.next.approval === "rejected")
+        ) {
+          // Note: recordRejection clears approvalId, so we use prev's.
+          grantLedger.prune(event.prev.approvalId);
+        }
       },
     );
 

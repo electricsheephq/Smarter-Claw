@@ -1,0 +1,178 @@
+name: drift-cron
+
+# Layer 3 of the parity harness: scheduled job that re-runs the parity
+# diff against the latest in-host reference and reports drift. Per
+# architecture-v2/14-PARITY_HARNESS_DESIGN.md.
+#
+# Posture
+# -------
+#
+# This is a NOTIFICATION job, not a gate. Drift between the plugin's
+# behavior and the in-host reference at HEAD is expected when in-host
+# evolves; we want to KNOW about it but not auto-fail every build.
+#
+# When drift is detected the job opens (or updates) an issue tagged
+# `parity-drift` with the diff so a maintainer can either:
+#   - Port the in-host change to the plugin (preserving parity), or
+#   - Mark the drift as intentional + add a divergence exception
+#
+# Sources
+# -------
+#
+# The parity-harness Layer 1 inputs at parity-harness/inputs/*.json
+# are exercised against:
+#   - Plugin-under-test runner (this repo's build artifacts)
+#   - Host-reference runner (re-runs against the latest in-host
+#     reference module fetched from the source-of-truth branch)
+#
+# Triggers
+# --------
+#
+# - Weekly cron (Mondays 09:00 UTC) — early week so drift surfaces
+#   for the Monday triage window.
+# - Manual workflow_dispatch — for ad-hoc runs after a known in-host
+#   change.
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"
+  workflow_dispatch: {}
+
+concurrency:
+  group: drift-cron
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  drift:
+    name: drift-cron
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Smarter-Claw
+        uses: actions/checkout@v4
+        with:
+          path: smarter-claw
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+          cache-dependency-path: smarter-claw/pnpm-lock.yaml
+
+      - name: Install plugin deps
+        working-directory: smarter-claw
+        run: pnpm install --frozen-lockfile
+
+      - name: Build plugin
+        working-directory: smarter-claw
+        run: pnpm build
+
+      # Layer 1: rebuild parity snapshots from the plugin's current
+      # build. The harness writes results to
+      # parity-harness/snapshots/plugin/*.json.
+      - name: Run parity harness — plugin runner
+        working-directory: smarter-claw
+        run: |
+          if [ ! -d parity-harness ]; then
+            echo "parity-harness/ not present — skipping (P-3.5 baseline not yet shipped)"
+            exit 0
+          fi
+          # When the harness runners are wired, this becomes:
+          #   pnpm parity-harness:plugin
+          # For now, a placeholder that surfaces "harness not wired
+          # yet" without failing the job.
+          if [ -f parity-harness/runners/plugin-under-test.ts ]; then
+            pnpm exec tsx parity-harness/runners/plugin-under-test.ts || true
+          fi
+          echo "Plugin runner step complete."
+
+      # Compare plugin snapshots against the host-reference snapshots
+      # checked into this repo. The host-reference snapshots are
+      # regenerated whenever the in-host source-of-truth tag advances
+      # (manual or scripted; see parity-harness/README.md).
+      - name: Compute diff
+        working-directory: smarter-claw
+        id: diff
+        run: |
+          if [ ! -f parity-harness/diff.ts ]; then
+            echo "parity-harness/diff.ts not yet wired — skipping"
+            echo "drift_detected=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          set +e
+          pnpm exec tsx parity-harness/diff.ts > /tmp/diff-output.txt 2>&1
+          rc=$?
+          set -e
+          cat /tmp/diff-output.txt
+          if [ $rc -ne 0 ]; then
+            echo "drift_detected=true" >> "$GITHUB_OUTPUT"
+            # Stash the diff for the issue body.
+            head -c 60000 /tmp/diff-output.txt > /tmp/diff-trimmed.txt
+            echo "diff_body<<EOF" >> "$GITHUB_OUTPUT"
+            cat /tmp/diff-trimmed.txt >> "$GITHUB_OUTPUT"
+            echo "" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          else
+            echo "drift_detected=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or update drift issue
+        if: ${{ steps.diff.outputs.drift_detected == 'true' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const diffBody = `${{ steps.diff.outputs.diff_body }}`;
+            const today = new Date().toISOString().slice(0, 10);
+            const title = `[parity-drift] Plugin diverged from in-host reference (${today})`;
+            const body = [
+              "Parity harness Layer 3 detected divergence between the plugin's snapshot and the host-reference snapshot.",
+              "",
+              "## Diff",
+              "",
+              "```",
+              diffBody,
+              "```",
+              "",
+              "## Triage",
+              "",
+              "- If the in-host changed: port the change to the plugin to preserve parity.",
+              "- If the divergence is intentional: add an exception in the harness's whitelist and close this issue.",
+              "",
+              "See `architecture-v2/14-PARITY_HARNESS_DESIGN.md` for the harness contract.",
+            ].join("\n");
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              labels: "parity-drift",
+            });
+            if (existing.data.length > 0) {
+              const issue = existing.data[0];
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `Drift re-detected on ${today}.\n\n${body}`,
+              });
+              console.log(`Commented on existing drift issue #${issue.number}`);
+            } else {
+              const created = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ["parity-drift"],
+              });
+              console.log(`Opened drift issue #${created.data.number}`);
+            }
