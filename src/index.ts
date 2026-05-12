@@ -36,10 +36,12 @@
 
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
+import { checkMutationGate } from "./gates/mutation-gate.js";
 import { InMemoryGateway } from "./state/in-memory-gateway.js";
 import { PlanModeStore } from "./state/store.js";
 import { createEnterPlanModeTool } from "./tools/enter-plan-mode.js";
 import { createExitPlanModeTool } from "./tools/exit-plan-mode.js";
+import type { PlanMode } from "./types.js";
 
 export const SMARTER_CLAW_PLUGIN_ID = "smarter-claw";
 export const PLAN_MODE_SESSION_EXTENSION_NAMESPACE = "plan-mode";
@@ -182,6 +184,68 @@ export default definePluginEntry({
     });
     api.registerTool(createExitPlanModeTool({ store }), {
       name: "exit_plan_mode",
+    });
+
+    // P-5: mutation gate (`before_tool_call` hook). Blocks mutating
+    // tools when planMode === "plan". Algorithm is byte-identical to
+    // the in-host gate at `src/agents/plan-mode/mutation-gate.ts`
+    // (commit ea04ea52c7).
+    //
+    // Resolution path for the current plan-mode state:
+    //
+    //   1. ctx.getSessionExtension("plan-mode") — host's projection
+    //      cache. Works once P-6 wires real persistence (the gateway
+    //      then routes writes through `api.session.state.patchPluginSessionExtension`
+    //      or whatever the canonical write seam ends up being).
+    //   2. Fall back to the plugin's own PlanModeStore — works TODAY
+    //      with the in-memory gateway. Same state until P-6.
+    //
+    // P-5 ships with the fallback so the gate actually fires during
+    // Eva live-smoke #1. P-6 makes the host projection authoritative
+    // and the fallback becomes a defense-in-depth path.
+    //
+    // `before_tool_call` does NOT require `allowConversationAccess`
+    // (it operates on tool-name + params, not raw conversation
+    // content). Confirmed at hook-types.d.ts; conversation-access
+    // gating applies only to before_model_resolve, before_agent_run,
+    // llm_input, llm_output, before_agent_reply, before_agent_finalize,
+    // agent_end.
+    api.on("before_tool_call", async (event, ctx) => {
+      const ns = PLAN_MODE_SESSION_EXTENSION_NAMESPACE;
+      // 1. Host projection.
+      const fromHost = ctx.getSessionExtension?.(ns) as
+        | { mode?: PlanMode }
+        | undefined
+        | null;
+      // 2. Plugin's own store (authoritative until P-6).
+      let mode: PlanMode = "normal";
+      if (fromHost?.mode) {
+        mode = fromHost.mode;
+      } else if (ctx.sessionKey) {
+        const snap = await store.readSnapshot(ctx.sessionKey);
+        if (snap?.mode) mode = snap.mode;
+      }
+      // Fast path: not in plan mode → no gate check.
+      if (mode !== "plan") return undefined;
+
+      // Extract exec command for bash/exec checks. Look at common
+      // param names; in-host uses `command` for both bash + exec.
+      const params = event.params ?? {};
+      const command =
+        typeof params.command === "string"
+          ? params.command
+          : typeof params.cmd === "string"
+            ? params.cmd
+            : undefined;
+
+      const result = checkMutationGate(event.toolName, mode, command);
+      if (result.blocked) {
+        api.logger.info(
+          `[smarter-claw] mutation gate blocked tool="${event.toolName}" sessionKey="${ctx.sessionKey ?? "?"}" — ${result.reason}`,
+        );
+        return { block: true, blockReason: result.reason };
+      }
+      return undefined;
     });
 
     // P-1 degraded-state warning. Logs on every new session start so
