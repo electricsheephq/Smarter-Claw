@@ -532,3 +532,351 @@ describe("P-3 PlanModeStore — readSnapshot", () => {
     expect(gw.writeCount).toBe(0);
   });
 });
+
+describe("P-11 PlanModeStore.recordRejection — happy path", () => {
+  let gw: InMemoryGateway;
+  let store: PlanModeStore;
+  let audit: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    gw = new InMemoryGateway();
+    audit = vi.fn();
+    store = new PlanModeStore(gw, undefined, audit);
+    gw.seed(
+      SESSION_KEY,
+      planModeSession({
+        mode: "plan",
+        approval: "pending",
+        approvalId: APPROVAL_ID,
+        title: "Bump deps",
+        rejectionCount: 0,
+      }),
+    );
+  });
+
+  it("transitions approval → rejected on a pending plan", async () => {
+    const r = await store.recordRejection({ sessionKey: SESSION_KEY });
+    expect(r.kind).toBe("recorded");
+    if (r.kind === "recorded") {
+      expect(r.state.approval).toBe("rejected");
+    }
+    expect(gw.peek(SESSION_KEY)?.approval).toBe("rejected");
+  });
+
+  it("increments rejectionCount by 1", async () => {
+    const r = await store.recordRejection({ sessionKey: SESSION_KEY });
+    expect(r.kind).toBe("recorded");
+    if (r.kind === "recorded") {
+      expect(r.rejectionCount).toBe(1);
+    }
+    expect(gw.peek(SESSION_KEY)?.rejectionCount).toBe(1);
+  });
+
+  it("increments rejectionCount across multiple rejection cycles", async () => {
+    // Cycle 1: reject
+    await store.recordRejection({ sessionKey: SESSION_KEY });
+    // The state is now rejected with rejectionCount=1; agent revises;
+    // sessions-patch sets it back to pending on the next exit_plan_mode.
+    // Simulate that path for the test by seeding to pending again.
+    gw.seed(
+      SESSION_KEY,
+      planModeSession({
+        mode: "plan",
+        approval: "pending",
+        approvalId: APPROVAL_ID,
+        rejectionCount: 1, // carried over
+      }),
+    );
+    const r2 = await store.recordRejection({ sessionKey: SESSION_KEY });
+    expect(r2.kind).toBe("recorded");
+    if (r2.kind === "recorded") {
+      expect(r2.rejectionCount).toBe(2);
+    }
+  });
+
+  it("stores feedback on the state when provided", async () => {
+    await store.recordRejection({
+      sessionKey: SESSION_KEY,
+      feedback: "step 2 is wrong",
+    });
+    expect(gw.peek(SESSION_KEY)?.feedback).toBe("step 2 is wrong");
+  });
+
+  it("does NOT set feedback when omitted (preserves prior state's feedback)", async () => {
+    gw.seed(
+      SESSION_KEY,
+      planModeSession({
+        mode: "plan",
+        approval: "pending",
+        approvalId: APPROVAL_ID,
+        feedback: "older feedback",
+      }),
+    );
+    await store.recordRejection({ sessionKey: SESSION_KEY });
+    // No feedback provided → prior feedback survives (spread preserves).
+    expect(gw.peek(SESSION_KEY)?.feedback).toBe("older feedback");
+  });
+
+  it("clears approvalId on rejection (current cycle resolved)", async () => {
+    await store.recordRejection({ sessionKey: SESSION_KEY });
+    expect(gw.peek(SESSION_KEY)?.approvalId).toBeUndefined();
+  });
+
+  it("preserves mode === plan (agent stays in plan mode to revise)", async () => {
+    await store.recordRejection({ sessionKey: SESSION_KEY });
+    expect(gw.peek(SESSION_KEY)?.mode).toBe("plan");
+  });
+
+  it("emits audit event on the recorded path", async () => {
+    await store.recordRejection({
+      sessionKey: SESSION_KEY,
+      feedback: "fb",
+    });
+    expect(audit).toHaveBeenCalledTimes(1);
+    const call = audit.mock.calls[0][0];
+    expect(call.sessionKey).toBe(SESSION_KEY);
+    expect(call.prev?.approval).toBe("pending");
+    expect(call.next.approval).toBe("rejected");
+    expect(call.source).toContain("recordRejection");
+  });
+
+  it("stamps __schemaVersion on the write", async () => {
+    await store.recordRejection({ sessionKey: SESSION_KEY });
+    const state = gw.peek(SESSION_KEY) as PlanModeSessionState & {
+      __schemaVersion?: number;
+    };
+    expect(state.__schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+  });
+});
+
+describe("P-11 PlanModeStore.recordRejection — skip paths", () => {
+  let gw: InMemoryGateway;
+  let store: PlanModeStore;
+  let audit: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    gw = new InMemoryGateway();
+    audit = vi.fn();
+    store = new PlanModeStore(gw, undefined, audit);
+  });
+
+  it("skips with not-plan-mode when session has no plan-mode payload", async () => {
+    const r = await store.recordRejection({ sessionKey: SESSION_KEY });
+    expect(r.kind).toBe("skipped");
+    if (r.kind === "skipped") expect(r.reason).toBe("not-plan-mode");
+    expect(gw.writeCount).toBe(0);
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it("skips with not-plan-mode when session is in normal mode", async () => {
+    gw.seed(SESSION_KEY, planModeSession({ mode: "normal" }));
+    const r = await store.recordRejection({ sessionKey: SESSION_KEY });
+    expect(r.kind).toBe("skipped");
+    if (r.kind === "skipped") expect(r.reason).toBe("not-plan-mode");
+    expect(gw.writeCount).toBe(0);
+  });
+
+  it("skips with no-pending-approval when approval is 'none'", async () => {
+    gw.seed(SESSION_KEY, planModeSession({ mode: "plan", approval: "none" }));
+    const r = await store.recordRejection({ sessionKey: SESSION_KEY });
+    expect(r.kind).toBe("skipped");
+    if (r.kind === "skipped") expect(r.reason).toBe("no-pending-approval");
+    expect(gw.writeCount).toBe(0);
+  });
+
+  it("skips with no-pending-approval when approval is already 'rejected'", async () => {
+    gw.seed(
+      SESSION_KEY,
+      planModeSession({ mode: "plan", approval: "rejected" }),
+    );
+    const r = await store.recordRejection({ sessionKey: SESSION_KEY });
+    expect(r.kind).toBe("skipped");
+    expect(gw.writeCount).toBe(0);
+  });
+
+  it("skips with no-pending-approval when approval is 'approved'", async () => {
+    gw.seed(
+      SESSION_KEY,
+      planModeSession({ mode: "plan", approval: "approved" }),
+    );
+    const r = await store.recordRejection({ sessionKey: SESSION_KEY });
+    expect(r.kind).toBe("skipped");
+    expect(gw.writeCount).toBe(0);
+  });
+});
+
+describe("P-11 PlanModeStore.recordRejection — IO-error fail-soft", () => {
+  it("returns kind:'failed' when gateway throws (never throws)", async () => {
+    const brokenGw = {
+      withLock: vi.fn(async () => {
+        throw new Error("simulated disk failure");
+      }),
+    };
+    const log = { warn: vi.fn() };
+    const store = new PlanModeStore(brokenGw as never, log as never);
+    const r = await store.recordRejection({ sessionKey: SESSION_KEY });
+    expect(r.kind).toBe("failed");
+    if (r.kind === "failed") {
+      expect(r.error.message).toBe("simulated disk failure");
+    }
+    expect(log.warn).toHaveBeenCalled();
+  });
+});
+
+describe("P-11 PlanModeStore.recordApproval — happy path", () => {
+  let gw: InMemoryGateway;
+  let store: PlanModeStore;
+  let audit: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    gw = new InMemoryGateway();
+    audit = vi.fn();
+    store = new PlanModeStore(gw, undefined, audit);
+    gw.seed(
+      SESSION_KEY,
+      planModeSession({
+        mode: "plan",
+        approval: "pending",
+        approvalId: APPROVAL_ID,
+        title: "Bump deps",
+      }),
+    );
+  });
+
+  it("transitions approval → approved by default (edited omitted)", async () => {
+    const r = await store.recordApproval({ sessionKey: SESSION_KEY });
+    expect(r.kind).toBe("recorded");
+    if (r.kind === "recorded") {
+      expect(r.approval).toBe("approved");
+      expect(r.state.approval).toBe("approved");
+    }
+    expect(gw.peek(SESSION_KEY)?.approval).toBe("approved");
+  });
+
+  it("transitions approval → approved when edited is explicitly false", async () => {
+    const r = await store.recordApproval({
+      sessionKey: SESSION_KEY,
+      edited: false,
+    });
+    expect(r.kind).toBe("recorded");
+    if (r.kind === "recorded") expect(r.approval).toBe("approved");
+  });
+
+  it("transitions approval → edited when edited=true", async () => {
+    const r = await store.recordApproval({
+      sessionKey: SESSION_KEY,
+      edited: true,
+    });
+    expect(r.kind).toBe("recorded");
+    if (r.kind === "recorded") {
+      expect(r.approval).toBe("edited");
+      expect(r.state.approval).toBe("edited");
+    }
+    expect(gw.peek(SESSION_KEY)?.approval).toBe("edited");
+  });
+
+  it("sets confirmedAt timestamp on the write", async () => {
+    const before = Date.now();
+    await store.recordApproval({ sessionKey: SESSION_KEY });
+    const after = Date.now();
+    const confirmedAt = gw.peek(SESSION_KEY)?.confirmedAt;
+    expect(confirmedAt).toBeGreaterThanOrEqual(before);
+    expect(confirmedAt).toBeLessThanOrEqual(after);
+  });
+
+  it("preserves approvalId across the write (UI binding stays valid)", async () => {
+    await store.recordApproval({ sessionKey: SESSION_KEY });
+    expect(gw.peek(SESSION_KEY)?.approvalId).toBe(APPROVAL_ID);
+  });
+
+  it("preserves mode === plan (runtime processes injection before exiting)", async () => {
+    await store.recordApproval({ sessionKey: SESSION_KEY });
+    expect(gw.peek(SESSION_KEY)?.mode).toBe("plan");
+  });
+
+  it("emits audit event on the recorded path", async () => {
+    await store.recordApproval({ sessionKey: SESSION_KEY });
+    expect(audit).toHaveBeenCalledTimes(1);
+    const call = audit.mock.calls[0][0];
+    expect(call.sessionKey).toBe(SESSION_KEY);
+    expect(call.prev?.approval).toBe("pending");
+    expect(call.next.approval).toBe("approved");
+    expect(call.source).toContain("recordApproval");
+  });
+
+  it("stamps __schemaVersion on the write", async () => {
+    await store.recordApproval({ sessionKey: SESSION_KEY });
+    const state = gw.peek(SESSION_KEY) as PlanModeSessionState & {
+      __schemaVersion?: number;
+    };
+    expect(state.__schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+  });
+});
+
+describe("P-11 PlanModeStore.recordApproval — skip paths", () => {
+  let gw: InMemoryGateway;
+  let store: PlanModeStore;
+
+  beforeEach(() => {
+    gw = new InMemoryGateway();
+    store = new PlanModeStore(gw);
+  });
+
+  it("skips with not-plan-mode when session has no plan-mode payload", async () => {
+    const r = await store.recordApproval({ sessionKey: SESSION_KEY });
+    expect(r.kind).toBe("skipped");
+    if (r.kind === "skipped") expect(r.reason).toBe("not-plan-mode");
+    expect(gw.writeCount).toBe(0);
+  });
+
+  it("skips with not-plan-mode when session is in normal mode", async () => {
+    gw.seed(SESSION_KEY, planModeSession({ mode: "normal" }));
+    const r = await store.recordApproval({ sessionKey: SESSION_KEY });
+    expect(r.kind).toBe("skipped");
+    if (r.kind === "skipped") expect(r.reason).toBe("not-plan-mode");
+  });
+
+  it("skips with no-pending-approval when approval is 'none'", async () => {
+    gw.seed(SESSION_KEY, planModeSession({ mode: "plan", approval: "none" }));
+    const r = await store.recordApproval({ sessionKey: SESSION_KEY });
+    expect(r.kind).toBe("skipped");
+    if (r.kind === "skipped") expect(r.reason).toBe("no-pending-approval");
+  });
+
+  it("skips when approval is already 'approved' (idempotent on double-approve)", async () => {
+    gw.seed(
+      SESSION_KEY,
+      planModeSession({ mode: "plan", approval: "approved" }),
+    );
+    const r = await store.recordApproval({ sessionKey: SESSION_KEY });
+    expect(r.kind).toBe("skipped");
+    expect(gw.writeCount).toBe(0);
+  });
+
+  it("skips when approval is 'rejected' (revise-and-resubmit flow, not approve)", async () => {
+    gw.seed(
+      SESSION_KEY,
+      planModeSession({ mode: "plan", approval: "rejected" }),
+    );
+    const r = await store.recordApproval({ sessionKey: SESSION_KEY });
+    expect(r.kind).toBe("skipped");
+  });
+});
+
+describe("P-11 PlanModeStore.recordApproval — IO-error fail-soft", () => {
+  it("returns kind:'failed' when gateway throws (never throws)", async () => {
+    const brokenGw = {
+      withLock: vi.fn(async () => {
+        throw new Error("simulated disk failure");
+      }),
+    };
+    const log = { warn: vi.fn() };
+    const store = new PlanModeStore(brokenGw as never, log as never);
+    const r = await store.recordApproval({ sessionKey: SESSION_KEY });
+    expect(r.kind).toBe("failed");
+    if (r.kind === "failed") {
+      expect(r.error.message).toBe("simulated disk failure");
+    }
+    expect(log.warn).toHaveBeenCalled();
+  });
+});
