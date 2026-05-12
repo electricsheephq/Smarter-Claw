@@ -114,6 +114,8 @@ ClawHub publication is deferred to v1.0.
 
 ## Earlier port versions
 
-The pre-v1 attempt at `0.2.0-dev` is preserved in `legacy/` for
-reference; **do not install it**. It predates the SDK seams that
-landed in `openclaw@2026.5.10-beta.5` and won't work.
+The pre-v1 `0.2.0-dev` attempt has been removed from `main` as of PR #80
+(2026-05-12). It predated the SDK seams that landed in
+`openclaw@2026.5.10-beta.5` and would not work against the current host.
+Anyone needing the legacy code can recover it from git history before
+commit `47f3b73`.

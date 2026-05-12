@@ -46,5 +46,6 @@ logs/
 pnpm-debug.log*
 .claude/
 
-# Audit work products (temporary artifacts from in-session audits)
-AUDIT-*.md
+# Audit work products from in-session audits (ROOT-LEVEL only — durable
+# audits live under docs/audits/ and ARE tracked).
+/AUDIT-*.md
