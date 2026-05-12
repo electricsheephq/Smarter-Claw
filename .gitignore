@@ -1,6 +1,12 @@
-# Dependency directories
+# Dependency directories (match both directories AND the LEXAR
+# symlink we use to offload heavy installs off the root volume).
+node_modules
 node_modules/
 .pnpm-store/
+
+# Per-machine pnpm overrides (e.g. LEXAR store-dir on Eva's machine).
+# See .npmrc for the template.
+.npmrc.local
 
 # Build output
 dist/
@@ -39,3 +45,6 @@ logs/
 # pnpm
 pnpm-debug.log*
 .claude/
+
+# Audit work products (temporary artifacts from in-session audits)
+AUDIT-*.md

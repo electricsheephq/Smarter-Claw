@@ -23,11 +23,12 @@
     "allowSyntheticDefaultImports": true,
     "verbatimModuleSyntax": false
   },
-  "include": ["./*.ts", "./src/**/*.ts"],
+  "include": ["./src/**/*.ts"],
   "exclude": [
     "./dist/**",
     "./node_modules/**",
-    "./**/*.test.ts",
-    "./tests/**"
+    "./legacy/**",
+    "./tests/**",
+    "./**/*.test.ts"
   ]
 }

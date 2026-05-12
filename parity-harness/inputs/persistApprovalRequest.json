@@ -1,0 +1,172 @@
+[
+  {
+    "id": "fresh-persist-no-snapshot",
+    "description": "Brand-new approval, no prior state. Persist path; ALL race-fix fields absent.",
+    "state_before": {
+      "mode": "plan",
+      "approval": "none",
+      "rejectionCount": 0,
+      "enteredAt": 1700000000000
+    },
+    "input": {
+      "sessionKey": "agent:main:main",
+      "approvalId": "plan-00000000-0000-4000-8000-000000000001"
+    }
+  },
+  {
+    "id": "fresh-persist-full-race-fix-bundle",
+    "description": "Brand-new approval with ALL FOUR race-fix fields. Validates Invariant 1 sync bundle write.",
+    "state_before": {
+      "mode": "plan",
+      "approval": "none",
+      "rejectionCount": 0,
+      "enteredAt": 1700000000000
+    },
+    "input": {
+      "sessionKey": "agent:main:main",
+      "approvalId": "plan-00000000-0000-4000-8000-000000000002",
+      "title": "Bump deps",
+      "payloadHash": "9f1b2a4c5e7d",
+      "lastPlanSteps": [
+        { "step": "Bump eslint", "status": "pending" },
+        { "step": "Bump prettier", "status": "pending" }
+      ]
+    }
+  },
+  {
+    "id": "skip-not-in-plan-mode",
+    "description": "Invariant 2: session is in mode=normal. Persist must be skipped, no write, no audit.",
+    "state_before": {
+      "mode": "normal",
+      "approval": "none",
+      "rejectionCount": 0
+    },
+    "input": {
+      "sessionKey": "agent:main:main",
+      "approvalId": "plan-00000000-0000-4000-8000-000000000003"
+    }
+  },
+  {
+    "id": "skip-no-prior-state",
+    "description": "Invariant 2: session has no plan-mode payload yet. Persist must be skipped.",
+    "state_before": null,
+    "input": {
+      "sessionKey": "agent:main:main",
+      "approvalId": "plan-00000000-0000-4000-8000-000000000004"
+    }
+  },
+  {
+    "id": "reuse-all-four-conditions-match",
+    "description": "Invariants 3+7+9: idempotency reuse. hash matches, still pending, has approvalId, length > 0. Existing approvalId returned, no write, NO audit.",
+    "state_before": {
+      "mode": "plan",
+      "approval": "pending",
+      "rejectionCount": 0,
+      "approvalId": "plan-aaaaaaaa-bbbb-4ccc-9ddd-eeeeeeeeeeee",
+      "lastPlanPayloadHash": "matched-hash"
+    },
+    "input": {
+      "sessionKey": "agent:main:main",
+      "approvalId": "plan-99999999-9999-4999-9999-999999999999",
+      "payloadHash": "matched-hash"
+    }
+  },
+  {
+    "id": "rotate-payload-hash-mismatch",
+    "description": "Invariants 3+7: payloadHash differs from persisted. ROTATE path — candidate becomes new approvalId, audit fires.",
+    "state_before": {
+      "mode": "plan",
+      "approval": "pending",
+      "rejectionCount": 0,
+      "approvalId": "plan-aaaaaaaa-bbbb-4ccc-9ddd-eeeeeeeeeeee",
+      "lastPlanPayloadHash": "OLD-hash"
+    },
+    "input": {
+      "sessionKey": "agent:main:main",
+      "approvalId": "plan-bbbbbbbb-cccc-4ddd-9eee-ffffffffffff",
+      "payloadHash": "NEW-hash"
+    }
+  },
+  {
+    "id": "rotate-not-pending",
+    "description": "Invariants 3+7: persisted approval is approved (terminal). ROTATE — agent revising should mint fresh.",
+    "state_before": {
+      "mode": "plan",
+      "approval": "approved",
+      "rejectionCount": 0,
+      "approvalId": "plan-aaaaaaaa-bbbb-4ccc-9ddd-eeeeeeeeeeee",
+      "lastPlanPayloadHash": "matched"
+    },
+    "input": {
+      "sessionKey": "agent:main:main",
+      "approvalId": "plan-bbbbbbbb-cccc-4ddd-9eee-ffffffffffff",
+      "payloadHash": "matched"
+    }
+  },
+  {
+    "id": "rotate-rejected-state",
+    "description": "Invariants 3+7: persisted state is rejected (agent retrying after user reject). ROTATE.",
+    "state_before": {
+      "mode": "plan",
+      "approval": "rejected",
+      "rejectionCount": 1,
+      "approvalId": "plan-aaaaaaaa-bbbb-4ccc-9ddd-eeeeeeeeeeee",
+      "lastPlanPayloadHash": "matched",
+      "feedback": "combine steps 2 and 3"
+    },
+    "input": {
+      "sessionKey": "agent:main:main",
+      "approvalId": "plan-bbbbbbbb-cccc-4ddd-9eee-ffffffffffff",
+      "payloadHash": "matched"
+    }
+  },
+  {
+    "id": "rotate-missing-persisted-approvalId",
+    "description": "Invariants 3+7: persisted approvalId is undefined. ROTATE.",
+    "state_before": {
+      "mode": "plan",
+      "approval": "pending",
+      "rejectionCount": 0,
+      "lastPlanPayloadHash": "matched"
+    },
+    "input": {
+      "sessionKey": "agent:main:main",
+      "approvalId": "plan-bbbbbbbb-cccc-4ddd-9eee-ffffffffffff",
+      "payloadHash": "matched"
+    }
+  },
+  {
+    "id": "rotate-empty-persisted-approvalId",
+    "description": "Invariants 3+7: persisted approvalId is empty string (length 0). ROTATE.",
+    "state_before": {
+      "mode": "plan",
+      "approval": "pending",
+      "rejectionCount": 0,
+      "approvalId": "",
+      "lastPlanPayloadHash": "matched"
+    },
+    "input": {
+      "sessionKey": "agent:main:main",
+      "approvalId": "plan-bbbbbbbb-cccc-4ddd-9eee-ffffffffffff",
+      "payloadHash": "matched"
+    }
+  },
+  {
+    "id": "rotate-with-feedback-preserved",
+    "description": "Persist path preserves prior state's feedback + rejectionCount (Invariant 1 spread).",
+    "state_before": {
+      "mode": "plan",
+      "approval": "rejected",
+      "rejectionCount": 2,
+      "approvalId": "plan-aaaaaaaa-bbbb-4ccc-9ddd-eeeeeeeeeeee",
+      "feedback": "user said simplify"
+    },
+    "input": {
+      "sessionKey": "agent:main:main",
+      "approvalId": "plan-cccccccc-dddd-4eee-9fff-000000000000",
+      "title": "Simplified plan",
+      "payloadHash": "new-hash",
+      "lastPlanSteps": [{ "step": "do less", "status": "pending" }]
+    }
+  }
+]
