@@ -1,7 +1,8 @@
 /**
  * `enter_plan_mode` agent tool.
  *
- * host_ref: src/agents/tools/enter-plan-mode-tool.ts (in-host source-of-truth)
+ * host_ref: src/agents/tools/enter-plan-mode-tool.ts (in-host source-of-truth
+ *           at commit ea04ea52c7).
  *
  * # What this does
  *
@@ -21,16 +22,27 @@
  *
  * # Output contract
  *
- * The text content explicitly tells the model that entering plan mode
- * is step 1 of 2, and that exit_plan_mode (with a real plan body) is
- * the next required action. Without this nudge, models commonly
- * respond with "I'm opening a fresh plan cycle" and HALT, leaving the
- * session in plan mode with no plan proposed.
+ * Description + TOOL_OUTPUT_TEXT are byte-identical to in-host
+ * (`src/agents/tool-description-presets.ts:98-117` + the tool's
+ * inline TOOL_OUTPUT_TEXT at `enter-plan-mode-tool.ts:61-66`). The
+ * text explicitly tells the model that entering plan mode is step
+ * 1 of 2 and that `exit_plan_mode` (with a real plan body) is the
+ * next required action. Without this nudge, models commonly respond
+ * with "I'm opening a fresh plan cycle" and HALT, leaving the session
+ * in plan mode with no plan proposed.
  *
- * host_ref output prose: src/agents/tools/enter-plan-mode-tool.ts:62-68
+ * Surgical-port rationale (2026-05-12): Wave-1 audit slice S1 found
+ * the prior plugin description was a short paraphrase missing the
+ * TOOL LIFECYCLE (4-state machine) and reference-card pointer.
+ * Re-porting the full string verbatim from
+ * tool-description-presets.ts closes the parity drift.
  */
 
 import { Type } from "typebox";
+import {
+  describeEnterPlanModeTool,
+  ENTER_PLAN_MODE_TOOL_DISPLAY_SUMMARY,
+} from "../plan-mode/tool-descriptions.js";
 import { PlanModeStore } from "../state/store.js";
 import { readStringParam } from "./common.js";
 
@@ -56,16 +68,21 @@ const SCHEMA = Type.Object(
       }),
     ),
   },
+  // Copilot review #68939 (2026-04-19): forbid additional properties
+  // for consistency with `plan_mode_status` and the post-third-wave
+  // schema-hardening direction.
   { additionalProperties: false },
 );
 
-const TOOL_DESCRIPTION =
-  "Enter plan mode. While active, mutating tools (Edit, Write, Bash, " +
-  "NotebookEdit) are blocked; the agent must propose a plan via " +
-  "`exit_plan_mode` and get user approval before mutations resume. " +
-  "Use this for multi-file refactors, design decisions with multiple " +
-  "options, or any change the user should review before execution.";
-
+// Byte-identical to in-host enter-plan-mode-tool.ts:61-66. The 4
+// clauses each address a specific live-test failure mode:
+//  1. "Plan mode is now active." — confirms the transition landed
+//  2. "Next required step: ..." — names exit_plan_mode as the
+//     mandatory follow-up; lists allowed read-only tools so the model
+//     knows what IS still callable
+//  3. "Do NOT stop after this tool call" — anti-halt nudge
+//  4. "Do NOT respond with the plan as chat text" — channels the
+//     output into the approval-card-producing tool, not the chat stream
 const TOOL_OUTPUT_TEXT = [
   "Plan mode is now active.",
   "Next required step: investigate read-only if needed (read, web_search, web_fetch), then call `exit_plan_mode` with the proposed plan.",
@@ -73,14 +90,6 @@ const TOOL_OUTPUT_TEXT = [
   "Do NOT respond with the plan as chat text — it must go through `exit_plan_mode` so the user gets Approve/Reject buttons.",
 ].join(" ");
 
-/**
- * Tool factory. Pass into `api.registerTool` in the plugin entry.
- *
- * The factory shape matches `OpenClawPluginToolFactory` — a function
- * that takes a per-call tool context and returns an AnyAgentTool. We
- * receive the store + sessionKey resolver via closure here so each
- * per-call invocation uses the right session.
- */
 /**
  * Tool factory matching the SDK's OpenClawPluginToolFactory signature.
  * Pass into `api.registerTool` in the plugin entry. The SDK invokes
@@ -91,7 +100,11 @@ export function createEnterPlanModeTool(opts: CreateEnterPlanModeToolInput) {
   return (ctx: ToolContext) => ({
     label: "Enter Plan Mode",
     name: "enter_plan_mode",
-    description: TOOL_DESCRIPTION,
+    // displaySummary is not a recognized field on the plugin SDK's
+    // tool factory shape (only `label` + `description` are surfaced),
+    // so we export it as a constant for completeness/parity but do
+    // NOT pass it on the returned tool object.
+    description: describeEnterPlanModeTool(),
     parameters: SCHEMA,
     execute: async (
       _toolCallId: string,
@@ -149,3 +162,7 @@ export function createEnterPlanModeTool(opts: CreateEnterPlanModeToolInput) {
     },
   });
 }
+
+// Re-export the display-summary constant so callers needing parity
+// with the in-host preset can import it from a stable location.
+export { ENTER_PLAN_MODE_TOOL_DISPLAY_SUMMARY };
