@@ -190,6 +190,26 @@ export interface PlanModeSessionState {
    *    persisted payload)
    */
   lastPlanSteps?: PlanStep[];
+
+  /**
+   * Auto-approve toggle (added P-8). When true, the next
+   * `exit_plan_mode` immediately transitions through approval
+   * without waiting for user input — useful for trusted-loop flows
+   * where the agent should self-execute approved plans (Eva's
+   * iter-3 D5 use case).
+   *
+   * Toggled via the `/plan auto on|off` slash command (P-12 wires
+   * the session-action handler). The runtime side that actually
+   * fires auto-approve lands at P-11 alongside rejection-cycle
+   * tracking.
+   *
+   * Optional + defaults to false at read time. Additive-only per
+   * schema policy (CURRENT_SCHEMA_VERSION stays at 1).
+   *
+   * host_ref: `src/agents/plan-mode/auto-enable.ts` (in-host PR-10
+   *   auto-mode wiring).
+   */
+  autoApprove?: boolean;
 }
 
 /**

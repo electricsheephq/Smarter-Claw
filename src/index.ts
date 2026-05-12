@@ -41,6 +41,7 @@ import { buildPlanModeSystemContext } from "./prompt/plan-mode-injection.js";
 import { InMemoryGateway } from "./state/in-memory-gateway.js";
 import { SessionStoreGateway } from "./state/session-store-gateway.js";
 import { PlanModeStore, type PlanModeStateGateway } from "./state/store.js";
+import { createAskUserQuestionTool } from "./tools/ask-user-question.js";
 import { createEnterPlanModeTool } from "./tools/enter-plan-mode.js";
 import { createExitPlanModeTool } from "./tools/exit-plan-mode.js";
 import type { PlanMode } from "./types.js";
@@ -200,6 +201,13 @@ export default definePluginEntry({
     });
     api.registerTool(createExitPlanModeTool({ store }), {
       name: "exit_plan_mode",
+    });
+    // P-8: ask_user_question — non-blocking clarification tool.
+    // Question→answer wiring (pendingAgentInjections write on user
+    // reply) lands at P-11 alongside rejection-cycle tracking; the
+    // tool itself is stateless input-validation in P-8.
+    api.registerTool(createAskUserQuestionTool(), {
+      name: "ask_user_question",
     });
 
     // P-5: mutation gate (`before_tool_call` hook). Blocks mutating

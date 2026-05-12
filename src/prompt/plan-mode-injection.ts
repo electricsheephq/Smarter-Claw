@@ -15,6 +15,7 @@
  */
 
 import { PLAN_ARCHETYPE_PROMPT } from "./archetype-prompt.js";
+import { PLAN_MODE_REFERENCE_CARD } from "./reference-card.js";
 
 const PLAN_MODE_HEADER = "═══ PLAN MODE ACTIVE ═══";
 
@@ -35,8 +36,11 @@ const PLAN_MODE_SEPARATOR = "═════════════════
  * on byte-identical prefix matches). Tests pin this.
  *
  * host_ref: src/agents/pi-embedded-runner/run/attempt.ts:702-732 — the
- *   in-host inline block. Lines 1 (header), 3-7 (hard rules),
- *   13 (PLAN_ARCHETYPE_PROMPT). The reference-card append is P-8 scope.
+ *   in-host inline block. Includes header + hard rules +
+ *   PLAN_ARCHETYPE_PROMPT (P-7) + PLAN_MODE_REFERENCE_CARD (P-8).
+ *   composePromptWithPendingInjections drain queue layered on top by
+ *   the runtime's pre-prompt-build pipeline; we emit the static
+ *   pieces here.
  */
 export function buildPlanModeSystemContext(): string {
   return [
@@ -47,6 +51,8 @@ export function buildPlanModeSystemContext(): string {
     PLAN_MODE_SEPARATOR,
     "",
     PLAN_ARCHETYPE_PROMPT,
+    "",
+    PLAN_MODE_REFERENCE_CARD,
   ].join("\n");
 }
 
