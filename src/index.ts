@@ -41,6 +41,7 @@ import { buildPlanModeSystemContext } from "./prompt/plan-mode-injection.js";
 import { InMemoryGateway } from "./state/in-memory-gateway.js";
 import { SessionStoreGateway } from "./state/session-store-gateway.js";
 import { PlanModeStore, type PlanModeStateGateway } from "./state/store.js";
+import { decideEscalatingRetry } from "./runtime/escalating-retry.js";
 import { decidePlanTierModel } from "./runtime/plan-tier-model.js";
 import { createAskUserQuestionTool } from "./tools/ask-user-question.js";
 import { createEnterPlanModeTool } from "./tools/enter-plan-mode.js";
@@ -328,6 +329,52 @@ export default definePluginEntry({
         return decision;
       });
     }
+
+    // P-10: escalating-retry detector. before_agent_finalize hook —
+    // REQUIRES allowConversationAccess. When the agent's turn ends in
+    // an "incomplete" state (chat without tool call in plan mode,
+    // yield after approval, narration without action), return the
+    // appropriate retry instruction so the SDK runs another model pass.
+    //
+    // The SDK enforces maxAttempts via the idempotencyKey we provide;
+    // we cap at 3 retries per detector per session.
+    //
+    // host_ref: src/agents/pi-embedded-runner/run/incomplete-turn.ts
+    //   semantic contract, not the algorithmic detail (the in-host's
+    //   1070-LOC detection pipeline integrates with runner internals
+    //   that the SDK abstracts away).
+    api.on("before_agent_finalize", async (event, ctx) => {
+      const sessionKey = ctx.sessionKey;
+      if (!sessionKey) return undefined;
+      const snap = await store.readSnapshot(sessionKey);
+      const planMode = snap?.mode ?? "normal";
+      // The hook doesn't expose "did the turn make a tool call?"
+      // directly. The SDK's `stopHookActive` IS true during turns
+      // that resolved via stop_hook (which fires for tool-call-using
+      // turns), so we use that as a proxy. False == chat-only turn.
+      const madeToolCall = event.stopHookActive === true;
+      const isPostApproval =
+        snap?.approval === "approved" || snap?.approval === "edited";
+      const decision = decideEscalatingRetry(sessionKey, {
+        planMode,
+        lastAssistantMessage: event.lastAssistantMessage,
+        madeToolCall,
+        isPostApprovalTurn: isPostApproval,
+      });
+      if (!decision) return undefined;
+      api.logger.info(
+        `[smarter-claw] escalating-retry triggered (${decision.detector}) — sessionKey="${sessionKey}"`,
+      );
+      return {
+        action: "revise" as const,
+        reason: decision.detector,
+        retry: {
+          instruction: decision.instruction,
+          idempotencyKey: decision.idempotencyKey,
+          maxAttempts: decision.maxAttempts,
+        },
+      };
+    });
 
     api.on("before_prompt_build", async (_event, ctx) => {
       // before_prompt_build's PluginHookAgentContext doesn't expose
