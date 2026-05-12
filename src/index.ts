@@ -385,19 +385,31 @@ export default definePluginEntry({
       // Layer 2: accept-edits constraint gate (fail-OPEN).
       // Fires AFTER plan approval, when the agent is in the
       // post-approval execution phase with acceptEdits permission.
-      // We approximate "acceptEdits granted" via:
-      //   - autoApprove === true (operator pre-toggled auto-mode), OR
-      //   - approval === "edited" (user inline-edited + approved with edits)
-      // Either signal indicates the runtime is in a "permissive
-      // execution" phase where the 3 hard constraints (destructive,
-      // self-restart, config-change) need explicit re-confirmation.
       //
-      // host_ref: gates/accept-edits-gate.ts (layer 2 of the two-layer
-      // defense; the prompt-layer teaching landed in approval-prompt.ts
-      // not yet ported in P-13 — for P-13 we ship layer 2 alone, which
-      // is the actual enforcement boundary).
-      const isAcceptEditsPhase =
-        autoApprove === true || approval === "edited";
+      // **Surgical-port S12 (2026-05-12)**: the trigger predicate
+      // matches in-host semantics at sessions-patch.ts:982-993:
+      //   - action === "edit" → SETS postApprovalPermissions.acceptEdits=true
+      //   - action === "approve" → EXPLICITLY CLEARS acceptEdits (verbatim
+      //     execution; user did NOT opt into edits)
+      //
+      // So the gate fires ONLY when approval === "edited" (the plugin's
+      // equivalent of in-host's postApprovalPermissions.acceptEdits=true).
+      //
+      // Prior plugin trigger was `autoApprove === true || approval === "edited"`
+      // which over-fired on autoApprove (operator pre-toggled auto-mode).
+      // The in-host autoApprove field is a separate runtime concept that
+      // auto-resolves plan submission to action === "approve" (NOT to
+      // "edit"), so an autoApprove session emits approval === "approved"
+      // and should NOT trigger the gate. The over-fire was a UX regression
+      // for operators who toggled autoApprove for convenience — they got
+      // destructive-action blocks even when the agent was executing in
+      // normal mode without an approval cycle.
+      //
+      // host_ref: gates/accept-edits-gate.ts (layer 2 algorithm; byte-identical)
+      // host_ref: sessions-patch.ts:982-993 (acceptEdits set/clear lifecycle)
+      // host_ref: pi-tools.before-tool-call.ts:324 (trigger predicate at
+      //   `latestPlanMode === "normal" && getLatestAcceptEdits?.()`)
+      const isAcceptEditsPhase = approval === "edited";
       if (!isAcceptEditsPhase) return undefined;
 
       // Extract filePath for write/edit/apply_patch tools.

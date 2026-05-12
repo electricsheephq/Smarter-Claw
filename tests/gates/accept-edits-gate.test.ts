@@ -634,3 +634,231 @@ describe("extractApplyPatchTargetPaths — `*** Move to:` grammar (Codex #68939 
     expect(extractApplyPatchTargetPaths(42)).toEqual([]);
   });
 });
+
+// ===========================================================================
+// Surgical-port S12 (2026-05-12): positive tests for coded-but-untested
+// patterns identified in the Wave-1 audit (P0 #4-#10). These tests pin
+// the existing patterns so a future refactor that drops or breaks any of
+// them is caught immediately. None of these required code changes — the
+// patterns ARE in the gate; they just had zero positive test coverage.
+// ===========================================================================
+
+describe("checkAcceptEditsConstraint — coverage backfill (audit S12 P0 #4: find-exec alternates)", () => {
+  it("blocks `find ... -execdir rm` (-execdir variant)", () => {
+    const r = checkAcceptEditsConstraint({
+      toolName: "Bash",
+      execCommand: "find /tmp -name '*.bak' -execdir rm {} +",
+    });
+    expect(r.blocked).toBe(true);
+    expect(r.constraint).toBe("destructive");
+  });
+
+  it("blocks `find ... -execdir rmdir`", () => {
+    const r = checkAcceptEditsConstraint({
+      toolName: "Bash",
+      execCommand: "find /tmp/dirs -type d -execdir rmdir {} \\;",
+    });
+    expect(r.blocked).toBe(true);
+  });
+
+  it("blocks `find ... -execdir unlink`", () => {
+    const r = checkAcceptEditsConstraint({
+      toolName: "Bash",
+      execCommand: "find /tmp -name '*.tmp' -execdir unlink {} +",
+    });
+    expect(r.blocked).toBe(true);
+  });
+
+  it("blocks `find ... -execdir shred`", () => {
+    const r = checkAcceptEditsConstraint({
+      toolName: "Bash",
+      execCommand: "find /tmp/secrets -execdir shred -u {} +",
+    });
+    expect(r.blocked).toBe(true);
+  });
+
+  it("blocks `find ... -execdir truncate`", () => {
+    const r = checkAcceptEditsConstraint({
+      toolName: "Bash",
+      execCommand: "find /tmp/logs -execdir truncate -s 0 {} +",
+    });
+    expect(r.blocked).toBe(true);
+  });
+
+  it("blocks `find ... -exec rmdir` (alternate verb)", () => {
+    const r = checkAcceptEditsConstraint({
+      toolName: "Bash",
+      execCommand: "find /tmp/empty -type d -exec rmdir {} +",
+    });
+    expect(r.blocked).toBe(true);
+  });
+
+  it("blocks `find ... -exec unlink` (alternate verb)", () => {
+    const r = checkAcceptEditsConstraint({
+      toolName: "Bash",
+      execCommand: "find /tmp -name '*.tmp' -exec unlink {} +",
+    });
+    expect(r.blocked).toBe(true);
+  });
+
+  it("blocks `find ... -exec truncate` (alternate verb)", () => {
+    const r = checkAcceptEditsConstraint({
+      toolName: "Bash",
+      execCommand: "find /tmp -name '*.log' -exec truncate -s 0 {} +",
+    });
+    expect(r.blocked).toBe(true);
+  });
+});
+
+describe("checkAcceptEditsConstraint — coverage backfill (audit S12 P0 #5: killall openclaw)", () => {
+  it("blocks `killall openclaw`", () => {
+    const r = checkAcceptEditsConstraint({
+      toolName: "Bash",
+      execCommand: "killall openclaw",
+    });
+    expect(r.blocked).toBe(true);
+    expect(r.constraint).toBe("self_restart");
+  });
+
+  it("blocks `killall openclaw-gateway` (suffix variant)", () => {
+    const r = checkAcceptEditsConstraint({
+      toolName: "Bash",
+      execCommand: "killall openclaw-gateway",
+    });
+    expect(r.blocked).toBe(true);
+  });
+});
+
+describe("checkAcceptEditsConstraint — coverage backfill (audit S12 P0 #6: restart alternates)", () => {
+  it("blocks `launchctl unload` on ai.openclaw.*", () => {
+    const r = checkAcceptEditsConstraint({
+      toolName: "Bash",
+      execCommand:
+        "launchctl unload ~/Library/LaunchAgents/ai.openclaw.gateway.plist",
+    });
+    expect(r.blocked).toBe(true);
+    expect(r.constraint).toBe("self_restart");
+  });
+
+  it("blocks `launchctl stop` on ai.openclaw.*", () => {
+    const r = checkAcceptEditsConstraint({
+      toolName: "Bash",
+      execCommand: "launchctl stop ai.openclaw.gateway",
+    });
+    expect(r.blocked).toBe(true);
+  });
+
+  it("blocks `systemctl stop openclaw*`", () => {
+    const r = checkAcceptEditsConstraint({
+      toolName: "Bash",
+      execCommand: "systemctl stop openclaw-gateway.service",
+    });
+    expect(r.blocked).toBe(true);
+  });
+
+  it("blocks `systemctl kill openclaw*`", () => {
+    const r = checkAcceptEditsConstraint({
+      toolName: "Bash",
+      execCommand: "systemctl kill openclaw-gateway.service",
+    });
+    expect(r.blocked).toBe(true);
+  });
+});
+
+describe("checkAcceptEditsConstraint — coverage backfill (audit S12 P0 #7: openclaw config unset)", () => {
+  it("blocks `openclaw config unset`", () => {
+    const r = checkAcceptEditsConstraint({
+      toolName: "Bash",
+      execCommand: "openclaw config unset plugins.entries.evil",
+    });
+    expect(r.blocked).toBe(true);
+    expect(r.constraint).toBe("config_change");
+  });
+});
+
+describe("checkAcceptEditsConstraint — coverage backfill (audit S12 P0 #8: diskutil)", () => {
+  it("blocks `diskutil erasedisk` (macOS destructive primitive)", () => {
+    const r = checkAcceptEditsConstraint({
+      toolName: "Bash",
+      execCommand: "diskutil erasedisk APFS Untitled /dev/disk2",
+    });
+    expect(r.blocked).toBe(true);
+    expect(r.constraint).toBe("destructive");
+  });
+
+  it("blocks `diskutil eraseall` (macOS destructive primitive)", () => {
+    const r = checkAcceptEditsConstraint({
+      toolName: "Bash",
+      execCommand: "diskutil eraseall /dev/disk2",
+    });
+    expect(r.blocked).toBe(true);
+  });
+});
+
+describe("checkAcceptEditsConstraint — coverage backfill (audit S12 P0 #9: apply_patch additionalPaths)", () => {
+  it("blocks `apply_patch` with additionalPaths into ~/.openclaw/*", () => {
+    const r = checkAcceptEditsConstraint({
+      toolName: "apply_patch",
+      additionalPaths: ["~/.openclaw/config.toml"],
+    });
+    expect(r.blocked).toBe(true);
+    expect(r.constraint).toBe("config_change");
+  });
+
+  it("blocks `apply_patch` with one safe + one protected path (any protected = block)", () => {
+    const r = checkAcceptEditsConstraint({
+      toolName: "apply_patch",
+      filePath: "src/safe.ts",
+      additionalPaths: ["src/safe.ts", "/etc/openclaw/config.toml"],
+    });
+    expect(r.blocked).toBe(true);
+  });
+
+  it("allows `apply_patch` with only safe additionalPaths", () => {
+    const r = checkAcceptEditsConstraint({
+      toolName: "apply_patch",
+      filePath: "src/a.ts",
+      additionalPaths: ["src/a.ts", "src/b.ts", "src/c.ts"],
+    });
+    expect(r.blocked).toBe(false);
+  });
+});
+
+describe("checkAcceptEditsConstraint — coverage backfill (audit S12 P0 #10: create/delete tools)", () => {
+  it("blocks `create` tool targeting ~/.openclaw/*", () => {
+    const r = checkAcceptEditsConstraint({
+      toolName: "create",
+      filePath: "~/.openclaw/new-config.toml",
+    });
+    expect(r.blocked).toBe(true);
+    expect(r.constraint).toBe("config_change");
+  });
+
+  it("blocks `delete` tool targeting protected paths", () => {
+    const r = checkAcceptEditsConstraint({
+      toolName: "delete",
+      filePath: "/etc/openclaw/settings.json",
+    });
+    expect(r.blocked).toBe(true);
+  });
+
+  it("allows `create` tool targeting non-protected paths", () => {
+    const r = checkAcceptEditsConstraint({
+      toolName: "create",
+      filePath: "/Users/me/repo/src/new.ts",
+    });
+    expect(r.blocked).toBe(false);
+  });
+});
+
+// ===========================================================================
+// Surgical-port S12 (2026-05-12): trigger predicate test — the plugin
+// fires the gate ONLY when `approval === "edited"` (matching in-host's
+// `postApprovalPermissions.acceptEdits === true` lifecycle at
+// sessions-patch.ts:982-993). Prior over-fire on `autoApprove === true`
+// was a UX regression — operators who toggled autoApprove for
+// convenience got destructive-action blocks even outside an approval
+// cycle. The trigger-predicate level (isAcceptEditsPhase in index.ts)
+// is tested via smoke-4-accept-edits-adversarial which now uses the
+// edit-approval workflow as its setup.
+// ===========================================================================
