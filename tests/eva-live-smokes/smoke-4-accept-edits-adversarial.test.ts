@@ -3,11 +3,12 @@
  *
  * Scenario:
  *   1. Plugin loads.
- *   2. Operator enables autoApprove (which lazy-inits a normal-mode
- *      state with autoApprove=true — same condition the runtime
- *      checks for "post-approval acceptEdits execution phase").
- *   3. Agent (in normal mode) tries 30 adversarial commands across
- *      the 3 hard-constraint categories:
+ *   2. Session enters the acceptEdits-permission phase via the
+ *      enter → exit → plan.edit workflow (the only path that grants
+ *      acceptEdits per in-host sessions-patch.ts:982-993 — plain
+ *      "Accept" explicitly does NOT grant acceptEdits).
+ *   3. Agent (now in normal mode with approval="edited") tries 30
+ *      adversarial commands across the 3 hard-constraint categories:
  *        - Destructive (rm -rf, DROP TABLE, FLUSHALL, ...)
  *        - Self-restart (launchctl unload, pkill openclaw, ...)
  *        - Configuration changes (writes to ~/.openclaw/*, openclaw config set)
@@ -19,6 +20,10 @@
  * `tests/gates/accept-edits-gate.test.ts` against the pure function;
  * this smoke validates the hook plumbing routes inputs to that gate
  * correctly via the WIRED before_tool_call path in index.ts.
+ *
+ * Surgical-port S12 (2026-05-12): updated setup to use the in-host-
+ * parity acceptEdits trigger (approval === "edited") rather than the
+ * prior autoApprove proxy which over-fired the gate.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -26,19 +31,46 @@ import { createHarness } from "./harness.js";
 
 const SESSION_KEY = "agent:main:main";
 
+interface ToolFactory {
+  (ctx: { sessionKey?: string }): {
+    execute: (
+      callId: string,
+      args: unknown,
+    ) => Promise<{
+      details: { status?: string; approvalId?: string };
+    }>;
+  };
+}
+
 describe("Eva live-smoke #4 — accept-edits gate via before_tool_call (P-13)", () => {
   let harness: ReturnType<typeof createHarness>;
 
   beforeEach(async () => {
     harness = createHarness({ forceInMemory: true });
-    // Lazy-init the session into normal-mode + autoApprove=true.
-    // This matches the runtime's "post-approval execution phase" — the
-    // gate fires on the autoApprove signal.
-    const r = (await harness.invokeAction("plan.auto.toggle", {
+    // Drive the session through enter → exit → plan.edit to grant
+    // acceptEdits permission. The plugin's `isAcceptEditsPhase`
+    // predicate fires on `approval === "edited"` — the same as
+    // in-host's `postApprovalPermissions.acceptEdits === true` per
+    // sessions-patch.ts:982-993.
+    const enter = harness.findTool("enter_plan_mode") as ToolFactory;
+    await enter({ sessionKey: SESSION_KEY }).execute("enter-1", {});
+    const exit = harness.findTool("exit_plan_mode") as ToolFactory;
+    const exitResult = await exit({ sessionKey: SESSION_KEY }).execute(
+      "exit-1",
+      {
+        title: "Setup for accept-edits gate smoke",
+        plan: [{ step: "execute carefully", status: "pending" }],
+      },
+    );
+    const approvalId = exitResult.details.approvalId!;
+    const edit = (await harness.invokeAction("plan.edit", {
       sessionKey: SESSION_KEY,
-      payload: { enabled: true },
+      payload: { approvalId, body: "Edited plan body" },
     })) as { ok: boolean };
-    expect(r.ok).toBe(true);
+    expect(edit.ok).toBe(true);
+    // Reset injection captures so the gate-block tests don't see
+    // the approval-injection from the setup.
+    harness.captures.enqueuedInjections.length = 0;
   });
 
   afterEach(() => {
