@@ -38,9 +38,13 @@ complete, quality at-or-above Codex / Claude Code plan mode.
   ~30 P2; 0 correctness/security regressions.** Per-slice detail in
   `slice-audit-{A..E}.md`, build-specs `buildspec-S16/S17/S18*.md`,
   benchmark `benchmark-codex-claude-code.md`.
-- **Wave 3 batch 1 (PR #99, open)** — W1-C1 (stale-event guard was
-  dead code — threaded `expectedApprovalId`) + W1-S9-2 (`checkApprovalId`
-  contradicted the re-ported state machine — `rejected` is non-terminal).
+- **Wave 3 — in progress (PR #99, open, branch `wave-3/fixes`)** —
+  3 findings fixed so far:
+  - W1-C1 — stale-event guard was dead code; threaded `expectedApprovalId`.
+  - W1-S9-2 — `checkApprovalId` contradicted the re-ported state
+    machine; `rejected` is non-terminal.
+  - W1-D2 — plan-step injection appended `status` enum; in-host
+    appends `activeForm`. Fixed to byte-match.
 
 ---
 
@@ -52,7 +56,7 @@ Fix sequentially, one focused PR per cluster. IDs reference
 | Cluster | Findings | Files |
 |---|---|---|
 | tools | W1-A1 (subagent-gate description lies), W1-A3 (`ask_user_question` desc paraphrased), W1-A5 (auto-enable matcher dead code) | `src/tools/*`, `src/plan-mode/tool-descriptions.ts`, `auto-enable.ts`, `index.ts` |
-| prompt | W1-D1 (reject-injection emitter ≠ in-host form), W1-D2 (`activeForm` vs `status`), W1-D3 (no byte-fixture test — **overlaps Wave 2 harness; let Wave 2 own it**) | `src/prompt/*`, `injection-writer.ts`, `session-actions.ts` |
+| prompt | W1-D1 (reject-injection emitter ≠ in-host form); ~~W1-D2~~ ✅ done; W1-D3 (no byte-fixture test — **overlaps Wave 2 harness; let Wave 2 own it**) | `src/prompt/*`, `injection-writer.ts`, `session-actions.ts` |
 | runtime | W1-E1 (turn-limit watchdog deferral stale — seam now exists), W1-E2 (debug-log taxonomy diverged), W1-E6 (`madeToolCall` derived from wrong signal) | `src/runtime/*`, `index.ts` |
 | ui | W1-S9-1 (sidebar schema omits 5 fields), W1-S18-1 (Telegram 100-cmd menu hides `/plan`), W1-B4 (accept-edits trigger has no CI test) | `src/ui/*`, `index.ts` |
 | benchmark gaps | W1-F1 (no action-required notification — P0), W1-F2 (prompt promises a `plan-*.md` no code writes — P0), W1-F4 (`/plan auto` dead toggle) | `src/ui/session-actions.ts`, `src/prompt/*`, `index.ts` |
@@ -74,9 +78,12 @@ Fix sequentially, one focused PR per cluster. IDs reference
    shared across clusters → parallel fix agents merge-conflict, and
    each fix needs careful in-host matching + tests. One cluster, one
    PR, CI-gated, then the next.
-3. **Wave 2 is safe to parallelize** — it touches only
-   `parity-harness/` + `ci.yml`, zero overlap with Wave 3's `src/`.
-   Run it as one worktree-isolated background agent.
+3. **Wave 2 — do it directly, not via a background agent.** It is
+   logically isolated (`parity-harness/` + `ci.yml`), BUT the Agent
+   `isolation: "worktree"` option fails in this environment ("not in
+   a git repository" — the tool resolves from a non-repo cwd). Without
+   real worktree isolation, a background agent that runs `git` WILL
+   collide. So Wave 2 is done sequentially, by hand, like Wave 3.
 4. **CI is trustworthy as of PR #97** — the `| tee` exit-code masking
    is fixed. A red `ci` check is now a real signal.
 5. Every fix cites the in-host `host_ref:` and ships a test.
