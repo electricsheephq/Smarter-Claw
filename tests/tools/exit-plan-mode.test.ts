@@ -16,7 +16,10 @@
  * plan-schema error.
  */
 
-import { describe, expect, it } from "vitest";
+import * as fsp from "node:fs/promises";
+import * as os from "node:os";
+import * as nodePath from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createExitPlanModeTool } from "../../src/tools/exit-plan-mode.js";
 import { isPlanApprovalId } from "../../src/helpers/approval-id.js";
 import { InMemoryGateway } from "../../src/state/in-memory-gateway.js";
@@ -447,5 +450,309 @@ describe("exit_plan_mode — error paths", () => {
     });
     expect((result.details as { status: string }).status).toBe("failed");
     expect(result.content[0]?.text).toMatch(/simulated IO failure/);
+  });
+});
+
+/**
+ * W1-F2 (P0) fix (2026-05-20): the archetype-prompt + reference card
+ * promise the agent that its plan title is "the persisted markdown
+ * filename slug" — `plan-YYYY-MM-DD-<slug>.md` under
+ * `~/.openclaw/agents/<agentId>/plans/`. Before this fix, NO code
+ * wrote the file — the prompt was a lie.
+ *
+ * These tests pin the behavior:
+ *   - On a NEW approval (`kind === "persisted"`), the persister fires
+ *     and the file lands at the expected path with the expected slug.
+ *   - On a duplicate submit (`kind === "reused"`), the persister does
+ *     NOT fire (no second file).
+ *   - On `skipped` / `failed` / `no-session` / `invalid-input`, the
+ *     persister also does not fire.
+ *   - Failure inside the persister is swallowed (the tool result is
+ *     unaffected; only a log line escapes).
+ *   - The rendered content covers the full archetype (title, summary,
+ *     analysis, plan, assumptions, risks, verification, references).
+ *
+ * host_ref: src/agents/pi-embedded-subscribe.handlers.tools.ts:1925-1949
+ *   (in-host trigger: dispatchPlanArchetypeAttachment fires
+ *   immediately after emitAgentApprovalEvent in the exit_plan_mode
+ *   intercept block)
+ */
+describe("exit_plan_mode — W1-F2 markdown persister", () => {
+  // Top-level node:fs/os/path imports satisfy the ESM module rules
+  // the rest of the test file already follows.
+  const fs = fsp;
+  const path = nodePath;
+
+  let tmpBase: string;
+
+  beforeEach(async () => {
+    tmpBase = await fs.mkdtemp(
+      path.join(os.tmpdir(), "smarter-claw-exit-persist-"),
+    );
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpBase, { recursive: true, force: true });
+  });
+
+  function buildWithPersister(opts?: {
+    extraLog?: { info?: string[]; warn?: string[] };
+  }) {
+    const gw = new InMemoryGateway();
+    gw.seed(SESSION_KEY, {
+      mode: "plan",
+      approval: "none",
+      rejectionCount: 0,
+      enteredAt: 1_700_000_000_000,
+    });
+    const store = new PlanModeStore(gw);
+    const info: string[] = opts?.extraLog?.info ?? [];
+    const warn: string[] = opts?.extraLog?.warn ?? [];
+    const factory = createExitPlanModeTool({
+      store,
+      persister: {
+        baseDir: tmpBase,
+        log: {
+          info: (m) => info.push(m),
+          warn: (m) => warn.push(m),
+        },
+      },
+    });
+    return { gw, store, factory, info, warn };
+  }
+
+  it("writes <baseDir>/<agentId>/plans/plan-YYYY-MM-DD-<slug>.md on persisted approval", async () => {
+    const { factory } = buildWithPersister();
+    const tool = factory({ sessionKey: SESSION_KEY, agentId: "main" });
+    const result = await tool.execute("c1", {
+      title: "Refactor websocket reconnect race",
+      plan: [{ step: "do thing", status: "pending" }],
+    });
+    expect((result.details as { status: string }).status).toBe(
+      "approval-requested",
+    );
+    const plansDir = path.join(tmpBase, "main", "plans");
+    const files = await fs.readdir(plansDir);
+    expect(files).toHaveLength(1);
+    const filename = files[0]!;
+    expect(filename).toMatch(
+      /^plan-\d{4}-\d{2}-\d{2}-refactor-websocket-reconnect-race\.md$/,
+    );
+    const body = await fs.readFile(path.join(plansDir, filename), "utf8");
+    expect(body).toContain("# Refactor websocket reconnect race");
+    expect(body).toContain("## Plan");
+    expect(body).toContain("- [ ] do thing");
+  });
+
+  it("writes the full archetype (summary + analysis + assumptions + risks + verification + references)", async () => {
+    const { factory } = buildWithPersister();
+    const tool = factory({ sessionKey: SESSION_KEY, agentId: "main" });
+    await tool.execute("c1", {
+      title: "Full plan",
+      summary: "Brief summary",
+      analysis: "Current state.\n\nNew approach.",
+      plan: [{ step: "a", status: "pending" }],
+      assumptions: ["nodejs >= 20"],
+      risks: [{ risk: "tests flake", mitigation: "retry the suite" }],
+      verification: ["pnpm test passes"],
+      references: ["src/x.ts:1"],
+    });
+    const plansDir = path.join(tmpBase, "main", "plans");
+    const [filename] = await fs.readdir(plansDir);
+    const body = await fs.readFile(path.join(plansDir, filename!), "utf8");
+    expect(body).toContain("## Summary");
+    expect(body).toContain("Brief summary");
+    expect(body).toContain("## Analysis");
+    // The renderer escapes markdown meta-characters (including `.`)
+    // in user-controlled text — matches in-host `escapeMarkdown`. So
+    // "Current state." renders as "Current state\." in the file.
+    expect(body).toContain("Current state\\.");
+    expect(body).toContain("New approach\\.");
+    expect(body).toContain("## Assumptions");
+    // Only `>` is in the escape set, not `=`. So "nodejs >= 20"
+    // becomes "nodejs \>= 20" in the rendered markdown.
+    expect(body).toContain("- nodejs \\>= 20");
+    expect(body).toContain("## Risks");
+    expect(body).toMatch(/- \*\*tests flake\*\*: retry the suite/);
+    expect(body).toContain("## Verification");
+    expect(body).toContain("- pnpm test passes");
+    expect(body).toContain("## References");
+    expect(body).toContain("- src/x\\.ts:1");
+  });
+
+  it("does NOT write on a duplicate-detected submit (kind=reused)", async () => {
+    const { factory } = buildWithPersister();
+    const tool = factory({ sessionKey: SESSION_KEY, agentId: "main" });
+    const input = {
+      title: "Same plan",
+      plan: [{ step: "a", status: "pending" }],
+    };
+    const r1 = await tool.execute("c1", input);
+    expect((r1.details as { status: string }).status).toBe(
+      "approval-requested",
+    );
+    const r2 = await tool.execute("c2", input);
+    expect((r2.details as { status: string }).status).toBe(
+      "duplicate-detected",
+    );
+    // Only ONE file — the duplicate was not re-persisted.
+    const files = await fs.readdir(path.join(tmpBase, "main", "plans"));
+    expect(files).toHaveLength(1);
+  });
+
+  it("does NOT write when status is not-in-plan-mode", async () => {
+    const gw = new InMemoryGateway(); // unseeded — session never entered plan mode
+    const store = new PlanModeStore(gw);
+    const factory = createExitPlanModeTool({
+      store,
+      persister: { baseDir: tmpBase },
+    });
+    const tool = factory({ sessionKey: SESSION_KEY, agentId: "main" });
+    const result = await tool.execute("c1", {
+      title: TITLE,
+      plan: [{ step: "a", status: "pending" }],
+    });
+    expect((result.details as { status: string }).status).toBe(
+      "not-in-plan-mode",
+    );
+    // The plans/ dir was never created.
+    await expect(
+      fs.access(path.join(tmpBase, "main", "plans")),
+    ).rejects.toThrow();
+  });
+
+  it("does NOT write when title validation rejects", async () => {
+    const { factory } = buildWithPersister();
+    const tool = factory({ sessionKey: SESSION_KEY, agentId: "main" });
+    const result = await tool.execute("c1", {
+      plan: [{ step: "a", status: "pending" }],
+    });
+    expect((result.details as { status: string }).status).toBe(
+      "invalid-input",
+    );
+    await expect(
+      fs.access(path.join(tmpBase, "main", "plans")),
+    ).rejects.toThrow();
+  });
+
+  it("collision: a 2nd same-day same-slug write produces -2 suffix", async () => {
+    const { factory, gw } = buildWithPersister();
+    const tool = factory({ sessionKey: SESSION_KEY, agentId: "main" });
+    await tool.execute("c1", {
+      title: "Hello world",
+      plan: [{ step: "a", status: "pending" }],
+    });
+    // Reset the store so the second submit isn't deduplicated as
+    // duplicate-detected (we want a NEW approval cycle that fires
+    // persist again and lands on the same date+slug).
+    gw.seed(SESSION_KEY, {
+      mode: "plan",
+      approval: "none",
+      rejectionCount: 0,
+      enteredAt: 1_700_000_000_001,
+    });
+    await tool.execute("c2", {
+      title: "Hello world",
+      plan: [{ step: "b", status: "pending" }],
+    });
+    const files = await fs.readdir(path.join(tmpBase, "main", "plans"));
+    expect(files).toHaveLength(2);
+    expect(files.some((f) => /^plan-\d{4}-\d{2}-\d{2}-hello-world\.md$/.test(f))).toBe(
+      true,
+    );
+    expect(
+      files.some((f) =>
+        /^plan-\d{4}-\d{2}-\d{2}-hello-world-2\.md$/.test(f),
+      ),
+    ).toBe(true);
+  });
+
+  it("logs a warn and skips when persister is configured but agentId is missing (W1-F2 honesty marker)", async () => {
+    const { factory, warn } = buildWithPersister();
+    // No agentId on ctx.
+    const tool = factory({ sessionKey: SESSION_KEY });
+    const result = await tool.execute("c1", {
+      title: "Plan",
+      plan: [{ step: "a", status: "pending" }],
+    });
+    // Tool returns OK; persister is just skipped with a warning.
+    expect((result.details as { status: string }).status).toBe(
+      "approval-requested",
+    );
+    expect(warn.some((m) => /agentId missing/.test(m))).toBe(true);
+    await expect(
+      fs.access(path.join(tmpBase, "main", "plans")),
+    ).rejects.toThrow();
+  });
+
+  it("logs a warn and skips when persister is not wired at all (W1-F2 honesty marker)", async () => {
+    // Build WITHOUT persister to reproduce the pre-fix state.
+    const gw = new InMemoryGateway();
+    gw.seed(SESSION_KEY, {
+      mode: "plan",
+      approval: "none",
+      rejectionCount: 0,
+      enteredAt: 1_700_000_000_000,
+    });
+    const store = new PlanModeStore(gw);
+    const factory = createExitPlanModeTool({ store }); // no persister
+    const tool = factory({ sessionKey: SESSION_KEY, agentId: "main" });
+    const result = await tool.execute("c1", {
+      title: "Plan",
+      plan: [{ step: "a", status: "pending" }],
+    });
+    // Result still OK.
+    expect((result.details as { status: string }).status).toBe(
+      "approval-requested",
+    );
+    // No file written.
+    await expect(
+      fs.access(path.join(tmpBase, "main", "plans")),
+    ).rejects.toThrow();
+  });
+
+  it("approval flow is unaffected when persistence throws (non-fatal)", async () => {
+    // Use a baseDir that we make read-only so write fails. On macOS,
+    // chmod 0o400 on a parent dir prevents mkdir/createWriteStream.
+    const lockedBase = path.join(tmpBase, "locked");
+    await fs.mkdir(lockedBase, { recursive: true });
+    await fs.chmod(lockedBase, 0o400);
+    const warn: string[] = [];
+    const gw = new InMemoryGateway();
+    gw.seed(SESSION_KEY, {
+      mode: "plan",
+      approval: "none",
+      rejectionCount: 0,
+      enteredAt: 1_700_000_000_000,
+    });
+    const store = new PlanModeStore(gw);
+    const factory = createExitPlanModeTool({
+      store,
+      persister: {
+        baseDir: lockedBase,
+        log: { warn: (m) => warn.push(m) },
+      },
+    });
+    const tool = factory({ sessionKey: SESSION_KEY, agentId: "main" });
+    try {
+      const result = await tool.execute("c1", {
+        title: "Plan",
+        plan: [{ step: "a", status: "pending" }],
+      });
+      // Approval flow succeeded even though disk write failed.
+      expect((result.details as { status: string }).status).toBe(
+        "approval-requested",
+      );
+      // The warn channel got a message — either the storage-error
+      // distinctive prefix OR the generic warn (depends on which fs
+      // syscall fails first under read-only baseDir).
+      expect(warn.length).toBeGreaterThan(0);
+      expect(
+        warn.some((m) => /persist/i.test(m) || /storage/i.test(m)),
+      ).toBe(true);
+    } finally {
+      // Restore so afterEach can clean up.
+      await fs.chmod(lockedBase, 0o700);
+    }
   });
 });

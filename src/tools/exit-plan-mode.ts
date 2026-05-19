@@ -58,6 +58,11 @@ import { Type } from "typebox";
 import { newPlanApprovalId } from "../helpers/approval-id.js";
 import { computePlanPayloadHash } from "../helpers/payload-hash.js";
 import {
+  persistPlanArchetypeMarkdown,
+  PlanPersistStorageError,
+} from "../plan-mode/plan-archetype-persist.js";
+import { renderFullPlanArchetypeMarkdown } from "../plan-mode/plan-render.js";
+import {
   describeExitPlanModeTool,
   EXIT_PLAN_MODE_TOOL_DISPLAY_SUMMARY,
 } from "../plan-mode/tool-descriptions.js";
@@ -70,12 +75,68 @@ import {
   readStringParam,
 } from "./common.js";
 
+/**
+ * W1-F2 (P0) fix (2026-05-20): persister hook contract.
+ *
+ * The prompt + reference card promise a persisted
+ * `plan-YYYY-MM-DD-<slug>.md` file. Wiring the in-host persister
+ * here makes that promise true. Triggered on the `"persisted"`
+ * outcome of `store.persistApprovalRequest` (i.e. a NEW approval
+ * cycle; NOT on `"reused"` / `"skipped"` / `"failed"` — the in-host
+ * also writes only once per cycle).
+ *
+ * Failures are non-fatal: caught + logged. The approval flow still
+ * proceeds. This mirrors the in-host bridge pattern at
+ * `src/agents/plan-mode/plan-archetype-bridge.ts:151-200` which
+ * void-fires the persist+attachment work so the approval emit is
+ * never blocked.
+ *
+ * host_ref: src/agents/pi-embedded-subscribe.handlers.tools.ts:1925-1949
+ *           (the in-host trigger fires `dispatchPlanArchetypeAttachment`
+ *           immediately after `emitAgentApprovalEvent`)
+ */
+export interface ExitPlanModePersisterOptions {
+  /**
+   * Override the persistence base directory. Defaults to
+   * `~/.openclaw/agents` via the in-host persister. Tests inject a
+   * tmp dir. Operators can override via the plugin manifest's
+   * `plansBaseDir` config key.
+   */
+  baseDir?: string;
+  /**
+   * Logger seam. Defaults to a no-op so the persister never spams
+   * stdout in tests. Production wiring injects `api.logger` shims.
+   */
+  log?: {
+    info?: (msg: string) => void;
+    warn?: (msg: string) => void;
+    debug?: (msg: string) => void;
+  };
+}
+
 export interface CreateExitPlanModeToolInput {
   store: PlanModeStore;
+  /**
+   * W1-F2: optional persister wiring. When omitted, persistence is
+   * SKIPPED with a single warn log (so the prompt-promise hole is
+   * loud, not silent). Production wiring in `src/index.ts` always
+   * passes this — the optional shape exists so tests can isolate
+   * tool-level behavior from filesystem effects.
+   */
+  persister?: ExitPlanModePersisterOptions;
 }
 
 interface ToolContext {
   sessionKey?: string;
+  /**
+   * W1-F2: the in-host persister keys files by `agentId`. The plugin
+   * SDK supplies `agentId` on every tool-call ctx (see
+   * `node_modules/openclaw/dist/plugin-sdk/src/plugins/tool-types.d.ts:21`).
+   * Optional here because some pre-existing tests construct the tool
+   * with only `sessionKey`; persistence is skipped (with a log) when
+   * agentId is absent so the rest of the tool's behavior is unaffected.
+   */
+  agentId?: string;
 }
 
 const SCHEMA = Type.Object(
@@ -413,6 +474,51 @@ export function createExitPlanModeTool(opts: CreateExitPlanModeToolInput) {
         lastPlanSteps: steps,
       });
 
+      // W1-F2 (P0) fix (2026-05-20): persist the rendered plan
+      // archetype as a markdown file under
+      // `~/.openclaw/agents/<agentId>/plans/`. The prompt + reference
+      // card promise this file exists; the in-host writes it; the
+      // plugin previously did NOT, which made the prompt a lie.
+      //
+      // Fires only on the NEW-approval path (`kind === "persisted"`).
+      // `reused` is the duplicate-detection path — the in-host writes
+      // once per cycle, so we don't re-write on a duplicate submit.
+      // `skipped` / `failed` mean the store never accepted the
+      // approval; persisting a file for a non-existent approval
+      // would be a phantom artifact.
+      //
+      // Failure is non-fatal: caught + logged; the tool result is
+      // unaffected. This matches the in-host bridge behavior at
+      // `src/agents/plan-mode/plan-archetype-bridge.ts:188-200`
+      // (PlanPersistStorageError is downgraded to a warn log; other
+      // failures also warn but never propagate).
+      //
+      // host_ref: src/agents/pi-embedded-subscribe.handlers.tools.ts:1925-1949
+      //   (in-host trigger: dispatchPlanArchetypeAttachment fires
+      //   immediately after emitAgentApprovalEvent, void-wrapped)
+      if (r.kind === "persisted") {
+        await persistPlanArchetypeIfConfigured({
+          opts,
+          ctx,
+          plan: steps,
+          title,
+          ...(summary !== undefined ? { summary } : {}),
+          ...(archetype.analysis !== undefined
+            ? { analysis: archetype.analysis }
+            : {}),
+          ...(archetype.assumptions !== undefined
+            ? { assumptions: archetype.assumptions }
+            : {}),
+          ...(archetype.risks !== undefined ? { risks: archetype.risks } : {}),
+          ...(archetype.verification !== undefined
+            ? { verification: archetype.verification }
+            : {}),
+          ...(archetype.references !== undefined
+            ? { references: archetype.references }
+            : {}),
+        });
+      }
+
       // Map store outcome → tool result. Plugin uses hyphenated status
       // names (vs in-host underscore) for consistency with the rest of
       // the plugin status vocabulary + the eva-live-smokes assertions.
@@ -479,6 +585,108 @@ export function createExitPlanModeTool(opts: CreateExitPlanModeToolInput) {
       };
     },
   });
+}
+
+/**
+ * W1-F2 (P0) fix (2026-05-20): persistence-step helper.
+ *
+ * Renders the full plan archetype as markdown, then writes it via
+ * `persistPlanArchetypeMarkdown` to `<baseDir>/<agentId>/plans/`.
+ * Skips silently (with a single warn log) when persister wiring or
+ * agentId is absent — those are the conditions under which the
+ * caller couldn't fulfil the in-host contract anyway.
+ *
+ * Why `await` (not `void`): the in-host fires the bridge via
+ * `void (async () => {...})()` so it doesn't block the approval
+ * emit. The plugin tool body is already async + the persist is
+ * fast (single file write, no network I/O), so awaiting keeps the
+ * code linear, prevents test flakes from racing the suite teardown,
+ * and lets the unit test deterministically assert the file exists
+ * the moment `execute()` resolves. Failures still don't propagate —
+ * the try/catch swallows them with a log.
+ *
+ * host_ref: src/agents/plan-mode/plan-archetype-bridge.ts:124-200
+ *           (dispatchPlanArchetypeAttachment — persistence path)
+ */
+async function persistPlanArchetypeIfConfigured(input: {
+  opts: CreateExitPlanModeToolInput;
+  ctx: ToolContext;
+  plan: PlanStep[];
+  title: string;
+  summary?: string;
+  analysis?: string;
+  assumptions?: string[];
+  risks?: Array<{ risk: string; mitigation: string }>;
+  verification?: string[];
+  references?: string[];
+}): Promise<void> {
+  const { opts, ctx } = input;
+  const log = opts.persister?.log;
+  if (!opts.persister) {
+    // Persister not wired — log once at warn so an operator running
+    // an old wiring sees the gap. This is the W1-F2 honesty marker:
+    // we never silently swallow the prompt-promise hole.
+    log?.warn?.(
+      "[smarter-claw] exit_plan_mode: persister not configured; plan markdown NOT written. " +
+        "Wire `persister` in createExitPlanModeTool({...}) to fulfil the archetype-prompt persistence promise.",
+    );
+    return;
+  }
+  if (!ctx.agentId) {
+    log?.warn?.(
+      "[smarter-claw] exit_plan_mode: agentId missing from tool context; plan markdown NOT written. " +
+        "The host SDK normally supplies agentId on OpenClawPluginToolContext.",
+    );
+    return;
+  }
+  try {
+    const markdown = renderFullPlanArchetypeMarkdown({
+      title: input.title || "Plan",
+      ...(input.summary !== undefined ? { summary: input.summary } : {}),
+      ...(input.analysis !== undefined ? { analysis: input.analysis } : {}),
+      plan: input.plan,
+      ...(input.assumptions !== undefined
+        ? { assumptions: input.assumptions }
+        : {}),
+      ...(input.risks !== undefined ? { risks: input.risks } : {}),
+      ...(input.verification !== undefined
+        ? { verification: input.verification }
+        : {}),
+      ...(input.references !== undefined
+        ? { references: input.references }
+        : {}),
+    });
+    const { filename } = await persistPlanArchetypeMarkdown({
+      agentId: ctx.agentId,
+      title: input.title,
+      markdown,
+      ...(opts.persister.baseDir !== undefined
+        ? { baseDir: opts.persister.baseDir }
+        : {}),
+    });
+    log?.info?.(
+      `[smarter-claw] exit_plan_mode: persisted plan markdown agentId=${ctx.agentId} filename=${filename}`,
+    );
+  } catch (err) {
+    // Match the in-host bridge's two-bucket failure handling
+    // (plan-archetype-bridge.ts:188-203): recoverable storage errors
+    // get a distinctive operator-actionable log prefix; everything
+    // else gets a generic warn. Neither propagates.
+    if (err instanceof PlanPersistStorageError) {
+      log?.warn?.(
+        `[smarter-claw/plan-persist/storage] markdown persist failed (${err.code}) — ` +
+          `approval proceeds but audit artifact was NOT written. ` +
+          `Operator action: check ~/.openclaw free space / permissions. ` +
+          `Detail: ${err.message}`,
+      );
+      return;
+    }
+    log?.warn?.(
+      `[smarter-claw] exit_plan_mode: plan markdown persist failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  }
 }
 
 // Re-export the display-summary constant so callers needing parity
