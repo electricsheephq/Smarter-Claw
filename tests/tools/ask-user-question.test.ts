@@ -30,6 +30,16 @@ describe("P-8 ask_user_question — shape", () => {
     expect(t.description).toMatch(/does NOT exit plan mode/i);
   });
 
+  it("description carries the in-host structured clauses (W1-A3 verbatim port)", () => {
+    const t = build();
+    // The prior paraphrase dropped these; the verbatim in-host
+    // description restores the structured guidance.
+    expect(t.description).toMatch(/USE FOR:/);
+    expect(t.description).toMatch(/DO NOT USE FOR:/);
+    expect(t.description).toMatch(/allowFreetext/);
+    expect(t.description).toMatch(/\[QUESTION_ANSWER\]:/);
+  });
+
   it("schema enforces additionalProperties: false", () => {
     const t = build();
     const params = t.parameters as { additionalProperties?: boolean };

@@ -73,7 +73,14 @@ export function describeExitPlanModeTool(): string {
     // PR-8 follow-up: belt-and-suspenders steer paired with a hard-block
     // runtime check. Eva's post-mortem flagged treating "research
     // launched" as "research complete" as the exact bug this prevents.
-    "WAIT FOR SPAWNED SUBAGENTS BEFORE CALLING THIS TOOL. If you used sessions_spawn during plan-mode investigation (research, adversarial review, etc.), wait for ALL of them to return their completion messages before calling exit_plan_mode. The runtime rejects submission with an error listing pending child run ids if any are still in flight. Treat unresolved children as a blocking dependency of the investigation phase — 'research launched' is not 'research complete.'",
+    // W1-A1: the in-host description claims "the runtime rejects
+    // submission with an error listing pending child run ids" — true
+    // in-host (it has a tool-side subagent gate) but FALSE in the
+    // plugin, which has no such gate. Shipping that sentence would
+    // tell the model the runtime enforces something it doesn't. The
+    // steering is kept (the agent SHOULD wait); the false
+    // runtime-enforcement claim is dropped.
+    "WAIT FOR SPAWNED SUBAGENTS BEFORE CALLING THIS TOOL. If you used sessions_spawn during plan-mode investigation (research, adversarial review, etc.), wait for ALL of them to return their completion messages before calling exit_plan_mode. Treat unresolved children as a blocking dependency of the investigation phase — 'research launched' is not 'research complete.'",
     "Pass the full plan via `plan` using the same shape as update_plan (array of {step, status, activeForm?}).",
     // PR-9 Tier 1: explicit title field. Without this, the agent's chat
     // text leaked into the title slot ("I checked all five VMs..." as
@@ -84,5 +91,32 @@ export function describeExitPlanModeTool(): string {
     "Calling this without an active plan-mode session is a no-op; calling it without `plan` content is rejected.",
     // Iter-3 D3: pointer to reference card + self-test for full context.
     "For the full plan-mode reference (state diagram, [PLAN_*]: tag taxonomy, /plan slash commands, common pitfalls, debugging tips): see the bootstrap-injected reference card visible on every in-mode turn. To inspect live plan-mode state at runtime, call `plan_mode_status` (read-only diagnostic).",
+  ].join(" ");
+}
+
+/**
+ * `ask_user_question` tool description.
+ *
+ * **Parity contract**: byte-identical port of the in-host
+ * `describeAskUserQuestionTool()` at
+ * `src/agents/tool-description-presets.ts:32-42` (commit `ea04ea52c7`).
+ *
+ * Wave-1 finding W1-A3: the prior plugin description was a ~70-word
+ * paraphrase that dropped the structured USE FOR / DO NOT USE FOR
+ * lists, the channel-answer mechanics, and the `allowFreetext`
+ * pointer. Re-ported verbatim — same drift class PR #87 fixed for
+ * enter/exit.
+ *
+ * host_ref: src/agents/tool-description-presets.ts:32-42
+ */
+export function describeAskUserQuestionTool(): string {
+  return [
+    "Ask the user a clarifying question with 2-6 selectable options.",
+    "The runtime emits a pending question interaction and pauses your run until the user answers. Control UI shows an inline card; non-web channels answer through `/plan answer` text commands (or free text when allowed).",
+    "The chosen answer arrives in your next turn as a synthetic user message tagged `[QUESTION_ANSWER]: <answer text>`.",
+    "USE FOR: tradeoffs you cannot resolve via local investigation (product/scope choices, design preferences, organizational priorities, ambiguous user intent).",
+    "DO NOT USE FOR: things you could grep / read / web_search yourself, trivial defaults already covered by AGENTS.md, or confirmation requests (that's what exit_plan_mode does).",
+    "Plan-mode safe: asking a question DOES NOT exit plan mode. The session stays armed and you can submit `exit_plan_mode` after receiving the answer.",
+    "Pass `allowFreetext: true` to add an 'Other...' affordance when your N options might not cover the user's intent.",
   ].join(" ");
 }

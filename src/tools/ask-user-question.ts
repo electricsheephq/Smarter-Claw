@@ -27,6 +27,7 @@
  */
 
 import { Type } from "typebox";
+import { describeAskUserQuestionTool } from "../plan-mode/tool-descriptions.js";
 import { ToolInputError, readStringParam } from "./common.js";
 
 interface ToolContext {
@@ -67,22 +68,14 @@ const SCHEMA = Type.Object(
   { additionalProperties: false },
 );
 
-const TOOL_DESCRIPTION =
-  "Ask the user a clarifying question with 2-6 option buttons. The " +
-  "user's choice arrives in the next turn as a synthetic " +
-  "`[QUESTION_ANSWER]:` message. Use during plan-mode investigation " +
-  "for genuine product/scope tradeoffs where the answer changes the " +
-  "plan shape. The session STAYS in plan mode while waiting (this " +
-  "tool does NOT exit plan mode). NOT for confirmation requests — " +
-  "that's what exit_plan_mode is for.";
-
 export function createAskUserQuestionTool(
   _opts: CreateAskUserQuestionToolInput = {},
 ) {
   return (_ctx: ToolContext) => ({
     label: "Ask User Question",
     name: "ask_user_question",
-    description: TOOL_DESCRIPTION,
+    // W1-A3: verbatim in-host description (was a paraphrase).
+    description: describeAskUserQuestionTool(),
     parameters: SCHEMA,
     execute: async (
       toolCallId: string,

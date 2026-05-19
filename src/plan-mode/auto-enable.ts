@@ -31,10 +31,24 @@
  * # Surgical-port rationale (2026-05-12)
  *
  * Wave-1 audit slice S5 found the plugin had no equivalent of this
- * helper. The in-host wires `evaluateAutoEnableForMatch` into session-
- * start so models matching configured patterns auto-enter plan mode.
- * The plugin's `before_prompt_build` hook reads plan-mode state but
- * can't proactively enter — this helper restores that capability.
+ * helper. The in-host wires `evaluateAutoEnableForMatch` into
+ * session-start so models matching configured patterns auto-enter
+ * plan mode.
+ *
+ * # Wiring status — NOT YET WIRED (Wave-1 finding W1-A5)
+ *
+ * This helper is a correct, tested port — but it currently has NO
+ * caller in `src/`. A configured `autoEnableFor` pattern therefore
+ * has no effect yet. Wiring it needs three pieces the plugin doesn't
+ * yet have cleanly: (1) an `autoEnableFor` entry in the plugin's
+ * `configSchema`, (2) a once-per-session trigger (auto-enable must
+ * fire at session start, NOT every turn — a per-turn caller would
+ * drag the user back into plan mode after they exit), (3) reliable
+ * access to the resolved model id at that trigger point. Tracked as
+ * a dedicated issue; until then this file is a building block, not
+ * a live feature. (Previously this header claimed it "restores that
+ * capability" — it does not, yet. Corrected to avoid the false
+ * claim that W1-A5 flagged.)
  *
  * host_ref: src/agents/plan-mode/auto-enable.ts (commit ea04ea52c7)
  */
