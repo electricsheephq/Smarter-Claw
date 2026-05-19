@@ -1,12 +1,27 @@
 /**
- * Plan-decision injection builder.
+ * Plan-decision injection builder (LATENT — see runtime caveat below).
  *
  * **Parity contract**: byte-identical port of the in-host
  * `buildPlanDecisionInjection` at
- * `/Users/lume/repos/openclaw-pr70071-rebase/src/agents/plan-mode/types.ts:172-209`
+ * `/Users/lume/repos/openclaw-pr70071-rebase/src/agents/plan-mode/types.ts:185-209`
  * (commit `ea04ea52c7`, iter-3 D5 fix for one-line tag format).
  *
- * # The [PLAN_DECISION]: tag format
+ * # IMPORTANT — this is NOT the runtime reject emitter
+ *
+ * Wave-1 W1-D1 verified the in-host runtime reject path
+ * (`sessions-patch.ts:1045-1050`) builds the reject injection INLINE
+ * via a thinner 2-line form (raw, NOT JSON-quoted feedback +
+ * `@channel`/`<@` mention-stripping). The in-host
+ * `buildPlanDecisionInjection` function exists and is unit-tested in
+ * `approval.test.ts`, but has **zero non-test callers** in the in-host
+ * tree — it is latent.
+ *
+ * We retain this byte-identical port so future in-host runtime work
+ * has a parity-pinned target. The plugin's RUNTIME reject path lives
+ * at `src/runtime/injection-writer.ts:buildPlanRuntimeRejectInjection`,
+ * which mirrors `sessions-patch.ts:1048-1050` byte-for-byte.
+ *
+ * # The [PLAN_DECISION]: tag format (THIS file's form)
  *
  * One-line opener: `[PLAN_DECISION]: <decision>`, then optional
  * lines:
@@ -29,7 +44,10 @@
 import { sanitizeFeedbackForInjection } from "../helpers/sanitize.js";
 
 /**
- * Build a `[PLAN_DECISION]:` injection for the agent's next turn.
+ * Build a `[PLAN_DECISION]:` injection — byte-identical port of the
+ * in-host latent function. **Not wired as the runtime reject emitter**
+ * — see file-level docstring above. The plugin's runtime reject path
+ * uses `buildPlanRuntimeRejectInjection` instead.
  *
  * @param decision — one of "rejected" | "expired" | "timed_out".
  *   The "expired" alias is accepted for backward-compat with legacy
@@ -41,8 +59,9 @@ import { sanitizeFeedbackForInjection } from "../helpers/sanitize.js";
  *   add a deescalation hint suggesting the agent ask for clarification
  *   instead of re-proposing.
  *
- * host_ref: src/agents/plan-mode/types.ts:172-209 — byte-identical
- *   port of the in-host buildPlanDecisionInjection.
+ * host_ref: src/agents/plan-mode/types.ts:185-209 — byte-identical
+ *   port of the in-host buildPlanDecisionInjection (zero non-test
+ *   callers in-host; latent / parity-pinned).
  */
 export function buildPlanDecisionInjection(
   decision: "rejected" | "expired" | "timed_out",

@@ -38,10 +38,76 @@
  * The host's `idempotencyKey` is per-plugin-per-session, so we
  * namespace ours with `smarter-claw:plan:<approvalId>:<decision>`
  * etc. to avoid colliding with any future writer.
+ *
+ * # Wave-1 W1-D1 — reject path uses the in-host RUNTIME form
+ *
+ * The runtime reject path (the live emitter for `plan.reject`) builds
+ * the injection inline in the in-host at `sessions-patch.ts:1045-1050`
+ * — a thin 2-line form with raw (NOT JSON-quoted) feedback and Slack-
+ * style `@channel`/`<@U…>` mention-stripping. `buildPlanDecisionInjection`
+ * (in-host `types.ts:185`) is NOT the runtime emitter — it has zero
+ * non-test callers in the in-host tree. The plugin previously wired
+ * `buildPlanDecisionInjection` as the live reject emitter, producing
+ * extra instruction lines + JSON-quoted feedback + a different sanitizer.
+ *
+ * `buildPlanRuntimeRejectInjection` below ports the in-host runtime
+ * reject form byte-for-byte. `buildPlanDecisionInjection` remains
+ * exported (mirroring its in-host latent status) for parity-test pinning
+ * but is no longer wired into the runtime reject path.
+ *
+ * host_ref: src/gateway/sessions-patch.ts:1043-1056 — the in-host
+ *   runtime reject emit site (commit ea04ea52c7).
  */
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { buildPlanDecisionInjection } from "../prompt/plan-decision-injection.js";
+
+/**
+ * Sanitize user-supplied feedback for safe embedding in the runtime
+ * reject injection. Byte-faithful port of the in-host sanitizer at
+ * `sessions-patch.ts:1045-1047`:
+ *
+ *   1. `@(channel|here|everyone)\b` → `@﹫$1` (U+FE6B SMALL
+ *      COMMERCIAL AT before the keyword) — neutralizes the Slack /
+ *      Discord broadcast trigger while keeping the text visually
+ *      recognizable in audit logs.
+ *   2. `<@` → `<​@` (U+200B ZERO WIDTH SPACE inserted between
+ *      `<` and `@`) — neutralizes `<@U123>` user-mention syntax
+ *      similarly.
+ *
+ * This is DIFFERENT from `sanitizeFeedbackForInjection` in
+ * `src/helpers/sanitize.ts`, which neutralizes the
+ * `[/PLAN_DECISION]` envelope-closing tag (the in-host's runtime
+ * reject path does NOT JSON-quote the feedback, so the envelope-tag
+ * sanitizer is not applied here — newlines flow through raw).
+ *
+ * host_ref: src/gateway/sessions-patch.ts:1045-1047 (commit ea04ea52c7).
+ */
+function sanitizeRuntimeRejectFeedback(raw: string): string {
+  return raw
+    .replace(/@(channel|here|everyone)\b/gi, "@\u{FE6B}$1")
+    .replace(/<@/g, "<\u{200B}@");
+}
+
+/**
+ * Build the in-host runtime reject injection — the byte-for-byte port
+ * of `sessions-patch.ts:1048-1050`. At most 2 lines:
+ *
+ *   `[PLAN_DECISION]: rejected`
+ *   `feedback: <raw, mention-stripped text>`    (only if feedback truthy)
+ *
+ * Feedback is NOT JSON-quoted — embedded newlines flow through as
+ * literal newlines (the in-host runtime accepts this; the model reads
+ * the multi-line form as the user's literal feedback).
+ *
+ * host_ref: src/gateway/sessions-patch.ts:1045-1050 (commit ea04ea52c7).
+ */
+export function buildPlanRuntimeRejectInjection(feedback?: string): string {
+  const safeFeedback = sanitizeRuntimeRejectFeedback(feedback ?? "");
+  return safeFeedback
+    ? `[PLAN_DECISION]: rejected\nfeedback: ${safeFeedback}`
+    : `[PLAN_DECISION]: rejected`;
+}
 
 /**
  * Enqueue a `[PLAN_DECISION]:` injection. Returns the host's
@@ -50,13 +116,32 @@ import { buildPlanDecisionInjection } from "../prompt/plan-decision-injection.js
  * @param api — the plugin API.
  * @param input — sessionKey + decision + optional feedback + rejectionCount.
  *
+ * # Reject branch — in-host runtime parity (Wave-1 W1-D1)
+ *
+ * For `decision === "rejected"` the injection text is the in-host
+ * runtime form from `sessions-patch.ts:1048-1050`: at most 2 lines,
+ * raw (NOT JSON-quoted) feedback, with `@channel`/`@here`/`@everyone`
+ * + `<@` mention-stripping. `rejectionCount` is NOT consumed by the
+ * text builder (the in-host runtime omits the deescalation hint; the
+ * count survives only as injection metadata so callers can still
+ * observe the cycle).
+ *
+ * # Timed_out / expired branch — latent capability
+ *
+ * In-host has NO runtime emitter for `[PLAN_DECISION]: timed_out` —
+ * `resolvePlanApproval(action: "timeout")` flips state but does not
+ * appendToInjectionQueue. We retain the wire-format here (via the
+ * latent `buildPlanDecisionInjection`) so a future timed_out runtime
+ * caller has a parity-pinned target; today this branch has no
+ * production caller.
+ *
  * Idempotency: `smarter-claw:plan_decision:<approvalId>:<decision>`.
  * Approve-then-reject races become two distinct enqueues (DIFFERENT
  * decision string in the key); the agent sees both and the later one
  * wins by drain-time recency.
  *
- * host_ref: src/agents/plan-mode/injections.ts:120-170 (in-host
- *   appendPendingAgentInjection callsites for plan-decision entries).
+ * host_ref: src/gateway/sessions-patch.ts:1043-1062 — the in-host
+ *   runtime reject emit site (commit ea04ea52c7).
  */
 export async function enqueuePlanDecisionInjection(
   api: OpenClawPluginApi,
@@ -70,11 +155,18 @@ export async function enqueuePlanDecisionInjection(
     ttlMs?: number;
   },
 ): Promise<{ enqueued: boolean; id: string; sessionKey: string }> {
-  const text = buildPlanDecisionInjection(
-    input.decision,
-    input.feedback,
-    input.rejectionCount,
-  );
+  // Reject path uses the in-host RUNTIME form (sessions-patch.ts:1045-1050).
+  // The latent `buildPlanDecisionInjection` is in-host `types.ts:185` and
+  // has zero non-test callers there — we preserve it as a parity mirror
+  // for the timed_out/expired branches but NOT for the runtime reject.
+  const text =
+    input.decision === "rejected"
+      ? buildPlanRuntimeRejectInjection(input.feedback)
+      : buildPlanDecisionInjection(
+          input.decision,
+          input.feedback,
+          input.rejectionCount,
+        );
   const idempotencyKey = `smarter-claw:plan_decision:${input.approvalId}:${input.decision}`;
   return api.session.workflow.enqueueNextTurnInjection({
     sessionKey: input.sessionKey,

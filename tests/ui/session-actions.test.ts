@@ -402,7 +402,7 @@ describe("P-12 session-actions — plan.reject", () => {
     expect(persisted.feedback).toBe("step 2 wrong");
   });
 
-  it("enqueues a rejected injection with feedback + rejectionCount", async () => {
+  it("enqueues the in-host runtime reject form: 2 lines, raw feedback (W1-D1)", async () => {
     await rejectHandler({
       pluginId: "smarter-claw",
       actionId: "plan.reject",
@@ -410,8 +410,13 @@ describe("P-12 session-actions — plan.reject", () => {
       payload: { approvalId: APPROVAL_ID, feedback: "bad plan" },
     });
     const call = enqueue.mock.calls[0][0];
-    expect(call.text).toMatch(/^\[PLAN_DECISION\]: rejected/);
-    expect(call.text).toMatch(/feedback: "bad plan"/);
+    // Byte-for-byte match against the in-host runtime form at
+    // sessions-patch.ts:1048-1050 (commit ea04ea52c7).
+    expect(call.text).toBe("[PLAN_DECISION]: rejected\nfeedback: bad plan");
+    // Raw, NOT JSON-quoted.
+    expect(call.text).not.toMatch(/feedback: "/);
+    // No `Revise your plan…` line — the in-host runtime omits it.
+    expect(call.text).not.toMatch(/Revise your plan/);
     expect(call.idempotencyKey).toBe(
       `smarter-claw:plan_decision:${APPROVAL_ID}:rejected`,
     );
@@ -422,7 +427,13 @@ describe("P-12 session-actions — plan.reject", () => {
     });
   });
 
-  it("emits the deescalation hint at rejectionCount=3", async () => {
+  it("text stays 2-line even at rejectionCount=3 — count is metadata-only (W1-D1)", async () => {
+    // Pre-W1-D1 this asserted the deescalation hint. Per W1-D1, the in-
+    // host runtime emits the same 2-line form regardless of cycle; the
+    // rejectionCount is observable via metadata but does NOT alter the
+    // text. The deescalation hint lives in the LATENT
+    // buildPlanDecisionInjection function (which has zero non-test
+    // callers, matching its in-host status) — not the runtime emitter.
     gw.seed(SESSION_KEY, planModeSession({ rejectionCount: 2 }));
     await rejectHandler({
       pluginId: "smarter-claw",
@@ -431,7 +442,35 @@ describe("P-12 session-actions — plan.reject", () => {
       payload: { approvalId: APPROVAL_ID, feedback: "still bad" },
     });
     const call = enqueue.mock.calls[0][0];
-    expect(call.text).toMatch(/Multiple revisions have been rejected/);
+    expect(call.text).toBe("[PLAN_DECISION]: rejected\nfeedback: still bad");
+    expect(call.text).not.toMatch(/Multiple revisions/);
+    expect(call.metadata).toMatchObject({
+      kind: "plan_decision",
+      decision: "rejected",
+      rejectionCount: 3,
+    });
+  });
+
+  it("sanitizes Slack-style mentions in feedback (W1-D1 — `@channel` → `@﹫channel`, `<@U…>` → `<​@U…>`)", async () => {
+    // Positive sanitization test: the in-host runtime sanitizer rewrites
+    // broadcast triggers and user-mention syntax. Pinned at the runtime
+    // emitter level so a future change to the writer can't drop it.
+    await rejectHandler({
+      pluginId: "smarter-claw",
+      actionId: "plan.reject",
+      sessionKey: SESSION_KEY,
+      payload: {
+        approvalId: APPROVAL_ID,
+        feedback: "too risky @channel <@U123>",
+      },
+    });
+    const call = enqueue.mock.calls[0][0];
+    expect(call.text).toBe(
+      "[PLAN_DECISION]: rejected\nfeedback: too risky @\u{FE6B}channel <\u{200B}@U123>",
+    );
+    // Raw broadcast trigger and user-mention syntax MUST NOT appear.
+    expect(call.text).not.toMatch(/@channel\b/);
+    expect(call.text).not.toMatch(/<@/);
   });
 
   it("works without feedback", async () => {
