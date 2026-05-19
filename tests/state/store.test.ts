@@ -1071,3 +1071,96 @@ describe("P-13 PlanModeStore.setAutoApprove — IO-error fail-soft", () => {
     expect(log.warn).toHaveBeenCalled();
   });
 });
+
+describe("PlanModeStore — W1-C1: expectedApprovalId stale-event guard threading", () => {
+  let gw: InMemoryGateway;
+  let store: PlanModeStore;
+
+  beforeEach(() => {
+    gw = new InMemoryGateway();
+    store = new PlanModeStore(gw);
+  });
+
+  it("recordApproval skips when expectedApprovalId mismatches the session approvalId", async () => {
+    gw.seed(
+      SESSION_KEY,
+      planModeSession({
+        mode: "plan",
+        approval: "pending",
+        approvalId: APPROVAL_ID,
+      }),
+    );
+    const r = await store.recordApproval({
+      sessionKey: SESSION_KEY,
+      expectedApprovalId: APPROVAL_ID_CANDIDATE_2, // stale / wrong token
+    });
+    expect(r.kind).toBe("skipped");
+    // State unchanged — the resolvePlanApproval stale guard fired.
+    expect(gw.peek(SESSION_KEY)?.approval).toBe("pending");
+  });
+
+  it("recordApproval proceeds when expectedApprovalId matches", async () => {
+    gw.seed(
+      SESSION_KEY,
+      planModeSession({
+        mode: "plan",
+        approval: "pending",
+        approvalId: APPROVAL_ID,
+      }),
+    );
+    const r = await store.recordApproval({
+      sessionKey: SESSION_KEY,
+      expectedApprovalId: APPROVAL_ID,
+    });
+    expect(r.kind).toBe("recorded");
+    expect(gw.peek(SESSION_KEY)?.approval).toBe("approved");
+  });
+
+  it("recordApproval proceeds when no expectedApprovalId is supplied (no token, no check)", async () => {
+    gw.seed(
+      SESSION_KEY,
+      planModeSession({
+        mode: "plan",
+        approval: "pending",
+        approvalId: APPROVAL_ID,
+      }),
+    );
+    const r = await store.recordApproval({ sessionKey: SESSION_KEY });
+    expect(r.kind).toBe("recorded");
+  });
+
+  it("recordRejection skips when expectedApprovalId mismatches", async () => {
+    gw.seed(
+      SESSION_KEY,
+      planModeSession({
+        mode: "plan",
+        approval: "pending",
+        approvalId: APPROVAL_ID,
+      }),
+    );
+    const r = await store.recordRejection({
+      sessionKey: SESSION_KEY,
+      feedback: "stale click",
+      expectedApprovalId: APPROVAL_ID_CANDIDATE_2,
+    });
+    expect(r.kind).toBe("skipped");
+    expect(gw.peek(SESSION_KEY)?.approval).toBe("pending");
+  });
+
+  it("recordTimeout skips when expectedApprovalId mismatches", async () => {
+    gw.seed(
+      SESSION_KEY,
+      planModeSession({
+        mode: "plan",
+        approval: "pending",
+        approvalId: APPROVAL_ID,
+      }),
+    );
+    const r = await store.recordTimeout({
+      sessionKey: SESSION_KEY,
+      expectedApprovalId: APPROVAL_ID_CANDIDATE_2,
+    });
+    expect(r.kind).toBe("skipped");
+    expect(gw.peek(SESSION_KEY)?.approval).toBe("pending");
+  });
+});

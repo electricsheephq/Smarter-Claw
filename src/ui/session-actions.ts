@@ -58,24 +58,26 @@ import type { PlanStep } from "../types.js";
  * Format planSteps into the string array consumed by
  * buildApprovedPlanInjection / buildAcceptEditsPlanInjection. The
  * in-host builders take `string[]` (each entry is one step) and
- * emit a numbered list. We project the stored PlanStep[] (which
- * carries status + activeForm) into that flat-string shape, keeping
- * status as a parenthetical so the agent retains visibility of
- * completed/cancelled steps when resuming.
+ * emit a numbered list.
  *
- * host_ref: src/agents/plan-mode/approval.ts:187-194 — the in-host's
- *   `planSteps.map((s, i) => \`${i + 1}. ${s}\`)` rendering.
+ * Per-step format is byte-identical to the in-host: when the step
+ * carries an `activeForm` (the present-continuous label, e.g.
+ * "Running tests"), render `"<step> (<activeForm>)"`; otherwise just
+ * `"<step>"`.
+ *
+ * Wave-1 finding W1-D2: this previously appended the `status` enum
+ * (`(in_progress)`, `(completed)`) instead of `activeForm`. That
+ * diverged from the in-host for any step carrying an activeForm —
+ * the agent saw the wrong parenthetical on a resumed/re-approved plan.
+ *
+ * host_ref: src/gateway/sessions-patch.ts:1001-1003 (commit ea04ea52c7):
+ *   `(next.planMode?.lastPlanSteps ?? []).map((step) =>
+ *     step.activeForm ? \`${step.step} (${step.activeForm})\` : step.step)`
  */
 function planStepsToInjectionLines(steps: PlanStep[]): string[] {
-  return steps.map((s) => {
-    // Match in-host's per-step format: "<step> (<status>)" when
-    // status is anything other than the default "pending". Lets
-    // the agent see what's already done when resuming a partial plan.
-    if (s.status === "pending") {
-      return s.step;
-    }
-    return `${s.step} (${s.status})`;
-  });
+  return steps.map((step) =>
+    step.activeForm ? `${step.step} (${step.activeForm})` : step.step,
+  );
 }
 
 /**
@@ -171,12 +173,20 @@ async function checkApprovalId(
       ),
     };
   }
-  if (snap.approval !== "pending") {
+  // Wave-1 finding W1-S9-2: the re-ported `resolvePlanApproval` treats
+  // `rejected` as a NON-terminal state — the user can change their mind
+  // and re-approve, or re-reject (approval.ts terminal guard:
+  // `approval !== "pending" && approval !== "rejected"`). The prior
+  // guard here rejected EVERY non-`pending` state, contradicting the
+  // state machine it dispatches into. Allow `pending` OR `rejected`;
+  // the genuinely terminal states (approved / edited / timed_out /
+  // none) still no-op with NO_PENDING_APPROVAL.
+  if (snap.approval !== "pending" && snap.approval !== "rejected") {
     return {
       ok: false,
       result: err(
         SESSION_ACTION_ERROR_CODES.NO_PENDING_APPROVAL,
-        `session has no pending approval (approval=${snap.approval})`,
+        `session has no actionable approval (approval=${snap.approval})`,
       ),
     };
   }
@@ -185,7 +195,7 @@ async function checkApprovalId(
       ok: false,
       result: err(
         SESSION_ACTION_ERROR_CODES.NO_PENDING_APPROVAL,
-        "session has no approvalId on pending state",
+        `session has no approvalId on ${snap.approval} state`,
       ),
     };
   }
@@ -259,6 +269,9 @@ export function createPlanModeSessionActions(
       const persist = await store.recordApproval({
         sessionKey: sk.sessionKey,
         edited: false,
+        // W1-C1: forward the version token so the store-level
+        // stale-event guard (resolvePlanApproval arg 4) is live.
+        ...(expectedApprovalId !== undefined ? { expectedApprovalId } : {}),
       });
       if (persist.kind === "failed") {
         return err(
@@ -337,6 +350,8 @@ export function createPlanModeSessionActions(
       const persist = await store.recordApproval({
         sessionKey: sk.sessionKey,
         edited: true,
+        // W1-C1: forward the version token (store-level stale guard).
+        ...(expectedApprovalId !== undefined ? { expectedApprovalId } : {}),
       });
       if (persist.kind === "failed") {
         return err(
@@ -396,6 +411,8 @@ export function createPlanModeSessionActions(
       const persist = await store.recordRejection({
         sessionKey: sk.sessionKey,
         ...(feedback ? { feedback } : {}),
+        // W1-C1: forward the version token (store-level stale guard).
+        ...(expectedApprovalId !== undefined ? { expectedApprovalId } : {}),
       });
       if (persist.kind === "failed") {
         return err(
