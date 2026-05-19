@@ -234,14 +234,18 @@ describe("P-12 session-actions — plan.accept", () => {
     expect(call.text).toContain("2. Run pnpm install");
   });
 
-  it("annotates non-pending step statuses in the injection (in-host parity)", async () => {
+  it("annotates each step with its activeForm in the injection (W1-D2 in-host parity)", async () => {
+    // In-host (sessions-patch.ts:1001-1003) renders `<step> (<activeForm>)`
+    // when the step has an activeForm, else just `<step>` — it does NOT
+    // append the `status` enum. A step with no activeForm gets no
+    // parenthetical regardless of status.
     gw.seed(
       SESSION_KEY,
       planModeSession({
         lastPlanSteps: [
-          { step: "Investigation", status: "completed" },
-          { step: "Apply patch", status: "in_progress" },
-          { step: "Run tests", status: "pending" },
+          { step: "Investigate auth", status: "completed", activeForm: "Investigating auth" },
+          { step: "Apply patch", status: "in_progress", activeForm: "Applying the patch" },
+          { step: "Run tests", status: "pending" }, // no activeForm
         ],
       }),
     );
@@ -251,9 +255,12 @@ describe("P-12 session-actions — plan.accept", () => {
       sessionKey: SESSION_KEY,
     });
     const call = enqueue.mock.calls[0][0];
-    expect(call.text).toContain("1. Investigation (completed)");
-    expect(call.text).toContain("2. Apply patch (in_progress)");
-    expect(call.text).toContain("3. Run tests"); // pending → no annotation
+    expect(call.text).toContain("1. Investigate auth (Investigating auth)");
+    expect(call.text).toContain("2. Apply patch (Applying the patch)");
+    expect(call.text).toContain("3. Run tests"); // no activeForm → bare step
+    // The status enum must NOT leak into the rendered line.
+    expect(call.text).not.toContain("(completed)");
+    expect(call.text).not.toContain("(in_progress)");
   });
 });
 
