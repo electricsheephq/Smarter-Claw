@@ -60,6 +60,66 @@ describe("P-12 sidebar-descriptor", () => {
     expect(schema.required).toEqual(["mode", "approval", "rejectionCount"]);
   });
 
+  // W1-S9-1: the descriptor schema must mirror `PlanModeSessionState`
+  // (src/types.ts) field-for-field — the store writes all 5 of these
+  // and a strict-validating UI client would otherwise drop them.
+  it("schema declares the 5 previously-omitted state fields (W1-S9-1)", () => {
+    const d = buildPlanModeSidebarDescriptor();
+    const props = (
+      d.schema as { properties: Record<string, { type?: string }> }
+    ).properties;
+    // Timestamps — Unix ms integers.
+    expect(props.enteredAt).toEqual({ type: "integer" });
+    expect(props.confirmedAt).toEqual({ type: "integer" });
+    expect(props.updatedAt).toEqual({ type: "integer" });
+    // Ids / hash — strings.
+    expect(props.approvalRunId).toEqual({ type: "string" });
+    expect(props.lastPlanPayloadHash).toEqual({ type: "string" });
+  });
+
+  it("the 5 added fields are OPTIONAL (not in `required`)", () => {
+    const d = buildPlanModeSidebarDescriptor();
+    const required = (d.schema as { required: string[] }).required;
+    for (const field of [
+      "enteredAt",
+      "confirmedAt",
+      "updatedAt",
+      "approvalRunId",
+      "lastPlanPayloadHash",
+    ]) {
+      expect(required).not.toContain(field);
+    }
+  });
+
+  it("schema mirrors PlanModeSessionState field-for-field (no drift)", () => {
+    // Every non-`__schemaVersion` key the descriptor declares must be a
+    // real `PlanModeSessionState` field, and every state field must be
+    // declared. `__schemaVersion` is a store-stamped meta field with no
+    // type-level counterpart, so it is allowed as an extra.
+    const d = buildPlanModeSidebarDescriptor();
+    const declared = Object.keys(
+      (d.schema as { properties: Record<string, unknown> }).properties,
+    )
+      .filter((k) => k !== "__schemaVersion")
+      .sort();
+    const stateFields = [
+      "mode",
+      "approval",
+      "enteredAt",
+      "confirmedAt",
+      "updatedAt",
+      "feedback",
+      "rejectionCount",
+      "approvalId",
+      "title",
+      "approvalRunId",
+      "lastPlanPayloadHash",
+      "lastPlanSteps",
+      "autoApprove",
+    ].sort();
+    expect(declared).toEqual(stateFields);
+  });
+
   it("mode enum matches the PlanMode union", () => {
     const d = buildPlanModeSidebarDescriptor();
     const schema = d.schema as {
