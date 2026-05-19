@@ -17,13 +17,17 @@
  * the targeted single-session sweep, which is the common rollback case
  * (operator sees a stuck session in the sidebar and clears it).
  *
- * # In-host parity
+ * # In-host parity — none
  *
- * The in-host equivalent is `openclaw session sweep --plan-mode-clear`
- * (referenced in P-12's spec in glistening-swimming-rivest.md). The
- * plugin port renames to `openclaw plan-clear` since we register under
- * the root CLI namespace (not nested under `session`), avoiding name
- * collision with host-owned subcommands.
+ * This is a plugin-native operator tool. There is NO in-host
+ * equivalent: `git grep` for `plan-mode-clear` / `sweep` under
+ * `src/cli/**` and `src/agents/plan-mode/**` at the in-host
+ * source-of-truth commit `ea04ea52c7` returns nothing. An earlier
+ * comment here cited `openclaw session sweep --plan-mode-clear` as the
+ * host original — that command does not exist in-host and was never
+ * shipped; the citation was stale (it referenced a P-12 spec draft,
+ * not real host code). `plan-clear` is a net-new plugin command, not a
+ * port, so it carries no `host_ref:`.
  *
  * # Type discipline
  *
@@ -34,9 +38,7 @@
  * version re-exports the type at the public path we can collapse to
  * a single import.
  *
- * host_ref: in-host operator command in `src/cli/session.ts` (the
- *   `--plan-mode-clear` flag). Plugin port consolidates into a
- *   focused `plan-clear` command.
+ * (No `host_ref:` — see "In-host parity — none" above.)
  */
 
 import type { PlanModeStore } from "../state/store.js";

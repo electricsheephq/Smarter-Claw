@@ -34,13 +34,39 @@
  * enter` is the exception: there is no `plan.enter` session-action, so
  * it calls `PlanModeStore.enterPlanMode` directly.
  *
- * # Channel scope
+ * # Channel scope & dispatch
  *
- * Registered without a `channels` filter → available on every channel
- * surface (webchat, Telegram, Slack, etc.).
+ * A plugin-registered command has TWO independent dispatch paths in
+ * OpenClaw:
+ *   - Path A — the universal auto-reply text pipeline
+ *     (`handlePluginCommand`). This runs on every channel that routes
+ *     inbound text through auto-reply (webchat, Telegram, Slack,
+ *     Discord, CLI). Typing `/plan accept` as a normal message is
+ *     dispatched here. This — NOT the absence of a `channels` filter —
+ *     is what makes `/plan` work everywhere.
+ *   - Path B — the channel's NATIVE command surface (e.g. Telegram's
+ *     "/" autocomplete menu + `bot.command()` handler).
  *
- * host_ref: in-host /plan slash commands (the in-host wired these into
- *   its native command surface; this is the plugin equivalent).
+ * `/plan` sets no `channels` filter, so it is eligible for every
+ * channel's native menu AND the text pipeline — it is the canonical
+ * command on all channels, Telegram included.
+ *
+ * W1-S18-1: Telegram caps a bot's native menu at 100 commands. On a
+ * gateway that exceeds that, plugin commands (appended after host
+ * built-ins) can be sliced off the "/" menu. To avoid `/plan` +
+ * `/plan-mode` consuming TWO scarce Telegram menu slots, the
+ * `/plan-mode` ALIAS carries a `channels` filter that excludes
+ * Telegram (see `createPlanModeSlashCommand`). `/plan` is unaffected;
+ * if it ever drops off the Telegram menu it still works when typed,
+ * and its `agentPromptGuidance` lets the agent tell the user so.
+ *
+ * host_ref: in-host /plan slash commands lived in a bespoke built-in
+ *   handler in the same `loadCommandHandlers()` chain
+ *   (`src/auto-reply/reply/commands-plan.ts`,
+ *   `commands-handlers.runtime.ts`); the plugin rides the generic
+ *   `handlePluginCommand` slot for functionally equivalent
+ *   universality. The Telegram 100-command cap is a host-side
+ *   constraint with no in-host plugin-side equivalent.
  */
 
 import type {
@@ -70,7 +96,34 @@ export interface CreatePlanSlashCommandInput {
 }
 
 /**
+ * `agentPromptGuidance` for `/plan` — injected into the agent's system
+ * prompt by the host (`listRegisteredPluginAgentPromptGuidance`) so the
+ * agent knows the command exists and can tell the user how to invoke
+ * it. This is the discoverability fallback for the case where the
+ * Telegram native "/" menu is full (see the W1-S18-1 note in the file
+ * header): even with no menu entry, the agent can still surface
+ * `/plan accept | reject` to the user.
+ */
+const PLAN_AGENT_PROMPT_GUIDANCE: readonly string[] = [
+  "Plan mode is available. When a plan is awaiting the user's decision, " +
+    "the user can resolve it by typing a slash command directly in chat: " +
+    "`/plan accept` (approve verbatim), `/plan edit <new plan text>` " +
+    "(approve with edits), `/plan reject [reason]` (reject for revision), " +
+    "or `/plan cancel` (exit plan mode). `/plan enter` enters plan mode. " +
+    "These work on every channel even if the channel's native command " +
+    "menu does not list them — if a user cannot find `/plan` in an " +
+    "autocomplete menu, tell them to type it as a normal message.",
+];
+
+/**
  * Build the `/plan` command definition. Pass into `api.registerCommand`.
+ *
+ * `/plan` is the PRIMARY plan-mode command on every channel, including
+ * Telegram. `channels` is intentionally NOT set — `/plan` must be
+ * eligible for every channel's native menu and the universal text
+ * pipeline. `/plan-mode` (the alias) is the one that takes a `channels`
+ * filter, to free a scarce Telegram native-menu slot — see
+ * `createPlanModeSlashCommand` below and the W1-S18-1 header note.
  */
 export function createPlanSlashCommand(
   input: CreatePlanSlashCommandInput,
@@ -81,13 +134,63 @@ export function createPlanSlashCommand(
       "Plan-mode controls: /plan enter | accept | edit | reject | cancel | auto on|off",
     acceptsArgs: true,
     // Available on every channel; do NOT restrict via `channels`.
+    agentPromptGuidance: PLAN_AGENT_PROMPT_GUIDANCE,
     handler: async (ctx) => handlePlanCommand(ctx, input),
   };
 }
 
 /**
+ * Channels on which the `/plan-mode` alias is registered. Telegram is
+ * DELIBERATELY EXCLUDED — see `createPlanModeSlashCommand` below.
+ *
+ * (`pluginCommandSupportsChannel` lowercase-normalizes channel ids, so
+ * these are the canonical ids the host's channel plugins use.)
+ */
+const PLAN_MODE_ALIAS_CHANNELS: readonly string[] = [
+  "webchat",
+  "slack",
+  "discord",
+  "cli",
+];
+
+/**
  * Companion command: `/plan-mode` as an alias-shorthand for `/plan`.
- * Users who memorize `/plan-mode` from the in-host UX find it works.
+ * Users who memorize `/plan-mode` from the in-host UX find it works on
+ * webchat / Slack / Discord / CLI.
+ *
+ * # W1-S18-1 — why `channels` excludes Telegram
+ *
+ * Telegram caps a bot's native "/" command menu at 100 commands
+ * (`TELEGRAM_MAX_COMMANDS`). A gateway with many channels/plugins can
+ * exceed that; host built-ins are listed first and plugin commands are
+ * appended, so plugin commands land in the dropped tail. Registering
+ * BOTH `/plan` and `/plan-mode` consumes TWO scarce Telegram menu
+ * slots and doubles the chance one of them is sliced off. `/plan` is
+ * the canonical command; `/plan-mode` is a redundant convenience
+ * alias. So we keep `/plan-mode` OFF Telegram entirely — freeing the
+ * second slot for `/plan`.
+ *
+ * IMPORTANT — honest residual limitation: the SDK exposes exactly ONE
+ * per-command channel-scoping mechanism, the `channels` allowlist, and
+ * `pluginCommandSupportsChannel` gates BOTH dispatch paths with it:
+ *   - Path B, the native "/" menu (`getPluginCommandSpecs` →
+ *     `listProviderPluginCommandSpecs`); and
+ *   - Path A, the universal auto-reply text pipeline, on channel-aware
+ *     call sites — `handlePluginCommand` calls
+ *     `matchPluginCommand(body, { channel })` with the Telegram channel.
+ * There is NO SDK field for "functional via text but hidden from the
+ * native menu". Consequently, excluding `telegram` here means the
+ * literal string `/plan-mode` is non-functional on Telegram (both menu
+ * AND typed-as-text). This is acceptable: `/plan` IS the Telegram
+ * surface and is fully functional there (menu, native handler, and
+ * text pipeline), and `/plan-mode` remains fully functional on every
+ * other channel. A Telegram user who types `/plan-mode` gets no match;
+ * they should use `/plan`. (An earlier build-spec draft claimed the
+ * text pipeline would still serve `/plan-mode` on Telegram — that is
+ * incorrect; `matchPluginCommand` applies the same `channels` gate.)
+ *
+ * `/plan` itself is unaffected — it sets no `channels` filter and
+ * stays eligible for the Telegram native menu and text pipeline.
  */
 export function createPlanModeSlashCommand(
   input: CreatePlanSlashCommandInput,
@@ -97,6 +200,9 @@ export function createPlanModeSlashCommand(
     description:
       "Alias for `/plan` — enter plan mode and inspect/resolve approvals.",
     acceptsArgs: true,
+    // Excludes "telegram" — see the doc comment above (W1-S18-1).
+    channels: PLAN_MODE_ALIAS_CHANNELS,
+    agentPromptGuidance: PLAN_AGENT_PROMPT_GUIDANCE,
     handler: async (ctx) => handlePlanCommand(ctx, input),
   };
 }
