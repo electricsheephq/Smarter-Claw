@@ -76,9 +76,41 @@ describe("/plan slash command — registration shape", () => {
     expect(cmd.acceptsArgs).toBe(true);
   });
 
-  it("neither command sets a `channels` filter (available everywhere)", () => {
+  it("`/plan` sets NO `channels` filter — canonical command on every channel", () => {
+    // `/plan` must stay eligible for every channel's native menu AND
+    // the universal text pipeline. A `channels` filter would narrow
+    // both. It is the primary plan-mode command on Telegram included.
     expect(createPlanSlashCommand(makeInput()).channels).toBeUndefined();
-    expect(createPlanModeSlashCommand(makeInput()).channels).toBeUndefined();
+  });
+
+  it("`/plan-mode` alias EXCLUDES telegram from `channels` (W1-S18-1)", () => {
+    // The alias is scoped off Telegram so it does not consume a second
+    // scarce Telegram native-menu slot (100-command cap). It stays
+    // functional on webchat / Slack / Discord / CLI. `pluginCommand-
+    // SupportsChannel` gates BOTH dispatch paths with this list, so on
+    // Telegram `/plan-mode` is fully off (menu + text) — `/plan` is the
+    // Telegram surface. See the doc comment in slash-commands.ts.
+    const channels = createPlanModeSlashCommand(makeInput()).channels;
+    expect(channels).toBeDefined();
+    expect(channels).not.toContain("telegram");
+    // Positive: the alias is still available on the non-Telegram
+    // channels (it must remain reachable everywhere else).
+    expect(channels).toEqual(
+      expect.arrayContaining(["webchat", "slack", "discord", "cli"]),
+    );
+  });
+
+  it("both commands expose `agentPromptGuidance` (Telegram-menu fallback)", () => {
+    // When the Telegram native "/" menu is full and drops `/plan`, the
+    // host injects this guidance into the agent's system prompt so the
+    // agent can still tell the user to type `/plan accept` etc.
+    const planGuidance = createPlanSlashCommand(makeInput()).agentPromptGuidance;
+    expect(planGuidance).toBeDefined();
+    expect(planGuidance!.length).toBeGreaterThan(0);
+    expect(planGuidance!.join(" ")).toMatch(/\/plan accept/);
+    expect(
+      createPlanModeSlashCommand(makeInput()).agentPromptGuidance,
+    ).toBeDefined();
   });
 });
 

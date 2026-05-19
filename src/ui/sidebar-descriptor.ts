@@ -59,6 +59,15 @@ export function buildPlanModeSidebarDescriptor(): PluginControlUiDescriptor {
       "mutations are blocked until you approve the proposed plan. " +
       "Approve / Edit / Reject / Cancel through the sidebar actions.",
     // No placement — let the host's Control UI decide based on surface.
+    //
+    // The `properties` block MUST mirror `PlanModeSessionState`
+    // (`src/types.ts`) field-for-field — the store writes every field
+    // declared there, and a UI client doing strict schema validation
+    // against this descriptor would otherwise reject or silently drop
+    // any field the schema omits. There is no in-host equivalent for
+    // this descriptor (the in-host plan-mode UI lived in the webchat
+    // chip + approval-card surfaces, not a registered sidebar slot);
+    // the parity target is internal consistency with `types.ts`.
     schema: {
       type: "object",
       properties: {
@@ -74,8 +83,20 @@ export function buildPlanModeSidebarDescriptor(): PluginControlUiDescriptor {
             "timed_out",
           ],
         },
+        // Unix ms timestamps. Written by the PlanModeStore on enter /
+        // approval-confirmation / any mutation (see store.ts). Optional
+        // on a fresh session, so NOT in `required`.
+        enteredAt: { type: "integer" },
+        confirmedAt: { type: "integer" },
+        updatedAt: { type: "integer" },
         rejectionCount: { type: "integer", minimum: 0 },
         approvalId: { type: "string" },
+        // Parent run id captured from exit_plan_mode — used by the
+        // gateway-side approval handler for the in-flight-subagent gate.
+        approvalRunId: { type: "string" },
+        // SHA-1 prefix (12 chars) of the most-recent exit_plan_mode
+        // payload — duplicate-exit detection.
+        lastPlanPayloadHash: { type: "string" },
         title: { type: "string" },
         feedback: { type: "string" },
         lastPlanSteps: {
