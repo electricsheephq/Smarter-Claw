@@ -756,3 +756,382 @@ describe("exit_plan_mode — W1-F2 markdown persister", () => {
     }
   });
 });
+
+/**
+ * W1-F4 (P1) fix (2026-05-20): the `autoApprove` flag had a real
+ * mutator + a real `/plan auto on|off` command, but no caller —
+ * RELEASE_NOTES known-limitation #3 said "the runtime side that
+ * actually FIRES auto-approve on `exit_plan_mode` … lands at
+ * P-final." `benchmark-codex-claude-code.md` audit row F4 escalated
+ * this to a "non-functional safety-relevant control" P1.
+ *
+ * These tests pin the trigger contract at the tool layer:
+ *   - When `autoApprove` is OFF (or unset), the trigger never fires.
+ *   - When `autoApprove` is ON and the persist succeeds, the trigger
+ *     fires with the persisted approvalId + the plan steps.
+ *   - Fires on BOTH the "persisted" and "reused" paths (matching the
+ *     in-host's unconditional void-fire after the approval emit).
+ *   - Re-reads the flag immediately before firing (operator toggle
+ *     off mid-cycle is honored — no auto-approve on a flipped state).
+ *   - The trigger callback's failures DO NOT propagate out of execute.
+ *
+ * The end-to-end "auto-approve produces an approved injection +
+ * advances the state machine" coverage lives in the eva-live-smokes
+ * (see `tests/eva-live-smokes/smoke-5-auto-approve.test.ts`); these
+ * unit tests are scoped to the tool layer's trigger-firing rules.
+ *
+ * host_ref: src/agents/pi-embedded-subscribe.handlers.tools.ts:387-477
+ *   (`autoApproveIfEnabled`)
+ * host_ref: src/agents/pi-embedded-subscribe.handlers.tools.ts:1949-1962
+ *   (the in-host callsite, void-fired after the approval emit)
+ */
+describe("exit_plan_mode — W1-F4 auto-approve trigger", () => {
+  /**
+   * Build a tool with both an in-mem store and an optional
+   * pre-existing `autoApprove` flag on the seeded session. Capture
+   * trigger calls + log lines for assertion.
+   */
+  function buildWithAutoApprove(
+    seedAutoApprove: boolean,
+  ): {
+    gw: InMemoryGateway;
+    store: PlanModeStore;
+    factory: ReturnType<typeof createExitPlanModeTool>;
+    triggerCalls: Array<{
+      sessionKey: string;
+      approvalId: string;
+      planSteps: unknown[];
+    }>;
+    triggerErrors: Error[];
+    info: string[];
+    warn: string[];
+    error: string[];
+    /** Mutator that lets a test simulate the operator toggling
+     *  autoApprove OFF mid-cycle, between persist and trigger. */
+    setAutoApprove(enabled: boolean): Promise<void>;
+  } {
+    const gw = new InMemoryGateway();
+    gw.seed(SESSION_KEY, {
+      mode: "plan",
+      approval: "none",
+      rejectionCount: 0,
+      enteredAt: 1_700_000_000_000,
+      ...(seedAutoApprove ? { autoApprove: true } : {}),
+    });
+    const store = new PlanModeStore(gw);
+    const triggerCalls: Array<{
+      sessionKey: string;
+      approvalId: string;
+      planSteps: unknown[];
+    }> = [];
+    const triggerErrors: Error[] = [];
+    const info: string[] = [];
+    const warn: string[] = [];
+    const error: string[] = [];
+    const factory = createExitPlanModeTool({
+      store,
+      autoApprove: {
+        trigger: async (params) => {
+          triggerCalls.push({
+            sessionKey: params.sessionKey,
+            approvalId: params.approvalId,
+            // Materialize a shallow copy so tests assert on a snapshot.
+            planSteps: [...params.planSteps],
+          });
+          if (triggerErrors.length > 0) {
+            throw triggerErrors.shift();
+          }
+        },
+        log: {
+          info: (m) => info.push(m),
+          warn: (m) => warn.push(m),
+          error: (m) => error.push(m),
+        },
+      },
+    });
+    return {
+      gw,
+      store,
+      factory,
+      triggerCalls,
+      triggerErrors,
+      info,
+      warn,
+      error,
+      async setAutoApprove(enabled: boolean) {
+        await store.setAutoApprove({ sessionKey: SESSION_KEY, enabled });
+      },
+    };
+  }
+
+  it("does NOT fire when autoApprove option is unwired (pre-W1-F4 baseline preserved)", async () => {
+    // Build a tool WITHOUT autoApprove wired AND with the flag
+    // pre-set on the seed. The flag exists in state but the tool
+    // option is absent — no trigger should run.
+    const gw = new InMemoryGateway();
+    gw.seed(SESSION_KEY, {
+      mode: "plan",
+      approval: "none",
+      rejectionCount: 0,
+      enteredAt: 1_700_000_000_000,
+      autoApprove: true,
+    });
+    const store = new PlanModeStore(gw);
+    const triggerCalls: unknown[] = [];
+    const factory = createExitPlanModeTool({ store }); // no autoApprove opt
+    const tool = factory({ sessionKey: SESSION_KEY });
+    const result = await tool.execute("c1", {
+      title: TITLE,
+      plan: [{ step: "a", status: "pending" }],
+    });
+    expect((result.details as { status: string }).status).toBe(
+      "approval-requested",
+    );
+    // The trigger captures bucket is local to the test (no trigger
+    // was wired) — confirm via the persisted state, which should
+    // STILL be pending (no auto-resolve happened).
+    expect(triggerCalls).toEqual([]);
+    expect(gw.peek(SESSION_KEY)?.approval).toBe("pending");
+  });
+
+  it("does NOT fire when autoApprove is unset on the session state", async () => {
+    const t = buildWithAutoApprove(false);
+    const tool = t.factory({ sessionKey: SESSION_KEY });
+    const result = await tool.execute("c1", {
+      title: TITLE,
+      plan: [{ step: "a", status: "pending" }],
+    });
+    expect((result.details as { status: string }).status).toBe(
+      "approval-requested",
+    );
+    // Give the void-fired trigger a tick to potentially run.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(t.triggerCalls).toEqual([]);
+    // The skip should be logged at info (not warn/error) — toggling
+    // off is the expected operator-driven path, not a failure.
+    expect(
+      t.info.some((m) => /auto-approve skipped/i.test(m)),
+    ).toBe(true);
+  });
+
+  it("fires with the persisted approvalId + plan steps when autoApprove is on (persisted path)", async () => {
+    const t = buildWithAutoApprove(true);
+    const tool = t.factory({ sessionKey: SESSION_KEY });
+    const result = await tool.execute("c1", {
+      title: TITLE,
+      plan: [
+        { step: "Bump eslint", status: "pending" },
+        { step: "Bump prettier", status: "pending" },
+      ],
+    });
+    expect((result.details as { status: string }).status).toBe(
+      "approval-requested",
+    );
+    const approvalId = (result.details as { approvalId: string }).approvalId;
+    // Void-fired trigger: drain a tick.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(t.triggerCalls).toHaveLength(1);
+    expect(t.triggerCalls[0]?.sessionKey).toBe(SESSION_KEY);
+    expect(t.triggerCalls[0]?.approvalId).toBe(approvalId);
+    expect(t.triggerCalls[0]?.planSteps).toEqual([
+      { step: "Bump eslint", status: "pending" },
+      { step: "Bump prettier", status: "pending" },
+    ]);
+    expect(
+      t.info.some((m) => /auto-approve fired/i.test(m)),
+    ).toBe(true);
+  });
+
+  it("fires on the reused path (duplicate detection) when autoApprove is on", async () => {
+    const t = buildWithAutoApprove(true);
+    const tool = t.factory({ sessionKey: SESSION_KEY });
+    const input = {
+      title: TITLE,
+      plan: [{ step: "a", status: "pending" }],
+    };
+    const first = await tool.execute("c1", input);
+    const firstId = (first.details as { approvalId: string }).approvalId;
+    await new Promise((r) => setTimeout(r, 10));
+    // First call fired the trigger. But to test the reused branch we
+    // need to roll the state back to "pending" (the test trigger
+    // doesn't change state, so it's still pending — perfect for
+    // simulating an unresolved duplicate submit).
+    expect(t.gw.peek(SESSION_KEY)?.approval).toBe("pending");
+    expect(t.gw.peek(SESSION_KEY)?.approvalId).toBe(firstId);
+
+    const second = await tool.execute("c2", input);
+    expect((second.details as { status: string }).status).toBe(
+      "duplicate-detected",
+    );
+    expect((second.details as { approvalId: string }).approvalId).toBe(firstId);
+    await new Promise((r) => setTimeout(r, 10));
+    // BOTH calls fired the trigger (matching in-host's unconditional
+    // void-fire after the approval emit).
+    expect(t.triggerCalls).toHaveLength(2);
+    expect(t.triggerCalls[1]?.approvalId).toBe(firstId);
+  });
+
+  it("does NOT fire when autoApprove is flipped OFF between persist and trigger", async () => {
+    // Simulate the operator hitting `/plan auto off` in the brief
+    // window between exit_plan_mode's persist and the auto-approve
+    // trigger. The helper's re-read guard must honor the toggle.
+    const t = buildWithAutoApprove(true);
+    const tool = t.factory({ sessionKey: SESSION_KEY });
+    // Wrap the original trigger so we can toggle off BEFORE it runs.
+    // The cleanest seam: monkey-patch readSnapshot to return
+    // autoApprove=false on the trigger's re-read. The trigger reads
+    // the store AFTER persist; we intercept that read.
+    const originalReadSnapshot = t.store.readSnapshot.bind(t.store);
+    let readCount = 0;
+    (t.store as { readSnapshot: typeof t.store.readSnapshot }).readSnapshot =
+      async (sessionKey: string) => {
+        readCount++;
+        const snap = await originalReadSnapshot(sessionKey);
+        if (!snap) return snap;
+        // First read happens in the trigger helper — pretend
+        // autoApprove flipped off in the meantime.
+        return { ...snap, autoApprove: false };
+      };
+    const result = await tool.execute("c1", {
+      title: TITLE,
+      plan: [{ step: "a", status: "pending" }],
+    });
+    expect((result.details as { status: string }).status).toBe(
+      "approval-requested",
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    expect(t.triggerCalls).toEqual([]);
+    expect(readCount).toBeGreaterThan(0);
+    // The bail-out should be info-level (operator action, not error).
+    expect(
+      t.info.some((m) => /auto-approve skipped/i.test(m)),
+    ).toBe(true);
+  });
+
+  it("does NOT fire when the approvalId has rotated between persist and trigger", async () => {
+    // Simulate a fast-follow exit_plan_mode that rotated the
+    // approvalId before the trigger re-reads. The mismatch guard
+    // should bail.
+    const t = buildWithAutoApprove(true);
+    const tool = t.factory({ sessionKey: SESSION_KEY });
+    const originalReadSnapshot = t.store.readSnapshot.bind(t.store);
+    (t.store as { readSnapshot: typeof t.store.readSnapshot }).readSnapshot =
+      async (sessionKey: string) => {
+        const snap = await originalReadSnapshot(sessionKey);
+        if (!snap) return snap;
+        // Pretend a new exit_plan_mode landed with a different approvalId.
+        return { ...snap, approvalId: "plan-other-rotated-id" };
+      };
+    const result = await tool.execute("c1", {
+      title: TITLE,
+      plan: [{ step: "a", status: "pending" }],
+    });
+    expect((result.details as { status: string }).status).toBe(
+      "approval-requested",
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    expect(t.triggerCalls).toEqual([]);
+    // Mismatch is logged at warn (it's a race we didn't expect, not
+    // a user-intended toggle).
+    expect(
+      t.warn.some((m) => /auto-approve aborted/i.test(m)),
+    ).toBe(true);
+  });
+
+  it("trigger callback failures DO NOT propagate out of execute (fail-soft)", async () => {
+    const t = buildWithAutoApprove(true);
+    // Queue a synthetic trigger failure.
+    t.triggerErrors.push(new Error("simulated recordApproval failure"));
+    const tool = t.factory({ sessionKey: SESSION_KEY });
+    // execute must still return a successful result; the trigger is
+    // void-fired and errors caught.
+    const result = await tool.execute("c1", {
+      title: TITLE,
+      plan: [{ step: "a", status: "pending" }],
+    });
+    expect((result.details as { status: string }).status).toBe(
+      "approval-requested",
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    // The trigger captured the call before throwing.
+    expect(t.triggerCalls).toHaveLength(1);
+    // Error logged at error level (not just warn) so operators
+    // notice the silent degradation to manual mode.
+    expect(t.error.length).toBeGreaterThan(0);
+    expect(
+      t.error.some((m) => /auto-approve FAILED/i.test(m)),
+    ).toBe(true);
+    expect(
+      t.error.some((m) => /simulated recordApproval failure/.test(m)),
+    ).toBe(true);
+  });
+
+  it("does NOT fire when the persist itself failed (kind === 'failed')", async () => {
+    // Build a broken gateway so persistApprovalRequest returns
+    // kind:"failed". The trigger gate excludes failed (and skipped)
+    // so no trigger should run.
+    const triggerCalls: unknown[] = [];
+    const brokenGw = {
+      async withLock<T>(): Promise<{ transition?: T }> {
+        throw new Error("simulated IO failure");
+      },
+    };
+    const store = new PlanModeStore(brokenGw as never);
+    const factory = createExitPlanModeTool({
+      store,
+      autoApprove: {
+        trigger: async () => {
+          triggerCalls.push("should-not-fire");
+        },
+      },
+    });
+    const tool = factory({ sessionKey: SESSION_KEY });
+    const result = await tool.execute("c1", {
+      title: TITLE,
+      plan: [{ step: "a", status: "pending" }],
+    });
+    expect((result.details as { status: string }).status).toBe("failed");
+    await new Promise((r) => setTimeout(r, 10));
+    expect(triggerCalls).toEqual([]);
+  });
+
+  it("does NOT fire when the persist was skipped (kind === 'skipped' / not in plan mode)", async () => {
+    // Unseeded gateway: persistApprovalRequest returns kind:"skipped".
+    const gw = new InMemoryGateway();
+    const store = new PlanModeStore(gw);
+    const triggerCalls: unknown[] = [];
+    const factory = createExitPlanModeTool({
+      store,
+      autoApprove: {
+        trigger: async () => {
+          triggerCalls.push("should-not-fire");
+        },
+      },
+    });
+    const tool = factory({ sessionKey: SESSION_KEY });
+    const result = await tool.execute("c1", {
+      title: TITLE,
+      plan: [{ step: "a", status: "pending" }],
+    });
+    expect((result.details as { status: string }).status).toBe(
+      "not-in-plan-mode",
+    );
+    await new Promise((r) => setTimeout(r, 10));
+    expect(triggerCalls).toEqual([]);
+  });
+
+  it("preserves the audit-trail approvalId — the trigger receives the SAME id emitted in the result", async () => {
+    const t = buildWithAutoApprove(true);
+    const tool = t.factory({ sessionKey: SESSION_KEY });
+    const result = await tool.execute("c1", {
+      title: TITLE,
+      plan: [{ step: "a", status: "pending" }],
+    });
+    const emittedApprovalId = (result.details as { approvalId: string })
+      .approvalId;
+    await new Promise((r) => setTimeout(r, 10));
+    expect(t.triggerCalls[0]?.approvalId).toBe(emittedApprovalId);
+    // Also matches the persisted state's approvalId.
+    expect(t.gw.peek(SESSION_KEY)?.approvalId).toBe(emittedApprovalId);
+  });
+});

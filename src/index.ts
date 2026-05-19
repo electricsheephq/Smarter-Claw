@@ -41,6 +41,7 @@ import {
   extractApplyPatchTargetPaths,
 } from "./gates/accept-edits-gate.js";
 import { checkMutationGate } from "./gates/mutation-gate.js";
+import { buildApprovedPlanInjection } from "./plan-mode/approval.js";
 import {
   buildPlanModeActiveSystemContext,
   buildPlanModeAvailableSystemContext,
@@ -54,6 +55,7 @@ import {
 } from "./runtime/debug-log.js";
 import { decideEscalatingRetry } from "./runtime/escalating-retry.js";
 import { GrantLedger } from "./runtime/grant-ledger.js";
+import { enqueuePlanApprovedInjection } from "./runtime/injection-writer.js";
 import { decidePlanTierModel } from "./runtime/plan-tier-model.js";
 import { createAskUserQuestionTool } from "./tools/ask-user-question.js";
 import { createEnterPlanModeTool } from "./tools/enter-plan-mode.js";
@@ -314,6 +316,31 @@ export default definePluginEntry({
     // approval flow is unaffected.
     //
     // host_ref: src/agents/pi-embedded-subscribe.handlers.tools.ts:1925-1949
+    //
+    // W1-F4 (P1) fix (2026-05-20): wire the in-host auto-approve
+    // trigger. When the operator has flipped `autoApprove: true`
+    // (via `/plan auto on`), `exit_plan_mode` now resolves the
+    // freshly-persisted approval IMMEDIATELY as `approve` so the
+    // agent self-executes instead of waiting for a manual click.
+    //
+    // Pre-W1-F4 the flag was a real flag with a real mutator + a
+    // real slash command, but NO caller — `RELEASE_NOTES.md`
+    // known-limitation #3 acknowledged this gap, and the
+    // benchmark-codex-claude-code.md audit (F4) flagged it as a
+    // "non-functional safety-relevant control".
+    //
+    // Implementation: the trigger callback closes over `store` +
+    // `api` and reuses the exact same two operations that
+    // `plan.accept` uses (recordApproval + enqueuePlanApprovedInjection
+    // with the full buildApprovedPlanInjection preamble). Fires
+    // `approve`, NOT `edit` — auto-approve = verbatim execution of
+    // the submitted plan, never grants the agent acceptEdits.
+    //
+    // host_ref: src/agents/pi-embedded-subscribe.handlers.tools.ts:387-477
+    //   (in-host `autoApproveIfEnabled` — the function this wiring
+    //   ports the behavioral contract of).
+    // host_ref: src/agents/pi-embedded-subscribe.handlers.tools.ts:1949-1962
+    //   (in-host callsite, void-fired after the approval emit).
     api.registerTool(
       createExitPlanModeTool({
         store,
@@ -325,6 +352,66 @@ export default definePluginEntry({
             ...(api.logger.debug
               ? { debug: (msg) => api.logger.debug!(msg) }
               : {}),
+          },
+        },
+        autoApprove: {
+          // The trigger mirrors `plan.accept`'s two-step resolution
+          // (src/ui/session-actions.ts ~260-302):
+          //   1. store.recordApproval (with the expected approvalId
+          //      version-token so the stale-event guard fires if a
+          //      racing /plan reject already landed),
+          //   2. enqueuePlanApprovedInjection with the FULL
+          //      buildApprovedPlanInjection(planSteps) preamble
+          //      (opener + "execute it now without re-planning" +
+          //      numbered step list). Matches the in-host
+          //      `sessions-patch.ts approve` branch which emits the
+          //      same text via `buildApprovedPlanInjection`.
+          trigger: async ({ sessionKey, approvalId, planSteps }) => {
+            const persist = await store.recordApproval({
+              sessionKey,
+              edited: false,
+              expectedApprovalId: approvalId,
+            });
+            if (persist.kind === "failed") {
+              throw persist.error;
+            }
+            if (persist.kind === "skipped") {
+              // The state-machine guard fired (terminal state, stale
+              // id, or session already exited plan-mode). The
+              // fireAutoApproveIfEnabled helper's pre-checks should
+              // have caught most of these — log here so we see any
+              // remaining races and don't enqueue a phantom injection.
+              api.logger.warn(
+                `[smarter-claw] auto-approve recordApproval skipped: ${persist.reason} ` +
+                  `sessionKey=${sessionKey} approvalId=${approvalId}`,
+              );
+              return;
+            }
+            const stepLines = planSteps.map((step) =>
+              step.activeForm
+                ? `${step.step} (${step.activeForm})`
+                : step.step,
+            );
+            const fullText =
+              stepLines.length > 0
+                ? buildApprovedPlanInjection(stepLines)
+                : undefined;
+            await enqueuePlanApprovedInjection(api, {
+              sessionKey,
+              approvalId,
+              edited: false,
+              ...(fullText ? { fullText } : {}),
+            });
+          },
+          log: {
+            info: (msg) => api.logger.info(msg),
+            warn: (msg) => api.logger.warn(msg),
+            error: (msg) =>
+              // OpenClawPluginLogger has `error` as optional but the
+              // SDK shim always provides it; fall back to warn for
+              // defensive completeness.
+              (api.logger as { error?: (msg: string) => void }).error?.(msg) ??
+              api.logger.warn(msg),
           },
         },
       }),

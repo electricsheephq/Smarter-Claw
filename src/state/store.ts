@@ -646,10 +646,22 @@ export class PlanModeStore {
    * Toggle the autoApprove flag on the session's plan-mode state.
    *
    * When `autoApprove === true`, the next `exit_plan_mode` will resolve
-   * approval immediately without waiting for user input — the runtime
-   * (P-13 wiring) skips the pending-state intermediate and goes
-   * straight to approved + enqueues the [PLAN_DECISION]: approved
-   * injection on the agent's next turn.
+   * approval IMMEDIATELY (W1-F4 wiring, 2026-05-20) — the runtime
+   * persists the approval as `pending` (visible to UI for the brief
+   * window before auto-resolve) and then fires `recordApproval` +
+   * enqueues the [PLAN_DECISION]: approved injection on the agent's
+   * next turn. The agent self-executes the submitted plan verbatim.
+   *
+   * # Safety
+   *
+   * Auto-approve fires `approve` (NOT `edit`), so it does NOT grant
+   * the agent the `acceptEdits` permission. The 3 hard constraints
+   * enforced by the accept-edits gate (no destructive / no
+   * self-restart / no config changes) are scoped to acceptEdits-granted
+   * sessions; auto-approve sessions execute the plan as the operator
+   * pre-approved it. Toggling this flag is a trust delegation — use
+   * `/plan auto off` to revoke at any time. The trigger re-reads the
+   * flag immediately before firing so mid-cycle toggles are honored.
    *
    * Idempotent: setting the flag to its current value still writes
    * (to refresh updatedAt) but emits no audit event (transition is
@@ -659,6 +671,9 @@ export class PlanModeStore {
    *   await store.setAutoApprove({ sessionKey, enabled: true });
    *   // Next exit_plan_mode auto-approves; agent self-executes.
    *
+   * host_ref: src/agents/pi-embedded-subscribe.handlers.tools.ts:387-477
+   *   (`autoApproveIfEnabled` — the in-host trigger this flag now wires
+   *   to via `src/tools/exit-plan-mode.ts ExitPlanModeAutoApproveOptions`).
    * host_ref: in-host `auto-enable.ts` toggle wiring (PR-10 auto-mode).
    */
   async setAutoApprove(input: {

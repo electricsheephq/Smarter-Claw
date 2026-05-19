@@ -114,6 +114,106 @@ export interface ExitPlanModePersisterOptions {
   };
 }
 
+/**
+ * W1-F4 fix (2026-05-20): auto-approve trigger contract.
+ *
+ * When the operator has flipped `autoApprove: true` on the session
+ * (via `/plan auto on` → `plan.auto.toggle` → `setAutoApprove`),
+ * `exit_plan_mode` should resolve the freshly-persisted approval
+ * IMMEDIATELY as `approve` instead of leaving the approval card
+ * armed for a manual click. This contract supplies the callback
+ * the tool fires after a successful persist when the persisted
+ * state's `autoApprove === true`.
+ *
+ * # Semantics
+ *
+ * The trigger fires once per persist (on `kind === "persisted"` AND
+ * `kind === "reused"` — both produce a `pending` approval with the
+ * effective `approvalId` returned by the store). The callback owns
+ * the equivalent of the in-host's
+ * `sessions.patch { planApproval: { action: "approve", approvalId } }`
+ * roundtrip — typically `store.recordApproval` + the approved-plan
+ * injection enqueue. Production wiring lives in `src/index.ts`.
+ *
+ * # Why a callback (not direct api access)
+ *
+ * The tool already accepts a callback-shaped `persister` for the same
+ * reason: keeping `api`-typed surfaces out of `src/tools/` so the tool
+ * stays unit-testable without an `api` stub. The `index.ts` callback
+ * closes over the live `store` + `api` and supplies both the state
+ * mutation (`recordApproval`) and the injection enqueue
+ * (`enqueuePlanApprovedInjection`) in a single seam.
+ *
+ * # Safety
+ *
+ * - Fires `approve`, NOT `edit` — never grants the agent acceptEdits
+ *   permission. The 3 hard constraints (no destructive / no
+ *   self-restart / no config changes) apply only when acceptEdits is
+ *   granted, so this matches the in-host behavior: auto-approve =
+ *   verbatim execution of the submitted plan.
+ * - The accept-edits gate at `src/index.ts` keys on
+ *   `approval === "edited"` and is therefore intentionally bypassed
+ *   when auto-approve fires `approve`. Matches in-host
+ *   `sessions-patch.ts:992-993` where the `approve` path clears
+ *   `postApprovalPermissions`.
+ * - The approvalId emitted in the approval event and the approvalId
+ *   passed to the trigger are the SAME value (returned from
+ *   `store.persistApprovalRequest`). Audit trail thread is intact.
+ * - Toggling `autoApprove` OFF mid-cycle is honored: the in-host
+ *   polls the store immediately before firing the approve patch
+ *   (`autoApproveIfEnabled` re-checks the flag inside the poll loop
+ *   and bails on `false`). The plugin re-reads via `store.readSnapshot`
+ *   inside the trigger for the same guard. If the operator toggled
+ *   off between persist and trigger, the approval card stays armed.
+ *
+ * # Failure handling
+ *
+ * Trigger failures are caught + logged (matching the in-host's
+ * `error`-level log on `autoApproveIfEnabled` exceptions). The
+ * approval card stays on-screen for a manual click — auto-mode
+ * briefly behaves like manual mode. This is the same degradation
+ * contract as the in-host.
+ *
+ * host_ref: src/agents/pi-embedded-subscribe.handlers.tools.ts:387-477
+ *   (`autoApproveIfEnabled` — the in-host trigger, with poll-loop +
+ *   no-op-on-disabled + error-level log on failure).
+ * host_ref: src/agents/pi-embedded-subscribe.handlers.tools.ts:1949-1962
+ *   (the in-host callsite, void-fired after the approval emit).
+ */
+export interface ExitPlanModeAutoApproveOptions {
+  /**
+   * Fired after a successful `persistApprovalRequest` (persisted or
+   * reused) when the persisted plan-mode state has `autoApprove === true`.
+   * Resolves the approval immediately so the agent self-executes.
+   *
+   * Production wiring: calls `store.recordApproval` to flip the
+   * state machine + enqueues the
+   * `buildApprovedPlanInjection(planSteps)` text via
+   * `enqueuePlanApprovedInjection` (same path as `plan.accept`).
+   *
+   * Failures should NOT throw — log + return. The tool catches
+   * defensively but the contract is fail-soft inside the callback.
+   */
+  trigger: (params: {
+    sessionKey: string;
+    approvalId: string;
+    /**
+     * The plan steps from the just-persisted approval (already
+     * materialized — no extra store read required).
+     */
+    planSteps: PlanStep[];
+  }) => Promise<void> | void;
+  /**
+   * Logger seam. Defaults to a no-op so the trigger never spams
+   * stdout in tests. Production wiring injects `api.logger` shims.
+   */
+  log?: {
+    info?: (msg: string) => void;
+    warn?: (msg: string) => void;
+    error?: (msg: string) => void;
+  };
+}
+
 export interface CreateExitPlanModeToolInput {
   store: PlanModeStore;
   /**
@@ -124,6 +224,16 @@ export interface CreateExitPlanModeToolInput {
    * tool-level behavior from filesystem effects.
    */
   persister?: ExitPlanModePersisterOptions;
+  /**
+   * W1-F4: optional auto-approve trigger wiring. When omitted, the
+   * autoApprove flag has no runtime effect (the pre-W1-F4 behavior).
+   * When supplied AND the persisted state has `autoApprove === true`,
+   * the trigger fires after persist to resolve the approval
+   * immediately. Production wiring lives in `src/index.ts`.
+   *
+   * host_ref: src/agents/pi-embedded-subscribe.handlers.tools.ts:1949-1962
+   */
+  autoApprove?: ExitPlanModeAutoApproveOptions;
 }
 
 interface ToolContext {
@@ -519,6 +629,66 @@ export function createExitPlanModeTool(opts: CreateExitPlanModeToolInput) {
         });
       }
 
+      // W1-F4 fix (2026-05-20): auto-approve trigger.
+      //
+      // If the operator pre-toggled `autoApprove: true` (via
+      // `/plan auto on` → `setAutoApprove`), resolve the freshly-
+      // persisted approval IMMEDIATELY as `approve` so the agent
+      // self-executes instead of waiting on a manual click.
+      //
+      // Pre-W1-F4 the flag was a real flag with a real mutator + a
+      // real slash command, but no caller — `RELEASE_NOTES.md`
+      // known-limitation #3 acknowledged this gap. The audit's verdict
+      // ("non-functional safety-relevant control. Wire it or hide it.")
+      // is satisfied here by wiring it.
+      //
+      // # Why fires on BOTH "persisted" and "reused"
+      //
+      // The in-host's `autoApproveIfEnabled` is void-fired after the
+      // approval emit unconditionally (`subscribe.handlers.tools.ts:1956-1962`);
+      // it polls the persisted state for the matching approvalId, which
+      // succeeds for both fresh and duplicate cycles. The reused path
+      // produces a still-pending approval with the original approvalId
+      // — if the user toggled auto-approve AFTER the original card
+      // appeared but BEFORE acting on it, the duplicate-detect retry
+      // is the correct trigger window for auto-approval to fire.
+      //
+      // # Why we re-read `autoApprove` via `store.readSnapshot`
+      //
+      // The in-host's `autoApproveIfEnabled` reads the store inside
+      // its poll loop and bails on `autoApprove === false`
+      // (`subscribe.handlers.tools.ts:435-436`). This is the
+      // "toggled off mid-cycle is honored" contract — even though the
+      // window here is small (we just persisted), the operator could
+      // have raced `/plan auto off` against this very call. Re-read.
+      //
+      // # Why not awaited
+      //
+      // Matches the in-host's `void autoApproveIfEnabled(...)` pattern
+      // (`subscribe.handlers.tools.ts:1956`). The tool result must
+      // return promptly so the agent's tool-call resolves and the UI
+      // sees the approval-requested status before the auto-approve
+      // resolves it. Awaiting would also block on `recordApproval`
+      // and the injection enqueue, which is unnecessary — the
+      // auto-approve completes asynchronously and the injection drains
+      // on the agent's next turn. The trigger callback itself must
+      // never throw (per `ExitPlanModeAutoApproveOptions.trigger`
+      // contract); we wrap defensively anyway.
+      //
+      // host_ref: src/agents/pi-embedded-subscribe.handlers.tools.ts:1949-1962
+      if (
+        opts.autoApprove &&
+        sessionKey &&
+        (r.kind === "persisted" || r.kind === "reused")
+      ) {
+        void fireAutoApproveIfEnabled({
+          opts,
+          sessionKey,
+          approvalId: r.approvalId,
+          planSteps: steps,
+        });
+      }
+
       // Map store outcome → tool result. Plugin uses hyphenated status
       // names (vs in-host underscore) for consistency with the rest of
       // the plugin status vocabulary + the eva-live-smokes assertions.
@@ -686,6 +856,116 @@ async function persistPlanArchetypeIfConfigured(input: {
         err instanceof Error ? err.message : String(err)
       }`,
     );
+  }
+}
+
+/**
+ * W1-F4 fix (2026-05-20): auto-approve trigger helper.
+ *
+ * Faithful port of the in-host `autoApproveIfEnabled` at
+ * `src/agents/pi-embedded-subscribe.handlers.tools.ts:387-477`,
+ * with two simplifications appropriate for the plugin:
+ *
+ *   1. **No poll loop.** The in-host needs to poll the on-disk session
+ *      store because the persister and the auto-approve handler run in
+ *      parallel listeners — the persister may not have landed the
+ *      `approval: "pending"` + `approvalId` write yet when auto-approve
+ *      tries to read it. The plugin's `store.persistApprovalRequest`
+ *      is awaited synchronously before this helper fires, so the
+ *      persisted state is guaranteed visible to `store.readSnapshot`.
+ *      No poll required.
+ *
+ *   2. **Trigger callback owns the patch equivalent.** The in-host
+ *      calls `callGatewayTool("sessions.patch", { planApproval: {
+ *      action: "approve", approvalId }})` — which routes through
+ *      `sessions-patch.ts` → `resolvePlanApproval(approve)` +
+ *      `appendToInjectionQueue([PLAN_DECISION]: approved)`. The
+ *      plugin's `recordApproval` + `enqueuePlanApprovedInjection` do
+ *      exactly the equivalent two operations; the trigger callback in
+ *      `index.ts` wires them.
+ *
+ * # Guard order
+ *
+ * 1. Re-read persisted state. If `autoApprove === false` (operator
+ *    flipped off mid-cycle), no-op. Matches in-host line 435-436 +
+ *    446.
+ * 2. Re-read approval state. If not still `pending` with the
+ *    matching `approvalId` (user already resolved on another
+ *    channel), no-op. Matches in-host line 446-454.
+ * 3. Fire the callback. Failures log at `error` level (matching
+ *    in-host's `params.log?.error ?? params.log?.warn` selection on
+ *    `autoApproveIfEnabled` catch — operators must notice the silent
+ *    degradation to manual mode).
+ *
+ * # Why approvalId correlation matters
+ *
+ * The persisted state's `approvalId` may differ from the candidate
+ * we minted if `persistApprovalRequest` hit the reuse path
+ * (duplicate `payloadHash`). The trigger fires with `r.approvalId`
+ * (returned by the store, == effective approvalId on disk). The
+ * helper re-confirms by re-reading; if a NEW exit_plan_mode landed
+ * between the persist and the read (the rotate path), the approvalId
+ * mismatch bails and the new card is left armed for the user. The
+ * audit trail stays threaded on the effective approvalId.
+ *
+ * host_ref: src/agents/pi-embedded-subscribe.handlers.tools.ts:387-477
+ *   (`autoApproveIfEnabled`).
+ */
+async function fireAutoApproveIfEnabled(input: {
+  opts: CreateExitPlanModeToolInput;
+  sessionKey: string;
+  approvalId: string;
+  planSteps: PlanStep[];
+}): Promise<void> {
+  const { opts, sessionKey, approvalId, planSteps } = input;
+  const trigger = opts.autoApprove?.trigger;
+  const log = opts.autoApprove?.log;
+  if (!trigger) {
+    return; // Caller already gated on this, but defensive.
+  }
+  try {
+    // Guard 1+2: re-read the persisted state to honor mid-cycle
+    // toggles. The store read is lock-protected (readSnapshot via
+    // gateway.withLock) so we see a coherent post-persist snapshot.
+    const snap = await opts.store.readSnapshot(sessionKey);
+    if (!snap?.autoApprove) {
+      // Auto-approve flipped off between persist and trigger (or was
+      // never on — caller's check raced). Manual card stays armed.
+      log?.info?.(
+        `[smarter-claw] auto-approve skipped: autoApprove=${snap?.autoApprove ?? "(no state)"} ` +
+          `sessionKey=${sessionKey} approvalId=${approvalId}`,
+      );
+      return;
+    }
+    if (snap.approval !== "pending" || snap.approvalId !== approvalId) {
+      // Another channel resolved this cycle (or a new exit_plan_mode
+      // rotated the approvalId). Bail — don't auto-approve a state
+      // we don't recognize.
+      log?.warn?.(
+        `[smarter-claw] auto-approve aborted: state moved before trigger ` +
+          `sessionKey=${sessionKey} expectedApprovalId=${approvalId} ` +
+          `currentApproval=${snap.approval} currentApprovalId=${snap.approvalId ?? "(none)"}`,
+      );
+      return;
+    }
+    // Fire — callback owns recordApproval + enqueuePlanApprovedInjection.
+    await trigger({
+      sessionKey,
+      approvalId,
+      planSteps,
+    });
+    log?.info?.(
+      `[smarter-claw] auto-approve fired sessionKey=${sessionKey} approvalId=${approvalId} steps=${planSteps.length}`,
+    );
+  } catch (err) {
+    // Use error-level logging (matching in-host's
+    // `autoApproveIfEnabled` catch) so operators notice the silent
+    // fall-back to manual mode. The approval card stays on-screen;
+    // user can click Approve manually. Auto-mode briefly degrades.
+    const message =
+      `[smarter-claw] auto-approve FAILED — approval card requires manual resolve. ` +
+      `sessionKey=${sessionKey} approvalId=${approvalId}: ${err instanceof Error ? err.message : String(err)}`;
+    (log?.error ?? log?.warn)?.(message);
   }
 }
 
