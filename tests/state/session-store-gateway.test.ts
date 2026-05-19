@@ -57,4 +57,33 @@ describe("P-6 SessionStoreGateway — shape", () => {
     const gw = new SessionStoreGateway();
     expect(typeof gw.withLock).toBe("function");
   });
+
+  it("uses the SDK session-key parser when the runtime exposes one", () => {
+    const routing = _testing.resolveRoutingRuntime({
+      parseAgentSessionKey: (sessionKey: string) => ({
+        agentId: "sdk",
+        suffix: sessionKey,
+      }),
+    });
+
+    expect(routing.parseAgentSessionKey("agent:main:subagent:abc")).toEqual({
+      agentId: "sdk",
+      suffix: "agent:main:subagent:abc",
+    });
+  });
+
+  it("falls back when the SDK runtime lacks parseAgentSessionKey", () => {
+    const warnings: string[] = [];
+    const routing = _testing.resolveRoutingRuntime(
+      { runtimeLoaded: true },
+      { warn: (message) => warnings.push(message) },
+    );
+
+    expect(routing.parseAgentSessionKey("agent:main:subagent:abc")).toEqual({
+      agentId: "main",
+      suffix: "subagent:abc",
+    });
+    expect(routing.parseAgentSessionKey("main")).toBeNull();
+    expect(warnings[0]).toContain("missing parseAgentSessionKey");
+  });
 });

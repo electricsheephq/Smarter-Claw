@@ -41,7 +41,10 @@ import {
   extractApplyPatchTargetPaths,
 } from "./gates/accept-edits-gate.js";
 import { checkMutationGate } from "./gates/mutation-gate.js";
-import { buildPlanModeSystemContext } from "./prompt/plan-mode-injection.js";
+import {
+  buildPlanModeActiveSystemContext,
+  buildPlanModeAvailableSystemContext,
+} from "./prompt/plan-mode-injection.js";
 import { InMemoryGateway } from "./state/in-memory-gateway.js";
 import { SessionStoreGateway } from "./state/session-store-gateway.js";
 import { PlanModeStore, type PlanModeStateGateway } from "./state/store.js";
@@ -56,6 +59,10 @@ import { createAskUserQuestionTool } from "./tools/ask-user-question.js";
 import { createEnterPlanModeTool } from "./tools/enter-plan-mode.js";
 import { createExitPlanModeTool } from "./tools/exit-plan-mode.js";
 import { createPlanModeSessionActions } from "./ui/session-actions.js";
+import {
+  createPlanSlashCommand,
+  createPlanModeSlashCommand,
+} from "./ui/slash-commands.js";
 import { buildPlanModeSidebarDescriptor } from "./ui/sidebar-descriptor.js";
 import { createPlanClearCli } from "./ui/sweep-command.js";
 import type { PlanMode } from "./types.js";
@@ -289,9 +296,41 @@ export default definePluginEntry({
     // clients dispatch these by (pluginId, actionId). Each handler
     // verifies the approvalId (stale-event guard), then calls the
     // PlanModeStore mutator + the appropriate injection-writer.
-    for (const action of createPlanModeSessionActions({ api, store })) {
+    const sessionActionRegistrations = createPlanModeSessionActions({
+      api,
+      store,
+    });
+    const sessionActionHandlers = new Map<
+      string,
+      (ctx: never) => unknown
+    >();
+    for (const action of sessionActionRegistrations) {
       api.session.controls.registerSessionAction(action);
+      // Snapshot the handler for the /plan slash-command dispatcher
+      // below. Keyed on the action id so /plan accept → plan.accept etc.
+      sessionActionHandlers.set(
+        action.id,
+        action.handler as (ctx: never) => unknown,
+      );
     }
+
+    // Hotfix (2026-05-13): register `/plan` and `/plan-mode` slash
+    // commands so users can resolve approvals from chat (not just
+    // sidebar buttons). Approval subcommands route to the matching
+    // session-action handler above; `/plan enter` flips state via the
+    // store directly (no `plan.enter` session-action exists).
+    api.registerCommand(
+      createPlanSlashCommand({
+        actions: sessionActionHandlers as never,
+        store,
+      }),
+    );
+    api.registerCommand(
+      createPlanModeSlashCommand({
+        actions: sessionActionHandlers as never,
+        store,
+      }),
+    );
 
     // P-12: sidebar UI descriptor. Declares the "Plan Mode" surface so
     // operator UI clients can render the widget. Rendering is
@@ -530,9 +569,23 @@ export default definePluginEntry({
       if (!ctx.sessionKey) return undefined;
       const snap = await store.readSnapshot(ctx.sessionKey);
       const mode: PlanMode = snap?.mode ?? "normal";
-      if (mode !== "plan") return undefined;
+      if (mode === "plan") {
+        return {
+          appendSystemContext: buildPlanModeActiveSystemContext(),
+        };
+      }
+      // Hotfix (2026-05-13): wire the in-host PLAN MODE AVAILABLE
+      // branch (`attempt.ts:733-749`) so the agent knows it can call
+      // `enter_plan_mode` when the user asks for a plan. Without
+      // this, the plugin's tools were registered but the model had
+      // no idea plan mode existed — explaining the live-test
+      // observation "agent didn't enter plan mode when asked."
+      // The plugin's presence implies the feature is enabled
+      // (no operator opt-in flag — installing the plugin IS the
+      // opt-in), so we always inject the AVAILABLE block when not
+      // already in plan mode.
       return {
-        appendSystemContext: buildPlanModeSystemContext(),
+        appendSystemContext: buildPlanModeAvailableSystemContext(),
       };
     });
 
