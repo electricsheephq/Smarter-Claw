@@ -135,7 +135,18 @@ export interface PlanModeSessionState {
 
   /** Count of rejections in this session. At ≥3 the agent gets a
    *  deescalation hint ("Multiple revisions have been rejected.
-   *  Consider asking the user to clarify..."). */
+   *  Consider asking the user to clarify...").
+   *
+   *  **W1-E1 watchdog deferral note**: this counter is also the
+   *  primary signal a future turn-limit watchdog would consume to
+   *  auto-exit plan mode on a runaway loop. The watchdog itself is
+   *  deferred — neither the in-host has a parity reference nor does
+   *  SDK 2026.5.18 expose a fit-for-purpose event-driven scheduler
+   *  seam (`registerSessionSchedulerJob` is cleanup-only;
+   *  `scheduleSessionTurn` is cron-driven). See
+   *  `docs/audits/parity-refresh/blocker-W1-E1.md` for the
+   *  investigation and the prerequisites that unblock the work
+   *  (notably W1-F4 — wiring `autoApprove` so a loop can exist). */
   rejectionCount: number;
 
   /**
