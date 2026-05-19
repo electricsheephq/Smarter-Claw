@@ -2,7 +2,7 @@
   "id": "smarter-claw",
   "name": "Smarter-Claw",
   "description": "Plan-Mode plugin for OpenClaw. Plan-then-execute workflow with mutation gate, archetype prompting, escalating retry, and rejection-cycle tracking. v1 port-in-progress (P-1 skeleton).",
-  "minHostVersion": "2026.5.10-beta.5",
+  "minHostVersion": "2026.5.18",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

@@ -43,6 +43,8 @@ export interface HarnessCaptures {
   loggerWarn: string[];
   loggerError: string[];
   cliRegistrars: Array<(ctx: unknown) => void>;
+  /** Slash commands registered via `api.registerCommand` (keyed by name). */
+  commands: Map<string, unknown>;
 }
 
 /**
@@ -77,6 +79,7 @@ export function createHarness(options: {
     loggerWarn: [],
     loggerError: [],
     cliRegistrars: [],
+    commands: new Map(),
   };
 
   // Force the plugin to use the in-memory gateway via env var (the
@@ -108,6 +111,11 @@ export function createHarness(options: {
     }),
     registerCli: vi.fn((registrar: (ctx: unknown) => void) => {
       captures.cliRegistrars.push(registrar);
+    }),
+    registerCommand: vi.fn((command: { name?: string }) => {
+      // `/plan` + `/plan-mode` slash commands (hotfix #93). Keyed by
+      // command name so smokes can look them up + invoke the handler.
+      captures.commands.set(command?.name ?? "<unknown>", command);
     }),
     session: {
       state: {

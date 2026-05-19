@@ -31,13 +31,13 @@
   "dependencies": {},
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "openclaw": "2026.5.10-beta.5",
+    "openclaw": "2026.5.18",
     "typebox": "^1.1.38",
     "typescript": "^5.6.0",
     "vitest": "^3.2.0"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.5.10-beta.5"
+    "openclaw": ">=2026.5.18"
   },
   "keywords": [
     "openclaw",
