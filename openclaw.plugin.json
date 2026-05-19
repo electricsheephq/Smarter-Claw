@@ -19,6 +19,10 @@
       "planTierProvider": {
         "type": "string",
         "description": "Optional provider override paired with planTierModel. Use when the override model lives on a different provider than the session's default."
+      },
+      "plansBaseDir": {
+        "type": "string",
+        "description": "W1-F2: override the base directory under which exit_plan_mode persists the rendered plan markdown (<baseDir>/<agentId>/plans/plan-YYYY-MM-DD-<slug>.md). Defaults to ~/.openclaw/agents (in-host parity)."
       }
     }
   },
@@ -35,6 +39,10 @@
       "planTierProvider": {
         "label": "Plan-Tier Provider",
         "help": "Optional provider override paired with Plan-Tier Model."
+      },
+      "plansBaseDir": {
+        "label": "Plan Persistence Base Directory",
+        "help": "Override the on-disk root for persisted plan markdown files. Defaults to ~/.openclaw/agents."
       }
     }
   },

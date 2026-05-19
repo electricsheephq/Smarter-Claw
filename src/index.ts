@@ -94,6 +94,21 @@ type SmarterClawConfig = {
    * Optional provider override paired with planTierModel.
    */
   planTierProvider?: string;
+  /**
+   * W1-F2 (P0) fix (2026-05-20): override the base directory under
+   * which `exit_plan_mode` persists the rendered plan archetype
+   * (`<baseDir>/<agentId>/plans/plan-YYYY-MM-DD-<slug>.md`).
+   *
+   * Defaults to `~/.openclaw/agents` (in-host parity). Operators
+   * pointing the plugin at a non-default home (e.g. when running
+   * out-of-tree under an immutable OS layout) can override.
+   *
+   * Wired to the persister via `createExitPlanModeTool({...persister})`.
+   *
+   * host_ref: src/agents/plan-mode/plan-archetype-persist.ts:61-67
+   *           (the `baseDir` override semantics)
+   */
+  plansBaseDir?: string;
 };
 
 const DEFAULT_CONFIG: Required<Pick<SmarterClawConfig, "enabled">> & SmarterClawConfig = {
@@ -111,11 +126,20 @@ function resolveConfig(raw: unknown): Required<Pick<SmarterClawConfig, "enabled"
     typeof partial.planTierProvider === "string" && partial.planTierProvider.trim().length > 0
       ? partial.planTierProvider.trim()
       : undefined;
+  // W1-F2 (2026-05-20): operator-tunable persistence root for the
+  // archetype markdown files. Trimmed; blank → undefined (so the
+  // persister falls back to `~/.openclaw/agents`).
+  const plansBaseDir =
+    typeof partial.plansBaseDir === "string" &&
+    partial.plansBaseDir.trim().length > 0
+      ? partial.plansBaseDir.trim()
+      : undefined;
   return {
     enabled:
       typeof partial.enabled === "boolean" ? partial.enabled : DEFAULT_CONFIG.enabled,
     ...(planTierModel ? { planTierModel } : {}),
     ...(planTierProvider ? { planTierProvider } : {}),
+    ...(plansBaseDir ? { plansBaseDir } : {}),
   };
 }
 
@@ -281,9 +305,33 @@ export default definePluginEntry({
     api.registerTool(createEnterPlanModeTool({ store }), {
       name: "enter_plan_mode",
     });
-    api.registerTool(createExitPlanModeTool({ store }), {
-      name: "exit_plan_mode",
-    });
+    // W1-F2 (P0) fix (2026-05-20): wire the in-host plan-archetype
+    // markdown persister. `exit_plan_mode` now writes
+    // `<plansBaseDir>/<agentId>/plans/plan-YYYY-MM-DD-<slug>.md`
+    // on every NEW approval cycle so the archetype-prompt + reference
+    // card promise ("title becomes the persisted markdown filename")
+    // is true. Failure is non-fatal (the persister catches + logs);
+    // approval flow is unaffected.
+    //
+    // host_ref: src/agents/pi-embedded-subscribe.handlers.tools.ts:1925-1949
+    api.registerTool(
+      createExitPlanModeTool({
+        store,
+        persister: {
+          ...(config.plansBaseDir ? { baseDir: config.plansBaseDir } : {}),
+          log: {
+            info: (msg) => api.logger.info(msg),
+            warn: (msg) => api.logger.warn(msg),
+            ...(api.logger.debug
+              ? { debug: (msg) => api.logger.debug!(msg) }
+              : {}),
+          },
+        },
+      }),
+      {
+        name: "exit_plan_mode",
+      },
+    );
     // P-8: ask_user_question — non-blocking clarification tool.
     // P-12 wires the question→answer flow via the `plan.answer`
     // session-action below; this registration is the model-facing tool.
