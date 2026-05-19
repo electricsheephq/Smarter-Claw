@@ -104,6 +104,39 @@ export interface SessionStoreGatewayOptions {
   };
 }
 
+function createFallbackRoutingRuntime(): RoutingRuntime {
+  return {
+    parseAgentSessionKey(sessionKey: string) {
+      const m = /^agent:([^:]+):(.+)$/.exec(sessionKey);
+      if (!m) return null;
+      return { agentId: m[1], suffix: m[2] };
+    },
+  };
+}
+
+function resolveRoutingRuntime(
+  candidate: unknown,
+  logger?: SessionStoreGatewayOptions["logger"],
+): RoutingRuntime {
+  const parse =
+    candidate && typeof candidate === "object"
+      ? (candidate as { parseAgentSessionKey?: unknown }).parseAgentSessionKey
+      : undefined;
+  if (typeof parse === "function") {
+    return {
+      parseAgentSessionKey(sessionKey: string) {
+        return parse(sessionKey) as ReturnType<
+          RoutingRuntime["parseAgentSessionKey"]
+        >;
+      },
+    };
+  }
+  logger?.warn?.(
+    "[smarter-claw] openclaw/plugin-sdk/runtime missing parseAgentSessionKey; using fallback session-key parser",
+  );
+  return createFallbackRoutingRuntime();
+}
+
 export class SessionStoreGateway implements PlanModeStateGateway {
   private readonly namespace: string;
   private readonly logger: SessionStoreGatewayOptions["logger"];
@@ -160,19 +193,14 @@ export class SessionStoreGateway implements PlanModeStateGateway {
    */
   private async loadRoutingModule(): Promise<RoutingRuntime> {
     try {
-      return (await import(
+      const module = await import(
         "openclaw/plugin-sdk/runtime" as string
-      )) as RoutingRuntime;
+      );
+      return resolveRoutingRuntime(module, this.logger);
     } catch {
       // Fallback: in-line minimal parser. Matches in-host
       // `parseAgentSessionKey` shape (agent:<id>:<suffix>).
-      return {
-        parseAgentSessionKey(sessionKey: string) {
-          const m = /^agent:([^:]+):(.+)$/.exec(sessionKey);
-          if (!m) return null;
-          return { agentId: m[1], suffix: m[2] };
-        },
-      };
+      return createFallbackRoutingRuntime();
     }
   }
 
@@ -242,4 +270,6 @@ export class SessionStoreGateway implements PlanModeStateGateway {
  */
 export const _testing = {
   PLUGIN_ID,
+  createFallbackRoutingRuntime,
+  resolveRoutingRuntime,
 };
