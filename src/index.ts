@@ -316,13 +316,20 @@ export default definePluginEntry({
 
     // Hotfix (2026-05-13): register `/plan` and `/plan-mode` slash
     // commands so users can resolve approvals from chat (not just
-    // sidebar buttons). Each subcommand routes to the matching
-    // session-action handler above.
+    // sidebar buttons). Approval subcommands route to the matching
+    // session-action handler above; `/plan enter` flips state via the
+    // store directly (no `plan.enter` session-action exists).
     api.registerCommand(
-      createPlanSlashCommand({ actions: sessionActionHandlers as never }),
+      createPlanSlashCommand({
+        actions: sessionActionHandlers as never,
+        store,
+      }),
     );
     api.registerCommand(
-      createPlanModeSlashCommand({ actions: sessionActionHandlers as never }),
+      createPlanModeSlashCommand({
+        actions: sessionActionHandlers as never,
+        store,
+      }),
     );
 
     // P-12: sidebar UI descriptor. Declares the "Plan Mode" surface so
