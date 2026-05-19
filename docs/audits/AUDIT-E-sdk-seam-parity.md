@@ -338,3 +338,53 @@ Return shapes validated via TypeScript compiler + unit assertions.
 - **SDK Version**: OpenClaw 2026.5.10-beta.5
 - **Plugin Version**: Smarter-Claw v1-port (P-1 skeleton)
 - **Parity Status**: **100% VERIFIED ✓**
+
+---
+
+# Re-Execution — 2026-05-13 — OpenClaw 2026.5.18
+
+**Context**: Parity-refresh Wave 0. The plugin dev-dependency + `minHostVersion`
+were bumped `2026.5.10-beta.5` → `2026.5.18` (latest stable; 8-version jump).
+This section re-runs the audit against the `2026.5.18` SDK type defs.
+
+## Method
+
+`pnpm typecheck` (`tsc --noEmit`) against `node_modules/openclaw@2026.5.18`'s
+`.d.ts` is the mechanical proof of seam-signature parity: if any of the
+seams the plugin *calls* had an incompatible signature change, the plugin
+would not compile. **It compiles clean. 727/727 tests pass on `2026.5.18`.**
+
+## Findings
+
+1. **Zero signature mismatches.** All 12 originally-used seams compile
+   against `2026.5.18` with no type errors. No `as any` / no suppressions
+   were added. Seam parity holds across the 8-version jump.
+
+2. **New seam in use: `registerCommand` (seam #13).** Table A above lists
+   `api.registerCommand` as ✗ NOT USED. As of hotfix #93 the plugin **uses
+   it** to register the `/plan` + `/plan-mode` slash commands.
+   - 2026.5.18 location: `plugin-sdk/src/plugins/types.d.ts:2142`
+   - Signature: `registerCommand(command: OpenClawPluginCommandDefinition) => void`
+   - Plugin call site: `src/index.ts` (createPlanSlashCommand / createPlanModeSlashCommand)
+   - Status: ✓ signature verified, compiles clean. **Flip the Table A
+     row ✗→✓ in the next full revision.**
+
+3. **`before_agent_finalize` event GAINED fields.** On `2026.5.18` the
+   event (`hook-types.d.ts:139`) now also exposes `provider`, `model`,
+   and `messages?: unknown[]`. These are additive (non-breaking). The
+   `provider` + `model` fields partially unblock the S7 escalating-retry
+   "provider-specific incomplete-turn handling" concern — Wave 1 should
+   re-evaluate whether the Gemini-specific detection can now be ported.
+
+4. **Still gateway-side-only (deferred P0s unchanged).** The event does
+   NOT expose `toolMetas` or `replayMetadata.hadPotentialSideEffects`.
+   The S7 precise-detection P0s remain gateway-internal on `2026.5.18` —
+   they still need a new SDK seam. No change vs the beta.5 audit.
+
+## Re-Execution Sign-Off
+
+- **SDK Version**: OpenClaw 2026.5.18 (latest stable)
+- **Method**: `tsc --noEmit` + full 727-test suite against the 2026.5.18 SDK
+- **Signature mismatches**: 0
+- **New seam adopted**: `registerCommand` (#13)
+- **Parity Status**: **VERIFIED ✓ on 2026.5.18** — safe to target.

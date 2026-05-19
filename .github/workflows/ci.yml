@@ -53,9 +53,17 @@ jobs:
 
       # Run vitest. The reporter-JSON-numTests check guards against
       # silent zero-tests-discovered failures.
+      #
+      # 2026-05-13: removed a `| tee /tmp/vitest-stdout.log` that
+      # MASKED test failures — the pipeline's exit code was tee's
+      # (always 0), so a failing `pnpm test` left this step green.
+      # The log file was never consumed. Now: no pipe, explicit
+      # `set -eo pipefail`, and the `default` reporter prints
+      # progress to the CI log while `json` feeds the numTests guard.
       - name: Run unit tests
         run: |
-          pnpm test --run --reporter=json --outputFile=/tmp/vitest-report.json | tee /tmp/vitest-stdout.log
+          set -eo pipefail
+          pnpm test --reporter=default --reporter=json --outputFile=/tmp/vitest-report.json
           numTests=$(node -e "const r=JSON.parse(require('fs').readFileSync('/tmp/vitest-report.json','utf8')); console.log(r.numTotalTests ?? 0)")
           if [ "$numTests" = "0" ]; then
             echo "FAIL: vitest discovered 0 tests"
@@ -68,7 +76,8 @@ jobs:
       # consumption.
       - name: Pack + smoke-extract tarball
         run: |
-          pnpm pack --pack-destination /tmp/sc-pack | tee /tmp/pack-output.txt
+          set -eo pipefail
+          pnpm pack --pack-destination /tmp/sc-pack
           tarball=$(ls /tmp/sc-pack/*.tgz | head -1)
           if [ -z "$tarball" ]; then
             echo "FAIL: pnpm pack produced no tarball"
