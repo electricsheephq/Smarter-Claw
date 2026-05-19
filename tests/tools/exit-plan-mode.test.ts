@@ -63,6 +63,19 @@ describe("exit_plan_mode — tool shape", () => {
     expect(tool.description).toMatch(/do NOT write the plan as a markdown list/);
     expect(tool.description).toMatch(/WAIT FOR SPAWNED SUBAGENTS/);
   });
+
+  it("description does NOT claim a runtime subagent gate the plugin lacks (W1-A1)", () => {
+    // The in-host description says "the runtime rejects submission with
+    // an error listing pending child run ids" — TRUE in-host, FALSE in
+    // the plugin (no such gate). The plugin keeps the wait-for-subagents
+    // steering but must not assert runtime enforcement that doesn't exist.
+    const { factory } = build();
+    const tool = factory({ sessionKey: SESSION_KEY });
+    expect(tool.description).not.toMatch(/runtime rejects submission/);
+    expect(tool.description).not.toMatch(/pending child run ids/);
+    // …but the steering itself is retained:
+    expect(tool.description).toMatch(/research launched.*is not.*research complete/);
+  });
 });
 
 describe("exit_plan_mode — title required (surgical-port S1 fix)", () => {
