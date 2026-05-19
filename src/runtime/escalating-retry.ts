@@ -82,12 +82,16 @@ export interface TurnSignal {
   /** The agent's last assistant message text. Undefined if the turn
    *  ended without any assistant text (e.g., immediate yield). */
   lastAssistantMessage?: string;
-  /** Did the agent emit a tool call this turn? The hook event doesn't
-   *  expose this directly — caller derives via post-message inspection
-   *  or stopHookActive (active during tool-call paths). For P-10's
-   *  scope we use `madeToolCall` as the inferred signal from
-   *  stopHookActive: if stopHookActive is false AND lastAssistantMessage
-   *  is non-empty, we assume the turn ended with chat-only. */
+  /** Did the agent emit a tool call this turn? **W1-E6 (#102) — known
+   *  unreliable.** The `before_agent_finalize` event has no native
+   *  signal for this and the runtime currently leaves `messages?:
+   *  unknown[]` unpopulated, so `src/index.ts` derives this from
+   *  `stopHookActive`, which per Claude Code's Stop-hook spec
+   *  signals hook re-entrancy and is `false` for normal first-pass
+   *  turns regardless of tool use. Tests pin the detector's
+   *  algorithm by setting this directly; production wiring spuriously
+   *  fires on real tool-use turns. See
+   *  `docs/audits/parity-refresh/blocker-W1-E6.md`. */
   madeToolCall: boolean;
   /** True if the immediately-prior turn was a [PLAN_DECISION]: approved
    *  injection (so a yield here is the "PLAN_YIELD" antipattern). */

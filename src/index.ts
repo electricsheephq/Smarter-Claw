@@ -532,10 +532,29 @@ export default definePluginEntry({
       if (!sessionKey) return undefined;
       const snap = await store.readSnapshot(sessionKey);
       const planMode = snap?.mode ?? "normal";
+      // **W1-E6 (#102) — deferred; see docs/audits/parity-refresh/blocker-W1-E6.md.**
+      //
       // The hook doesn't expose "did the turn make a tool call?"
-      // directly. The SDK's `stopHookActive` IS true during turns
-      // that resolved via stop_hook (which fires for tool-call-using
-      // turns), so we use that as a proxy. False == chat-only turn.
+      // directly. The original comment claimed `stopHookActive` IS
+      // true during tool-call-using turns; that is **wrong** per
+      // Claude Code's Stop-hook spec — `stop_hook_active` signals
+      // hook re-entrancy (the Stop hook is being re-invoked), not
+      // tool use. It is `false` on every normal first-pass turn
+      // regardless of whether the turn called a tool. So this
+      // derivation collapses tool-use and chat-only turns to the
+      // same `madeToolCall = false`, which causes `decideEscalatingRetry`
+      // to spuriously fire "you didn't act" retries on turns that
+      // actually used tools.
+      //
+      // The fix requires an SDK change — either populate `messages`
+      // on the event (currently declared `unknown[]` but never set)
+      // OR add a `madeToolCall?: boolean` field plumbed from the codex
+      // native-hook-relay. Investigated and written up in the blocker
+      // doc above. Until that ships, the status quo proxy stays —
+      // it over-fires on tool-using turns (the agent then redundantly
+      // re-issues the same tool call), which wastes a turn but does
+      // not break correctness. See the blocker doc for the alternative
+      // of disabling `PLAN_YIELD` interim, and why we chose not to.
       const madeToolCall = event.stopHookActive === true;
       const isPostApproval =
         snap?.approval === "approved" || snap?.approval === "edited";
