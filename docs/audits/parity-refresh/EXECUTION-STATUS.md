@@ -38,13 +38,33 @@ complete, quality at-or-above Codex / Claude Code plan mode.
   ~30 P2; 0 correctness/security regressions.** Per-slice detail in
   `slice-audit-{A..E}.md`, build-specs `buildspec-S16/S17/S18*.md`,
   benchmark `benchmark-codex-claude-code.md`.
-- **Wave 3 — in progress (PR #99, open, branch `wave-3/fixes`)** —
-  3 findings fixed so far:
-  - W1-C1 — stale-event guard was dead code; threaded `expectedApprovalId`.
-  - W1-S9-2 — `checkApprovalId` contradicted the re-ported state
-    machine; `rejected` is non-terminal.
-  - W1-D2 — plan-step injection appended `status` enum; in-host
-    appends `activeForm`. Fixed to byte-match.
+- **Wave 3 — in progress** — 6 findings fixed so far:
+  - W1-C1 (#99) — stale-event guard was dead code; threaded `expectedApprovalId`.
+  - W1-S9-2 (#99) — `checkApprovalId` contradicted the state machine; `rejected` is non-terminal.
+  - W1-D2 (#99) — plan-step injection appended `status`; in-host appends `activeForm`. Byte-matched.
+  - W1-A1 (#108) — exit_plan_mode description claimed a runtime subagent gate the plugin lacks. False sentence dropped.
+  - W1-A3 (#108) — ask_user_question description re-ported verbatim from in-host.
+  - W1-A5 (#108) — auto-enable matcher: false "wired" header claim corrected; wiring tracked in #107 (needs real design — not faked).
+
+### Remaining Wave-3 findings — triaged by effort
+
+The honest split. "Quick" = mechanical port/wire, well-specified.
+"Investigation" = real design questions; doing these at speed
+reproduces the "port not done correctly" disease — they get proper
+time, not a rushed pass.
+
+| Finding | Effort | Note |
+|---|---|---|
+| W1-S9-1 sidebar schema | quick | add 5 omitted fields to the descriptor schema |
+| W1-B4 accept-edits trigger test | quick | add the missing CI-runnable test |
+| W1-E2 debug-log taxonomy | moderate | re-port the 8-kind event union + emit sites |
+| W1-D1 reject-injection form | moderate | match the in-host runtime reject path |
+| W1-S18-1 Telegram menu | moderate | `channels` filter so `/plan` survives the 100-cmd cap |
+| W1-F4 `/plan auto` dead toggle | moderate | wire the auto-approve runtime, or hide the toggle |
+| W1-F2 plan-persistence honesty | moderate | write the `plan-*.md` file, or de-claim it in the prompt |
+| W1-F1 action-required notification | **investigation** | needs a notification surface design |
+| W1-E6 retry tool-call signal | **investigation** | needs the `messages[]` shape reverse-engineered |
+| W1-E1 turn-limit watchdog | **investigation** | needs `registerSessionSchedulerJob` wiring + once-only semantics |
 
 ---
 
