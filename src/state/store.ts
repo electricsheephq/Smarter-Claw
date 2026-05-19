@@ -460,6 +460,13 @@ export class PlanModeStore {
   async recordRejection(input: {
     sessionKey: string;
     feedback?: string;
+    /**
+     * Optional version token from the approval event. Forwarded to
+     * `resolvePlanApproval`'s stale-event guard — a mismatch with the
+     * session's current `approvalId` no-ops the action. Wave-1 finding
+     * W1-C1: without this, the re-ported guard was dead code.
+     */
+    expectedApprovalId?: string;
   }): Promise<
     | { kind: "recorded"; rejectionCount: number; state: PlanModeSessionState }
     | { kind: "skipped"; reason: "not-plan-mode" | "no-pending-approval" }
@@ -469,6 +476,9 @@ export class PlanModeStore {
       sessionKey: input.sessionKey,
       action: "reject",
       ...(input.feedback !== undefined ? { feedback: input.feedback } : {}),
+      ...(input.expectedApprovalId !== undefined
+        ? { expectedApprovalId: input.expectedApprovalId }
+        : {}),
     });
     if (result.kind === "recorded") {
       return {
@@ -495,6 +505,11 @@ export class PlanModeStore {
   async recordApproval(input: {
     sessionKey: string;
     edited?: boolean;
+    /**
+     * Optional version token from the approval event — see
+     * `recordRejection`. Wave-1 finding W1-C1.
+     */
+    expectedApprovalId?: string;
   }): Promise<
     | { kind: "recorded"; approval: "approved" | "edited"; state: PlanModeSessionState }
     | { kind: "skipped"; reason: "not-plan-mode" | "no-pending-approval" }
@@ -504,6 +519,9 @@ export class PlanModeStore {
     const result = await this.applyApprovalAction({
       sessionKey: input.sessionKey,
       action,
+      ...(input.expectedApprovalId !== undefined
+        ? { expectedApprovalId: input.expectedApprovalId }
+        : {}),
     });
     if (result.kind === "recorded") {
       return {
@@ -527,6 +545,11 @@ export class PlanModeStore {
    */
   async recordTimeout(input: {
     sessionKey: string;
+    /**
+     * Optional version token from the approval event — see
+     * `recordRejection`. Wave-1 finding W1-C1.
+     */
+    expectedApprovalId?: string;
   }): Promise<
     | { kind: "recorded"; state: PlanModeSessionState }
     | { kind: "skipped"; reason: "not-plan-mode" | "no-pending-approval" }
@@ -535,6 +558,9 @@ export class PlanModeStore {
     return this.applyApprovalAction({
       sessionKey: input.sessionKey,
       action: "timeout",
+      ...(input.expectedApprovalId !== undefined
+        ? { expectedApprovalId: input.expectedApprovalId }
+        : {}),
     });
   }
 
@@ -550,12 +576,17 @@ export class PlanModeStore {
     sessionKey: string;
     action: "approve" | "edit" | "reject" | "timeout";
     feedback?: string;
+    /**
+     * Optional approval-version token. Forwarded as `resolvePlanApproval`'s
+     * 4th argument so its stale-event guard is live (Wave-1 W1-C1).
+     */
+    expectedApprovalId?: string;
   }): Promise<
     | { kind: "recorded"; state: PlanModeSessionState }
     | { kind: "skipped"; reason: "not-plan-mode" | "no-pending-approval" }
     | { kind: "failed"; error: Error }
   > {
-    const { sessionKey, action, feedback } = input;
+    const { sessionKey, action, feedback, expectedApprovalId } = input;
     try {
       let outcome:
         | { kind: "recorded"; state: PlanModeSessionState }
@@ -568,7 +599,12 @@ export class PlanModeStore {
           outcome = { kind: "skipped", reason: "not-plan-mode" };
           return { next: null };
         }
-        const next = resolvePlanApproval(current, action, feedback);
+        const next = resolvePlanApproval(
+          current,
+          action,
+          feedback,
+          expectedApprovalId,
+        );
         if (next === current) {
           // Reference equality: resolvePlanApproval's guards fired
           // (terminal-state for approve/edit/reject, or

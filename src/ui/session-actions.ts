@@ -171,12 +171,20 @@ async function checkApprovalId(
       ),
     };
   }
-  if (snap.approval !== "pending") {
+  // Wave-1 finding W1-S9-2: the re-ported `resolvePlanApproval` treats
+  // `rejected` as a NON-terminal state — the user can change their mind
+  // and re-approve, or re-reject (approval.ts terminal guard:
+  // `approval !== "pending" && approval !== "rejected"`). The prior
+  // guard here rejected EVERY non-`pending` state, contradicting the
+  // state machine it dispatches into. Allow `pending` OR `rejected`;
+  // the genuinely terminal states (approved / edited / timed_out /
+  // none) still no-op with NO_PENDING_APPROVAL.
+  if (snap.approval !== "pending" && snap.approval !== "rejected") {
     return {
       ok: false,
       result: err(
         SESSION_ACTION_ERROR_CODES.NO_PENDING_APPROVAL,
-        `session has no pending approval (approval=${snap.approval})`,
+        `session has no actionable approval (approval=${snap.approval})`,
       ),
     };
   }
@@ -185,7 +193,7 @@ async function checkApprovalId(
       ok: false,
       result: err(
         SESSION_ACTION_ERROR_CODES.NO_PENDING_APPROVAL,
-        "session has no approvalId on pending state",
+        `session has no approvalId on ${snap.approval} state`,
       ),
     };
   }
@@ -259,6 +267,9 @@ export function createPlanModeSessionActions(
       const persist = await store.recordApproval({
         sessionKey: sk.sessionKey,
         edited: false,
+        // W1-C1: forward the version token so the store-level
+        // stale-event guard (resolvePlanApproval arg 4) is live.
+        ...(expectedApprovalId !== undefined ? { expectedApprovalId } : {}),
       });
       if (persist.kind === "failed") {
         return err(
@@ -337,6 +348,8 @@ export function createPlanModeSessionActions(
       const persist = await store.recordApproval({
         sessionKey: sk.sessionKey,
         edited: true,
+        // W1-C1: forward the version token (store-level stale guard).
+        ...(expectedApprovalId !== undefined ? { expectedApprovalId } : {}),
       });
       if (persist.kind === "failed") {
         return err(
@@ -396,6 +409,8 @@ export function createPlanModeSessionActions(
       const persist = await store.recordRejection({
         sessionKey: sk.sessionKey,
         ...(feedback ? { feedback } : {}),
+        // W1-C1: forward the version token (store-level stale guard).
+        ...(expectedApprovalId !== undefined ? { expectedApprovalId } : {}),
       });
       if (persist.kind === "failed") {
         return err(
