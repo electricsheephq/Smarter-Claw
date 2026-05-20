@@ -23,7 +23,7 @@ complete, quality at-or-above Codex / Claude Code plan mode.
 | 3 | Fix all P0/P1 findings | ✅ **merged** — F1 deferred (SDK blocker, `blocker-W1-F1.md`); see "Done" below for cluster status |
 | 4 | Cross-platform build (Telegram + Slack) | ✅ **merged** — F5 implemented; F3 deferred (SDK blocker, same as F1 — see `blocker-W1-F3.md`) |
 | 5 | Webchat inline UI + patcher | ⛔ **deferred — upstream-blocked** (see `blocker-W1-S17-webchat-ui.md`; gated on openclaw/openclaw#80982) |
-| 6 | Final adversarial + 3-channel smoke + release | ⬜ pending |
+| 6 | Final adversarial + 3-channel smoke + release | ✅ **completed** — see `FINAL-REPORT.md` (release-readiness consolidation) + `wave-6-findings.md` (7 adversarial findings, 0 P0, 2 P1, 5 P2 — none correctness blockers). 3-channel live smoke OUT OF SCOPE this wave (no live gateway w/ all 3 channels); documented manual smoke plan in FINAL-REPORT.md §8 for the operator. |
 
 ---
 
