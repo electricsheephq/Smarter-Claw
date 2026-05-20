@@ -1,6 +1,6 @@
 # Parity-Refresh — Execution Status (durable checkpoint)
 
-**Last updated**: 2026-05-13
+**Last updated**: 2026-05-20
 **Purpose**: canonical resume-from-here state for the Smarter-Claw
 plan-mode parity-refresh + release-readiness effort. The `~/.claude`
 plan file is NOT reliable (it gets recycled by other projects) — **this
@@ -19,10 +19,10 @@ complete, quality at-or-above Codex / Claude Code plan mode.
 |---|---|---|
 | 0 | Pre-flight + host upgrade to OpenClaw `2026.5.18` | ✅ **merged (PR #97)** |
 | 1 | Parity re-audit + build-specs + Codex/CC benchmark | ✅ **merged (PR #98)** |
-| 2 | Parity harness Layer 1 (mechanical drift CI gate) | ⏳ needs isolated re-run |
-| 3 | Fix all P0/P1 findings | ▶ **in progress** — batch 1 merged-pending (PR #99) |
-| 4 | Cross-platform build (Telegram + Slack) | ▶ **in progress** — F5 implemented, F3 deferred (SDK blocker, same as F1) |
-| 5 | Webchat inline UI + patcher | ⬜ pending (upstream-blocked) |
+| 2 | Parity harness Layer 1 (mechanical drift CI gate) | ✅ **merged** (closed #106) |
+| 3 | Fix all P0/P1 findings | ✅ **merged** — F1 deferred (SDK blocker, `blocker-W1-F1.md`); see "Done" below for cluster status |
+| 4 | Cross-platform build (Telegram + Slack) | ✅ **merged** — F5 implemented; F3 deferred (SDK blocker, same as F1 — see `blocker-W1-F3.md`) |
+| 5 | Webchat inline UI + patcher | ⛔ **deferred — upstream-blocked** (see `blocker-W1-S17-webchat-ui.md`; gated on openclaw/openclaw#80982) |
 | 6 | Final adversarial + 3-channel smoke + release | ⬜ pending |
 
 ---
