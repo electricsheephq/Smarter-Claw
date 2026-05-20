@@ -113,6 +113,16 @@ describe("Layer-1 parity harness — runtimeRejectAndPlanSteps (bonus W1-D1 + W1
   });
 });
 
+describe("Layer-1 parity harness — planRender (closes W6-2)", () => {
+  it("plugin's renderFullPlanArchetypeMarkdown matches in-host across curated input matrix (closes W6-2 — no byte-fixture pinned the W1-F2 persister renderer before)", async () => {
+    const r = await getCheckReport("planRender");
+    // 6 curated cases: minimal, full-archetype, markdown-escape,
+    // mention-neutralization, edge-cases, and title-and-steps-only.
+    expect(r.cases.length).toBeGreaterThanOrEqual(6);
+    assertReportClean(r);
+  });
+});
+
 describe("Layer-1 parity harness — aggregate", () => {
   it("total case count meets the wave-2 floor + every case is parity-clean", async () => {
     const report = await REPORT_PROMISE;
@@ -130,6 +140,8 @@ describe("Layer-1 parity harness — aggregate", () => {
     expect(report.passingCases).toBe(report.totalCases);
     // Wave-2 floor: the harness must have at least the persist + 7 new
     // checks worth of cases (~100 total) so the CI gate has real teeth.
+    // Wave-6 floor: floor unchanged — the new planRender check adds
+    // ~6 cases for ~162+ total, but the floor is a minimum, not a pin.
     expect(report.totalCases).toBeGreaterThanOrEqual(100);
   });
 });

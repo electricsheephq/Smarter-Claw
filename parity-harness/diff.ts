@@ -34,6 +34,7 @@ import { acceptEditsGateCheck } from "./checks/accept-edits-gate.js";
 import { escalatingRetryCheck } from "./checks/escalating-retry.js";
 import { mutationGateCheck } from "./checks/mutation-gate.js";
 import { persistApprovalRequestCheck } from "./checks/persist-approval-request.js";
+import { planRenderCheck } from "./checks/plan-render.js";
 import { promptsCheck } from "./checks/prompts.js";
 import { resolvePlanApprovalCheck } from "./checks/resolve-plan-approval.js";
 import { runtimeRejectAndPlanStepsCheck } from "./checks/runtime-reject-and-plan-steps.js";
@@ -50,6 +51,10 @@ const ALL_CHECKS: ParityCheck[] = [
   mutationGateCheck,
   // Bonus targets (W1-D1 + W1-D2):
   runtimeRejectAndPlanStepsCheck,
+  // Wave-6 W6-2 closure: byte-fixture pin for the W1-F2 plan-persister
+  // renderer (`src/plan-mode/plan-render.ts` was byte-faithful-port-
+  // without-byte-fixture-test until this check landed).
+  planRenderCheck,
 ];
 
 export interface ParityReport {

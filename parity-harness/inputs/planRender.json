@@ -1,0 +1,98 @@
+[
+  {
+    "id": "minimal-title-only-empty-plan",
+    "description": "Empty plan + title only → placeholder `_No plan steps provided._` + footer; covers the bare-minimum render path the W1-F2 persister hits when the agent calls exit_plan_mode with no steps.",
+    "input": {
+      "title": "Hello",
+      "plan": [],
+      "generatedAt": "2026-04-18T15:30:00.000Z"
+    }
+  },
+  {
+    "id": "title-and-steps-only",
+    "description": "Title + steps (no optional sections) → H1 + ## Plan + checklist + footer. Exercises the four status markers in one render.",
+    "input": {
+      "title": "Bump deps",
+      "plan": [
+        { "step": "bump eslint", "status": "completed" },
+        { "step": "Run the test suite", "status": "in_progress", "activeForm": "Running tests" },
+        { "step": "bump prettier", "status": "pending" },
+        { "step": "old TODO", "status": "cancelled" }
+      ],
+      "generatedAt": "2026-04-18T15:30:00.000Z"
+    }
+  },
+  {
+    "id": "full-archetype-every-section",
+    "description": "All 7 archetype sections populated (summary, analysis-with-paragraph-breaks, plan, assumptions, risks, verification, references). Section ORDER + emptiness-filtering + the multi-paragraph analysis split-on-`\\n\\n` path.",
+    "input": {
+      "title": "Bump deps",
+      "summary": "Update tooling to the 2026.5 line.",
+      "analysis": "Current state\n\nLockfile is on 2026.4; some peer deps want 2026.5.\n\nNew approach\n\nBump in two phases.",
+      "plan": [
+        { "step": "bump eslint", "status": "completed" },
+        { "step": "bump prettier", "status": "in_progress", "activeForm": "Bumping prettier" },
+        { "step": "bump vitest", "status": "pending" }
+      ],
+      "assumptions": ["nodejs is at v22"],
+      "risks": [
+        { "risk": "tests may flake", "mitigation": "retry the suite" },
+        { "risk": "breaking API", "mitigation": "add codemod" }
+      ],
+      "verification": ["pnpm test passes", "CI green on Ubuntu"],
+      "references": ["src/x.ts:1", "PR #99"],
+      "generatedAt": "2026-04-18T15:30:00.000Z"
+    }
+  },
+  {
+    "id": "markdown-escape-meta-chars-in-title-and-steps",
+    "description": "Title + steps with markdown meta-chars (`[`, `]`, `(`, `)`, `*`, ``, `~`, `_`, `#`, `+`, `-`, `.`, `!`, `<`, `>`, `|`). Pins escapeMarkdown across the title H1 path + step text path (including the ~~strikethrough~~ wrapper interaction for cancelled steps that PR-C review fix #3096528415 closed).",
+    "input": {
+      "title": "Title with [brackets](evil) and *bold* and ~~strike~~",
+      "plan": [
+        { "step": "Deploy `rm -rf /` to prod", "status": "pending" },
+        { "step": "Update ~~prod~~ now", "status": "cancelled" },
+        { "step": "Use #channel and *stars* in step", "status": "pending" }
+      ],
+      "generatedAt": "2026-04-18T15:30:00.000Z"
+    }
+  },
+  {
+    "id": "mention-neutralization-discord-and-broadcast",
+    "description": "Step text + assumptions + risks + verification + references all carrying `@channel` / `@here` / `@EVERYONE` (case-insensitive) and `<@123>` Discord raw mentions. Pins neutralizeMentions across ALL the user-controlled-text paths the renderer touches (PR-11 deep-dive review B1).",
+    "input": {
+      "title": "Plan with @everyone deploy",
+      "summary": "Coordinate with @channel before deploy.",
+      "plan": [
+        { "step": "@everyone deploy now", "status": "pending" },
+        { "step": "ping <@123456>", "status": "pending" },
+        { "step": "shout at @CHANNEL", "status": "pending" }
+      ],
+      "assumptions": ["@here approved this"],
+      "risks": [{ "risk": "@everyone pings", "mitigation": "neutralize first" }],
+      "verification": ["confirm with @channel"],
+      "references": ["<@U999> filed the issue"],
+      "generatedAt": "2026-04-18T15:30:00.000Z"
+    }
+  },
+  {
+    "id": "edge-cases-emptyish-fields-and-newlines",
+    "description": "Blank-string filtering across assumptions/verification/references arrays; whitespace-only activeForm fallback to step text; embedded newlines in step text stripped + joined with a single space; empty title falls back to 'Untitled plan'; risks entries missing risk OR mitigation dropped.",
+    "input": {
+      "title": "",
+      "plan": [
+        { "step": "Build it", "status": "in_progress", "activeForm": "   " },
+        { "step": "line1\nline2", "status": "pending" }
+      ],
+      "assumptions": ["", "  ", "real assumption", "   "],
+      "risks": [
+        { "risk": "", "mitigation": "x" },
+        { "risk": "y", "mitigation": "" },
+        { "risk": "real risk", "mitigation": "real mitigation" }
+      ],
+      "verification": ["", "real verify"],
+      "references": ["real ref", ""],
+      "generatedAt": "2026-04-18T15:30:00.000Z"
+    }
+  }
+]
