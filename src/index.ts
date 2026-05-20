@@ -34,6 +34,9 @@
  * add those hooks, the warning is already wired.
  */
 
+import { createRequire } from "node:module";
+import * as fs from "node:fs";
+import * as pathModule from "node:path";
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import {
@@ -56,6 +59,7 @@ import {
 import { decideEscalatingRetry } from "./runtime/escalating-retry.js";
 import { GrantLedger } from "./runtime/grant-ledger.js";
 import { enqueuePlanApprovedInjection } from "./runtime/injection-writer.js";
+import { createPlanModeNotifications } from "./runtime/plan-notifications.js";
 import { decidePlanTierModel } from "./runtime/plan-tier-model.js";
 import { createAskUserQuestionTool } from "./tools/ask-user-question.js";
 import { createEnterPlanModeTool } from "./tools/enter-plan-mode.js";
@@ -304,6 +308,31 @@ export default definePluginEntry({
       },
     );
 
+    // P-12: session-actions — operator-side resolution surface.
+    // /plan accept|reject|cancel|edit|answer + plan.auto.toggle. UI
+    // clients dispatch these by (pluginId, actionId). Telegram-native
+    // buttons and typed /plan commands both route through this same map.
+    const sessionActionRegistrations = createPlanModeSessionActions({
+      api,
+      store,
+    });
+    const sessionActionHandlers = new Map<
+      string,
+      (ctx: never) => unknown
+    >();
+    for (const action of sessionActionRegistrations) {
+      api.session.controls.registerSessionAction(action);
+      sessionActionHandlers.set(
+        action.id,
+        action.handler as (ctx: never) => unknown,
+      );
+    }
+    const notifications = createPlanModeNotifications({
+      api,
+      store,
+      actions: sessionActionHandlers as never,
+    });
+
     api.registerTool(createEnterPlanModeTool({ store }), {
       name: "enter_plan_mode",
     });
@@ -354,6 +383,7 @@ export default definePluginEntry({
               : {}),
           },
         },
+        notifications,
         autoApprove: {
           // The trigger mirrors `plan.accept`'s two-step resolution
           // (src/ui/session-actions.ts ~260-302):
@@ -434,34 +464,12 @@ export default definePluginEntry({
       createAskUserQuestionTool({
         store,
         logger: { warn: (msg: string) => api.logger.warn(msg) },
+        notifications,
       }),
       {
         name: "ask_user_question",
       },
     );
-
-    // P-12: session-actions — operator-side resolution surface.
-    // /plan accept|reject|cancel|edit|answer + plan.auto.toggle. UI
-    // clients dispatch these by (pluginId, actionId). Each handler
-    // verifies the approvalId (stale-event guard), then calls the
-    // PlanModeStore mutator + the appropriate injection-writer.
-    const sessionActionRegistrations = createPlanModeSessionActions({
-      api,
-      store,
-    });
-    const sessionActionHandlers = new Map<
-      string,
-      (ctx: never) => unknown
-    >();
-    for (const action of sessionActionRegistrations) {
-      api.session.controls.registerSessionAction(action);
-      // Snapshot the handler for the /plan slash-command dispatcher
-      // below. Keyed on the action id so /plan accept → plan.accept etc.
-      sessionActionHandlers.set(
-        action.id,
-        action.handler as (ctx: never) => unknown,
-      );
-    }
 
     // Hotfix (2026-05-13): register `/plan` and `/plan-mode` slash
     // commands so users can resolve approvals from chat (not just
@@ -491,7 +499,15 @@ export default definePluginEntry({
 
     // P-12: sweep CLI command — `openclaw plan-clear -s <sessionKey>`.
     // Operator rollback drain for sessions stuck in plan mode.
-    api.registerCli(createPlanClearCli({ store }));
+    api.registerCli(createPlanClearCli({ store }), {
+      descriptors: [
+        {
+          name: "plan-clear",
+          description: "Clear Smarter-Claw plan-mode state for a session.",
+          hasSubcommands: false,
+        },
+      ],
+    });
 
     // P-5: mutation gate (`before_tool_call` hook). Blocks mutating
     // tools when planMode === "plan". Algorithm is byte-identical to
@@ -812,21 +828,13 @@ export default definePluginEntry({
  *   - Detection fails (can't find openclaw): silent no-op (returns generic message)
  */
 function buildChatStreamSeamAdvisory(): string {
-  // Lazy-require fs to keep the plugin entry side-effect-free at import
-  // time for tests + parity harness.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const fs = require("node:fs") as typeof import("node:fs");
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const pathModule = require("node:path") as typeof import("node:path");
-
   // Resolve openclaw install dir from this module's location.
   // The plugin imports `openclaw/plugin-sdk/...`, so Node has resolved
   // openclaw's package directory. We walk up from `require.resolve` if
   // available; otherwise fall back to relative path heuristic.
   let openclawDir: string | null = null;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const req = require("node:module").createRequire(import.meta.url) as NodeRequire;
+    const req = createRequire(import.meta.url);
     const openclawPkg = req.resolve("openclaw/package.json");
     openclawDir = pathModule.dirname(openclawPkg);
   } catch {

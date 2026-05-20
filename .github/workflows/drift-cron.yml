@@ -93,7 +93,9 @@ jobs:
           # For now, a placeholder that surfaces "harness not wired
           # yet" without failing the job.
           if [ -f parity-harness/runners/plugin-under-test.ts ]; then
-            pnpm exec tsx parity-harness/runners/plugin-under-test.ts || true
+            node --experimental-strip-types parity-harness/runners/plugin-under-test.ts || true
+          else
+            pnpm parity-harness || true
           fi
           echo "Plugin runner step complete."
 
@@ -111,7 +113,7 @@ jobs:
             exit 0
           fi
           set +e
-          pnpm exec tsx parity-harness/diff.ts > /tmp/diff-output.txt 2>&1
+          node --experimental-strip-types parity-harness/diff.ts > /tmp/diff-output.txt 2>&1
           rc=$?
           set -e
           cat /tmp/diff-output.txt

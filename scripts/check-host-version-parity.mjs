@@ -67,6 +67,7 @@ const pkg = loadJson("package.json");
 
 const minHostVersion = manifest.minHostVersion;
 const devDepOpenclaw = pkg.devDependencies?.openclaw;
+const pkgOpenClaw = pkg.openclaw;
 
 if (typeof minHostVersion !== "string" || minHostVersion.length === 0) {
   console.error(
@@ -94,6 +95,41 @@ if (minHostVersion !== devDepOpenclaw) {
   process.exit(2);
 }
 
+const expectedInstallFloor = `>=${minHostVersion}`;
+if (pkgOpenClaw?.install?.minHostVersion !== expectedInstallFloor) {
+  console.error(
+    `[host-version-parity] package.json openclaw.install.minHostVersion="${pkgOpenClaw?.install?.minHostVersion}" must be "${expectedInstallFloor}" for OpenClaw's canonical package install gate.`,
+  );
+  process.exit(2);
+}
+
+if (pkgOpenClaw?.build?.command !== "pnpm build") {
+  console.error(
+    `[host-version-parity] package.json openclaw.build.command must be "pnpm build"; got ${JSON.stringify(pkgOpenClaw?.build?.command)}.`,
+  );
+  process.exit(2);
+}
+
+const requiredTools = [
+  "enter_plan_mode",
+  "exit_plan_mode",
+  "ask_user_question",
+];
+const declaredTools = new Set(manifest.contracts?.tools ?? []);
+const missingTools = requiredTools.filter((tool) => !declaredTools.has(tool));
+if (missingTools.length > 0) {
+  console.error(
+    `[host-version-parity] openclaw.plugin.json contracts.tools missing: ${missingTools.join(", ")}.`,
+  );
+  process.exit(2);
+}
+if (!(manifest.contracts?.sessionAttachments ?? []).includes("active-session")) {
+  console.error(
+    '[host-version-parity] openclaw.plugin.json contracts.sessionAttachments must include "active-session".',
+  );
+  process.exit(2);
+}
+
 // Optional: also sanity-check peerDependencies.openclaw (range-spec
 // allowed; the invariant here is "the range INCLUDES minHostVersion").
 // We do a conservative startsWith on a `>=` prefix to keep this script
@@ -110,5 +146,5 @@ if (typeof peerOpenclaw === "string" && peerOpenclaw.startsWith(">=")) {
 }
 
 console.log(
-  `[host-version-parity] OK — minHostVersion=${minHostVersion} == devDependencies.openclaw=${devDepOpenclaw}${peerOpenclaw ? ` (peer=${peerOpenclaw})` : ""}`,
+  `[host-version-parity] OK — manifest minHostVersion=${minHostVersion} == devDependencies.openclaw=${devDepOpenclaw}${peerOpenclaw ? ` (peer=${peerOpenclaw})` : ""}; package install floor=${expectedInstallFloor}; contracts.tools=${requiredTools.join(",")}; sessionAttachments=active-session`,
 );

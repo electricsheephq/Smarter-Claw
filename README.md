@@ -4,15 +4,18 @@ Plan Mode plugin for [OpenClaw](https://github.com/openclaw/openclaw) — plan-t
 
 ## Status
 
-**`1.0.0-port.16` — parity-refresh release candidate (2026-05-20).**
+**`1.0.0-port.17` — OpenClaw 26.5.18 recovery candidate (2026-05-20).**
 
 The 6-wave parity refresh closed all 2 P0 + 14/17 P1 Wave-1 findings,
 built a 156-case mechanical parity-harness CI gate, and bumped the
-minimum host version to `openclaw@2026.5.18`. The plugin is
-**release-ready** against `openclaw@2026.5.18`+; sidebar UI + slash
-commands work end-to-end. **868 unit tests + 4 Eva-live-smokes pass;
-parity-harness 156+/156+ cases parity-clean across 8+ checks; all
-green on Ubuntu CI**. See [`docs/audits/parity-refresh/FINAL-REPORT.md`](./docs/audits/parity-refresh/FINAL-REPORT.md)
+minimum host version to `openclaw@2026.5.18`. Port `.17` adds the
+stable-load contracts (`contracts.tools`), explicit CLI descriptors,
+the runtime registration gate, and Telegram-native plan/question button
+wiring. On stock `openclaw@2026.5.18`, the typed `/plan` fallback and
+persisted Markdown plan path remain authoritative; Markdown attachment
+delivery and native Telegram buttons activate when the host includes the
+trusted `contracts.sessionAttachments: ["active-session"]` SDK seam.
+See [`docs/audits/parity-refresh/FINAL-REPORT.md`](./docs/audits/parity-refresh/FINAL-REPORT.md)
 for the full ship-readiness account.
 
 `v1.0` public release is gated on the upstream OpenClaw chat-stream renderer
@@ -52,8 +55,9 @@ The mutation gate (`before_tool_call`) works without this flag, but most
 of the plugin requires it. An advisory message fires on every new session
 start when the flag is missing.
 
-Minimum host version: `openclaw >= 2026.5.18` (declared via
-`minHostVersion` in `openclaw.plugin.json`).
+Minimum host version: `openclaw >= 2026.5.18` (declared via the canonical
+`package.json#openclaw.install.minHostVersion` floor and mirrored in
+`openclaw.plugin.json` for runtime metadata).
 
 ## Optional: chat-stream seam patch (for inline UI before upstream merges)
 
@@ -119,6 +123,8 @@ The patch is a **temporary tactical unblock for the legacy `2026.5.10-beta.5` ba
 | `autoApprove` toggle (state mutator) | ✅ |
 | Approval grant ledger + structured debug log | ✅ |
 | Parity harness (Layer 1, 2, 3-cron) | ✅ |
+| Telegram-native approval/question buttons | ✅ with OpenClaw active-session attachment seam; `/plan` fallback on stock `26.5.18` |
+| Markdown plan artifact persistence + attachment | ✅ persisted on stock `26.5.18`; attached when host seam is available |
 
 ## Deferred to v1.0 (upstream-blocked)
 
@@ -163,6 +169,8 @@ at the in-host code it mirrors (see `host_ref:` comments in each file).
 | `api.session.controls.registerSessionAction` (×6) | `plan.accept` / `plan.edit` / `plan.reject` / `plan.cancel` / `plan.answer` / `plan.auto.toggle` |
 | `api.session.controls.registerControlUiDescriptor` | Sidebar widget descriptor |
 | `api.session.workflow.enqueueNextTurnInjection` | `[PLAN_DECISION]:` and `[QUESTION_ANSWER]:` writers |
+| `api.registerInteractiveHandler` | `smarter-claw-plan` Telegram callback namespace for approve/revise/reject/cancel and option answers |
+| `api.session.workflow.sendSessionAttachment` | Best-effort active-session plan/question presentation delivery; falls back when stock `26.5.18` blocks third-party attachments |
 | `api.registerCli` | `openclaw plan-clear` rollback drain command |
 
 ## Develop
@@ -172,7 +180,8 @@ git clone https://github.com/electricsheephq/Smarter-Claw.git
 cd Smarter-Claw
 pnpm install
 pnpm typecheck       # tsc --noEmit
-pnpm test            # vitest run — 551 tests across 26 files
+pnpm test            # vitest run
+pnpm runtime-gate    # built-plugin registration contract smoke
 pnpm build           # tsc → dist/
 ```
 
@@ -180,11 +189,14 @@ pnpm build           # tsc → dist/
 
 | OpenClaw | Smarter Claw |
 |---|---|
-| `2026.5.18` and later | `1.0.0-port.16` (current parity-refresh RC) |
+| `2026.5.18` and later | `1.0.0-port.17` (current recovery RC) |
+| `2026.5.18` and later | `1.0.0-port.16` (parity-refresh RC; no Telegram-native button bridge) |
 | `2026.5.10-beta.5` ... `<2026.5.18` | `1.0.0-port.15` (legacy; chat-stream patcher applies here only) |
 
-`minHostVersion` is enforced via `openclaw.plugin.json`. Earlier host
-versions don't have the required SDK seams.
+Install-time compatibility is enforced via
+`package.json#openclaw.install.minHostVersion`; runtime metadata is mirrored
+in `openclaw.plugin.json`. Earlier host versions don't have the required SDK
+seams.
 
 ## Known limitations
 

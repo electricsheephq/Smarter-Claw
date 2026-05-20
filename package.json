@@ -1,6 +1,6 @@
 {
   "name": "@electricsheephq/smarter-claw",
-  "version": "1.0.0-port.16",
+  "version": "1.0.0-port.17",
   "description": "Smarter-Claw — Plan-Mode plugin for OpenClaw. Parity-refresh release candidate. Source-of-truth parity at openclaw-pr70071-rebase tip ea04ea52c7. v1.0 public release gated on upstream chat-stream SDK seam.",
   "type": "module",
   "main": "dist/src/index.js",
@@ -11,6 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
+    "runtime-gate": "node scripts/runtime-registration-gate.mjs",
     "parity-harness": "node scripts/check-host-version-parity.mjs && vitest run tests/parity/parity-harness.test.ts",
     "patch:chat-stream-seam": "node scripts/install-chat-stream-seam.mjs",
     "patch:chat-stream-seam:verify": "node scripts/verify-chat-stream-seam.mjs",
@@ -24,6 +25,7 @@
     "scripts/verify-chat-stream-seam.mjs",
     "scripts/uninstall-chat-stream-seam.mjs",
     "scripts/check-host-version-parity.mjs",
+    "scripts/runtime-registration-gate.mjs",
     "README.md",
     "LICENSE",
     "TRADEMARK.md",
@@ -62,7 +64,16 @@
   "openclaw": {
     "extensions": [
       "./dist/src/index.js"
-    ]
+    ],
+    "install": {
+      "minHostVersion": ">=2026.5.18",
+      "npmSpec": "@electricsheephq/smarter-claw@1.0.0-port.17"
+    },
+    "build": {
+      "command": "pnpm build",
+      "entry": "dist/src/index.js",
+      "manifest": "dist/openclaw.plugin.json"
+    }
   },
   "engines": {
     "node": ">=22.0.0"

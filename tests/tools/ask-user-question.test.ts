@@ -237,6 +237,28 @@ describe("W1-F5 ask_user_question — pending-question persistence", () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
+  it("when notification sink is wired, sends native question options after persist", async () => {
+    const { store } = stubStore();
+    const notifyQuestion = vi.fn(async () => {});
+    const factory = createAskUserQuestionTool({
+      store: store as never,
+      notifications: { notifyQuestion },
+    });
+    const t = factory({ sessionKey: SESSION_KEY });
+    const r = await t.execute("call-1", {
+      question: "Major or minor bump?",
+      options: ["major", "minor"],
+    });
+
+    expect((r.details as { status: string }).status).toBe("question_submitted");
+    expect(notifyQuestion).toHaveBeenCalledWith({
+      sessionKey: SESSION_KEY,
+      questionId: "q-call-1",
+      questionPrompt: "Major or minor bump?",
+      options: ["major", "minor"],
+    });
+  });
+
   it("when store wired but no sessionKey, skips persist and logs warn", async () => {
     const { store, calls } = stubStore();
     const warn = vi.fn();

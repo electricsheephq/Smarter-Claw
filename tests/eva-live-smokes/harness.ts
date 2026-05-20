@@ -39,10 +39,13 @@ export interface HarnessCaptures {
   sessionExtensions: Array<{ namespace: string; description?: string }>;
   controlUis: unknown[];
   enqueuedInjections: unknown[];
+  sessionAttachments: unknown[];
+  interactiveHandlers: Map<string, (ctx: unknown) => unknown>;
   loggerInfo: string[];
   loggerWarn: string[];
   loggerError: string[];
   cliRegistrars: Array<(ctx: unknown) => void>;
+  cliOptions: unknown[];
   /** Slash commands registered via `api.registerCommand` (keyed by name). */
   commands: Map<string, unknown>;
 }
@@ -75,10 +78,13 @@ export function createHarness(options: {
     sessionExtensions: [],
     controlUis: [],
     enqueuedInjections: [],
+    sessionAttachments: [],
+    interactiveHandlers: new Map(),
     loggerInfo: [],
     loggerWarn: [],
     loggerError: [],
     cliRegistrars: [],
+    cliOptions: [],
     commands: new Map(),
   };
 
@@ -109,14 +115,23 @@ export function createHarness(options: {
       const name = opts?.name ?? "<unknown>";
       captures.tools.set(name, tool);
     }),
-    registerCli: vi.fn((registrar: (ctx: unknown) => void) => {
+    registerCli: vi.fn((registrar: (ctx: unknown) => void, opts?: unknown) => {
       captures.cliRegistrars.push(registrar);
+      captures.cliOptions.push(opts);
     }),
     registerCommand: vi.fn((command: { name?: string }) => {
       // `/plan` + `/plan-mode` slash commands (hotfix #93). Keyed by
       // command name so smokes can look them up + invoke the handler.
       captures.commands.set(command?.name ?? "<unknown>", command);
     }),
+    registerInteractiveHandler: vi.fn(
+      (registration: { channel: string; namespace: string; handler: (ctx: unknown) => unknown }) => {
+        captures.interactiveHandlers.set(
+          `${registration.channel}:${registration.namespace}`,
+          registration.handler,
+        );
+      },
+    ),
     session: {
       state: {
         registerSessionExtension: vi.fn(
@@ -132,6 +147,17 @@ export function createHarness(options: {
             enqueued: true,
             id: `inj-${captures.enqueuedInjections.length}`,
             sessionKey: (injection as { sessionKey: string }).sessionKey,
+          };
+        }),
+        sendSessionAttachment: vi.fn(async (attachment: unknown) => {
+          captures.sessionAttachments.push(attachment);
+          return {
+            ok: true,
+            channel: "telegram",
+            deliveredTo: "12345",
+            count: Array.isArray((attachment as { files?: unknown }).files)
+              ? ((attachment as { files: unknown[] }).files.length)
+              : 0,
           };
         }),
       },

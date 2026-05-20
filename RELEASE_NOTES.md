@@ -1,5 +1,46 @@
 # Smarter-Claw Release Notes
 
+## 1.0.0-port.17 — OpenClaw 26.5.18 recovery candidate (2026-05-20)
+
+This recovery pass makes the plugin honest and testable on stable
+`openclaw@2026.5.18` while adding the consumer side of the Telegram
+native-button UX.
+
+### What changed since `1.0.0-port.16`
+
+- Added `openclaw.plugin.json` `contracts.tools` for
+  `enter_plan_mode`, `exit_plan_mode`, and `ask_user_question`, plus
+  `contracts.sessionAttachments: ["active-session"]`.
+- Added canonical `package.json#openclaw.install` and
+  `package.json#openclaw.build` metadata. The install floor is the
+  OpenClaw-required semver form `>=2026.5.18`, while the manifest keeps
+  the stable runtime target `2026.5.18`. Added a CI
+  `pnpm runtime-gate` that loads the built plugin and fails on missing
+  tool contracts, CLI descriptors, slash commands, session actions,
+  Control UI, or Telegram interactive handler registrations.
+- Registered `openclaw plan-clear` with explicit descriptor metadata so
+  OpenClaw can lazy-load/advertise it without guessing.
+- Added Telegram interactive namespace `smarter-claw-plan`:
+  approval cards expose Approve, Revise, Reject, Cancel buttons; question
+  cards expose option buttons; callbacks enforce sender authorization and
+  stale approval/question guards, then clear buttons after resolution.
+- `exit_plan_mode` now returns the persisted Markdown plan path in tool
+  details and best-effort sends the Markdown file plus rich approval
+  presentation through `api.session.workflow.sendSessionAttachment`.
+- `ask_user_question` now best-effort sends native option buttons through
+  the same active-session presentation path.
+- Fixed drift-cron's missing `tsx` dependency by using Node 22
+  `--experimental-strip-types` or the existing parity harness path.
+
+### Host compatibility truth
+
+Stock `openclaw@2026.5.18` still blocks third-party active-session
+attachments, so the plugin falls back to persisted Markdown paths and
+typed `/plan` commands there. Full Markdown attachment plus Telegram
+button parity requires the narrow OpenClaw host seam that allows trusted
+plugins declaring `contracts.sessionAttachments: ["active-session"]` to
+send active-session presentations.
+
 ## 1.0.0-port.16 — parity refresh, host bump to 2026.5.18, Wave-6 finding fixes (2026-05-20)
 
 The 6-wave Parity-Refresh closed the audit cycle and brought the plugin

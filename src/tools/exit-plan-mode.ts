@@ -60,6 +60,7 @@ import { computePlanPayloadHash } from "../helpers/payload-hash.js";
 import {
   persistPlanArchetypeMarkdown,
   PlanPersistStorageError,
+  type PersistPlanArchetypeMarkdownResult,
 } from "../plan-mode/plan-archetype-persist.js";
 import { renderFullPlanArchetypeMarkdown } from "../plan-mode/plan-render.js";
 import {
@@ -67,6 +68,7 @@ import {
   EXIT_PLAN_MODE_TOOL_DISPLAY_SUMMARY,
 } from "../plan-mode/tool-descriptions.js";
 import { PlanModeStore } from "../state/store.js";
+import type { PlanModeNotificationSink } from "../runtime/plan-notifications.js";
 import type { PlanStep } from "../types.js";
 import {
   PLAN_STEP_STATUSES,
@@ -234,6 +236,14 @@ export interface CreateExitPlanModeToolInput {
    * host_ref: src/agents/pi-embedded-subscribe.handlers.tools.ts:1949-1962
    */
   autoApprove?: ExitPlanModeAutoApproveOptions;
+  /**
+   * Optional rich-channel notification sink. Production wiring sends the
+   * persisted Markdown plan and native Telegram approval buttons when the
+   * host permits active-session plugin attachments. On plain 26.5.18 the
+   * host rejects that SDK call, so this path logs and the typed `/plan`
+   * fallback remains authoritative.
+   */
+  notifications?: Pick<PlanModeNotificationSink, "notifyPlanApproval">;
 }
 
 interface ToolContext {
@@ -624,8 +634,9 @@ export function createExitPlanModeTool(opts: CreateExitPlanModeToolInput) {
       // the building block a future host-side or bundled-capability
       // notifier would attach. Today, Telegram/Slack users get no
       // signal — the same gap the in-host has on non-Telegram channels.
+      let persistedPlan: PersistPlanArchetypeMarkdownResult | undefined;
       if (r.kind === "persisted") {
-        await persistPlanArchetypeIfConfigured({
+        persistedPlan = await persistPlanArchetypeIfConfigured({
           opts,
           ctx,
           plan: steps,
@@ -645,6 +656,28 @@ export function createExitPlanModeTool(opts: CreateExitPlanModeToolInput) {
             ? { references: archetype.references }
             : {}),
         });
+      }
+
+      if (r.kind === "persisted" && opts.notifications) {
+        try {
+          const snap = await opts.store.readSnapshot(sessionKey);
+          if (snap?.autoApprove !== true) {
+            await opts.notifications.notifyPlanApproval({
+              sessionKey,
+              approvalId: r.approvalId,
+              title,
+              ...(summary !== undefined ? { summary } : {}),
+              plan: steps,
+              ...(persistedPlan ? { persistedPlan } : {}),
+            });
+          }
+        } catch (notifyErr) {
+          opts.persister?.log?.warn?.(
+            `[smarter-claw] exit_plan_mode: plan notification failed: ${
+              notifyErr instanceof Error ? notifyErr.message : String(notifyErr)
+            }`,
+          );
+        }
       }
 
       // W1-F4 fix (2026-05-20): auto-approve trigger.
@@ -752,6 +785,14 @@ export function createExitPlanModeTool(opts: CreateExitPlanModeToolInput) {
           payloadHash,
           stepCount: steps.length,
           plan: steps,
+          ...(persistedPlan
+            ? {
+                persistedPlan: {
+                  path: persistedPlan.absPath,
+                  filename: persistedPlan.filename,
+                },
+              }
+            : {}),
           ...(title ? { title } : {}),
           ...(summary ? { summary } : {}),
           // PR-10 archetype fields. Spread only when the agent supplied
@@ -807,7 +848,7 @@ async function persistPlanArchetypeIfConfigured(input: {
   risks?: Array<{ risk: string; mitigation: string }>;
   verification?: string[];
   references?: string[];
-}): Promise<void> {
+}): Promise<PersistPlanArchetypeMarkdownResult | undefined> {
   const { opts, ctx } = input;
   const log = opts.persister?.log;
   if (!opts.persister) {
@@ -818,14 +859,14 @@ async function persistPlanArchetypeIfConfigured(input: {
       "[smarter-claw] exit_plan_mode: persister not configured; plan markdown NOT written. " +
         "Wire `persister` in createExitPlanModeTool({...}) to fulfil the archetype-prompt persistence promise.",
     );
-    return;
+    return undefined;
   }
   if (!ctx.agentId) {
     log?.warn?.(
       "[smarter-claw] exit_plan_mode: agentId missing from tool context; plan markdown NOT written. " +
         "The host SDK normally supplies agentId on OpenClawPluginToolContext.",
     );
-    return;
+    return undefined;
   }
   try {
     const markdown = renderFullPlanArchetypeMarkdown({
@@ -844,7 +885,7 @@ async function persistPlanArchetypeIfConfigured(input: {
         ? { references: input.references }
         : {}),
     });
-    const { filename } = await persistPlanArchetypeMarkdown({
+    const persisted = await persistPlanArchetypeMarkdown({
       agentId: ctx.agentId,
       title: input.title,
       markdown,
@@ -853,8 +894,9 @@ async function persistPlanArchetypeIfConfigured(input: {
         : {}),
     });
     log?.info?.(
-      `[smarter-claw] exit_plan_mode: persisted plan markdown agentId=${ctx.agentId} filename=${filename}`,
+      `[smarter-claw] exit_plan_mode: persisted plan markdown agentId=${ctx.agentId} filename=${persisted.filename}`,
     );
+    return persisted;
   } catch (err) {
     // Match the in-host bridge's two-bucket failure handling
     // (plan-archetype-bridge.ts:188-203): recoverable storage errors
@@ -867,13 +909,14 @@ async function persistPlanArchetypeIfConfigured(input: {
           `Operator action: check ~/.openclaw free space / permissions. ` +
           `Detail: ${err.message}`,
       );
-      return;
+      return undefined;
     }
     log?.warn?.(
       `[smarter-claw] exit_plan_mode: plan markdown persist failed: ${
         err instanceof Error ? err.message : String(err)
       }`,
     );
+    return undefined;
   }
 }
 
