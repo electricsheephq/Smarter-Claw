@@ -422,9 +422,23 @@ export default definePluginEntry({
     // P-8: ask_user_question — non-blocking clarification tool.
     // P-12 wires the question→answer flow via the `plan.answer`
     // session-action below; this registration is the model-facing tool.
-    api.registerTool(createAskUserQuestionTool(), {
-      name: "ask_user_question",
-    });
+    //
+    // W1-F5 (2026-05-20): pass `store` so the tool body persists
+    // pending-question state. Without this wire, `/plan answer
+    // <text>` on Telegram/Slack/Discord/CLI cannot resolve the
+    // question because the slash-command handler has no source for
+    // the `{questionId, questionPrompt, selectedOption}` payload
+    // required by the `plan.answer` session-action. See
+    // `docs/audits/parity-refresh/wave-1-catalog.md:W1-F5`.
+    api.registerTool(
+      createAskUserQuestionTool({
+        store,
+        logger: { warn: (msg: string) => api.logger.warn(msg) },
+      }),
+      {
+        name: "ask_user_question",
+      },
+    );
 
     // P-12: session-actions — operator-side resolution surface.
     // /plan accept|reject|cancel|edit|answer + plan.auto.toggle. UI

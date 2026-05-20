@@ -95,9 +95,9 @@ pattern: file-level copying without integration.
 
 | ID | Type | Description |
 |---|---|---|
-| **W1-F3** | missing-feature | No multi-surface approval — Approve/Edit/Reject buttons are sidebar-only. Telegram/Slack users get no interactive card. (Inline cards are upstream-SDK-blocked; a channel ping is not.) |
+| **W1-F3** | missing-feature | No multi-surface approval — Approve/Edit/Reject buttons are sidebar-only. Telegram/Slack users get no interactive card. (Inline cards are upstream-SDK-blocked; a channel ping is not.) **2026-05-20: DEFERRED — SDK blocker (same as W1-F1).** The "channel ping" parenthetical was over-optimistic — every push-to-channel SDK seam on `2026.5.18` is `bundled-plugin-only`. See `blocker-W1-F3.md`. Resolution path (`/plan accept|reject|cancel|edit|answer`) ALREADY works on every channel via the universal text pipeline; the PUSH (proactive "plan ready" message) is what's blocked. |
 | **W1-F4** | bug | `/plan auto on` flips an `autoApprove` flag that **does nothing** — the runtime that fires auto-approve "lands at P-final". A non-functional safety-relevant control. Wire it or hide it. |
-| **W1-F5** | parity-gap | `/plan answer` cannot resolve a pending `ask_user_question` on Telegram/Slack — needs plugin-side question-state tracking (also flagged as a known gap in #93). |
+| **W1-F5** | parity-gap | `/plan answer` cannot resolve a pending `ask_user_question` on Telegram/Slack — needs plugin-side question-state tracking (also flagged as a known gap in #93). **2026-05-20: IMPLEMENTED.** Added `PendingQuestion` field to `PlanModeSessionState`; added `persistPendingQuestion` + `clearPendingQuestion` store mutators; wired `ask_user_question` tool to persist on success; wired `/plan answer <text>` in `slash-commands.ts` to read store + dispatch `plan.answer`. Membership guard (`allowFreetext === false` → answer must be in `options`) mirrors in-host `sessions-patch.ts:721-732`. Idempotency: store clears slot on dispatch success; injection-writer dedups on `questionId`. |
 
 ---
 

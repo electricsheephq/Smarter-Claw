@@ -20,11 +20,11 @@
  *   - `/plan accept`                — approve the pending plan (verbatim)
  *   - `/plan edit <body>`           — approve with inline-edited body
  *   - `/plan reject [feedback]`     — reject with feedback
+ *   - `/plan answer <text>`         — answer a pending ask_user_question
+ *                                     (Wave-1 W1-F5 fix 2026-05-20 —
+ *                                     previously not wired pending
+ *                                     plugin-side question-state tracking)
  *   - `/plan auto on|off`           — toggle auto-approve mode
- *
- * `/plan answer` is intentionally NOT wired through this surface — see
- * the `answer` case below for the rationale (plugin-side question-state
- * tracking does not exist yet; tracked as a Wave-1 finding).
  *
  * # Dispatch
  *
@@ -110,6 +110,9 @@ const PLAN_AGENT_PROMPT_GUIDANCE: readonly string[] = [
     "`/plan accept` (approve verbatim), `/plan edit <new plan text>` " +
     "(approve with edits), `/plan reject [reason]` (reject for revision), " +
     "or `/plan cancel` (exit plan mode). `/plan enter` enters plan mode. " +
+    "When you call `ask_user_question`, the user can answer with " +
+    "`/plan answer <text>` (text must match one of the offered options " +
+    "exactly, unless you set `allowFreetext: true`). " +
     "These work on every channel even if the channel's native command " +
     "menu does not list them — if a user cannot find `/plan` in an " +
     "autocomplete menu, tell them to type it as a normal message.",
@@ -131,7 +134,7 @@ export function createPlanSlashCommand(
   return {
     name: "plan",
     description:
-      "Plan-mode controls: /plan enter | accept | edit | reject | cancel | auto on|off",
+      "Plan-mode controls: /plan enter | accept | edit | reject | cancel | answer | auto on|off",
     acceptsArgs: true,
     // Available on every channel; do NOT restrict via `channels`.
     agentPromptGuidance: PLAN_AGENT_PROMPT_GUIDANCE,
@@ -215,8 +218,8 @@ const USAGE = [
   "  /plan edit <body>      — approve with edits",
   "  /plan reject [reason]  — reject with optional feedback",
   "  /plan cancel           — exit plan mode",
+  "  /plan answer <text>    — answer a pending ask_user_question",
   "  /plan auto on|off      — toggle auto-approve",
-  "(Answer pending questions from the approval card.)",
 ].join("\n");
 
 async function handlePlanCommand(
@@ -269,18 +272,35 @@ async function handlePlanCommand(
       return handleEnter(ctx, input.store);
     case "answer":
     case "ans":
-      // No slash-surface answering: pending-question metadata
-      // (questionId / questionPrompt) is minted host-side by
-      // ask_user_question and is NOT projected into plan-mode state,
-      // so this command cannot supply the `plan.answer` session-action
-      // its required payload. Route the user to the approval card.
-      // Tracked as a Wave-1 finding (plugin-side question-state
-      // tracking + cross-platform answer surface — Wave 4).
-      return reply(
-        "Answer pending questions from the approval card. Slash-command " +
-          "answering is not available yet — it needs plugin-side " +
-          "question-state tracking (known gap).",
-      );
+      // W1-F5 fix (2026-05-20): cross-surface `/plan answer <text>`.
+      //
+      // Previously a known-gap message: pending-question metadata
+      // was not plugin-side, so this command had no source for the
+      // `{questionId, questionPrompt, selectedOption}` payload the
+      // `plan.answer` session-action requires. The W1-F5 fix added
+      // `PlanModeStore.persistPendingQuestion` (called from the
+      // `ask_user_question` tool body) so the store now carries the
+      // pending question whenever one is active. This dispatcher
+      // reads from that slot and routes to `plan.answer`.
+      //
+      // **Hard constraint — idempotency**: answering an already-
+      // answered question MUST be a no-op, not a duplicate inject.
+      // Two layers of defense:
+      //   (a) `store.clearPendingQuestion` is called by the
+      //       `plan.answer` flow below on success — a second `/plan
+      //       answer <text>` finds an empty slot and returns "no
+      //       pending question".
+      //   (b) The injection-writer dedups on `idempotencyKey:
+      //       smarter-claw:question_answer:<questionId>` so even if
+      //       (a) races, the host's queue collapses duplicates.
+      //
+      // host_ref: in-host `/plan answer` at
+      //   src/auto-reply/reply/commands-plan.ts:475-516 (commit
+      //   ea04ea52c7) — reads `liveSessionEntry.pendingInteraction`
+      //   and dispatches via sessions.patch. The plugin reads from
+      //   its own `pluginExtensions["smarter-claw"]["plan-mode"]
+      //   .pendingQuestion` slot for the equivalent.
+      return handleAnswer(ctx, input, tail);
     case "status":
       return reply(USAGE);
     default:
@@ -319,6 +339,148 @@ async function handleEnter(
       ? "Already in plan mode — investigate read-only, then propose a plan."
       : "Plan mode entered. Mutating tools are blocked until a plan is approved.",
   );
+}
+
+/**
+ * `/plan answer <text>` — resolve a pending `ask_user_question`
+ * cross-surface (Telegram / Slack / Discord / CLI / webchat).
+ *
+ * **Wave-1 W1-F5 fix (2026-05-20).**
+ *
+ * # Flow
+ *
+ *   1. Require `sessionKey` (slash commands without a session
+ *      context cannot answer; mirrors the in-host check at
+ *      `commands-plan.ts:475-498`).
+ *   2. Require non-empty `tail` (the answer text).
+ *   3. Read `store.readSnapshot(sessionKey).pendingQuestion` —
+ *      the slot populated by `ask_user_question`'s tool body.
+ *   4. If absent: friendly "no pending question" reply (mirrors
+ *      the in-host's "No pending ask_user_question for this
+ *      session" message).
+ *   5. If `allowFreetext === false`: validate that the answer text
+ *      is one of `options` exactly. Mirrors the in-host
+ *      `sessions-patch.ts:721-732` answer-guard. Without this gate
+ *      a Telegram user could `/plan answer <arbitrary>` and steer
+ *      the agent's next turn with unintended free text.
+ *   6. Dispatch `plan.answer` with
+ *      `{ questionId, questionPrompt, selectedOption: tail }`.
+ *   7. On success, CLEAR `pendingQuestion` from the store
+ *      (idempotency layer (a) — a repeat `/plan answer` finds an
+ *      empty slot and returns step 4's "no pending" message).
+ *
+ * # Hard constraints
+ *
+ * - **Idempotent**: a repeat `/plan answer` finds the slot cleared
+ *   (step 7), returns "no pending question" — same code path as
+ *   "no question was ever pending". A defense-in-depth layer lives
+ *   in the injection-writer (idempotency key
+ *   `smarter-claw:question_answer:<questionId>`) so even if (a)
+ *   races with another `/plan answer`, the host's queue collapses.
+ * - **Mention-neutralized**: the answer text is forwarded to
+ *   `plan.answer` which calls `enqueueQuestionAnswerInjection`,
+ *   which already JSON-quotes the answer in the
+ *   `[QUESTION_ANSWER]` envelope. Slack `@channel`/`@here`/
+ *   `@everyone` and `<@U…>` mentions inside the answer are NOT
+ *   themselves the answer text the agent reads — the JSON encoding
+ *   makes them inert. (The in-host has an additional
+ *   `sessions-patch.ts:751-754` neutralization for the answer
+ *   stored at queue-time; the plugin's JSON-quote is the
+ *   equivalent guard.)
+ *
+ * host_ref: src/auto-reply/reply/commands-plan.ts:475-516 — the
+ *   in-host /plan answer handler, commit ea04ea52c7. The plugin
+ *   tracks question state in its own pluginExtensions slot (the
+ *   host's `pendingInteraction` is bundled-only — see
+ *   `blocker-W1-F1.md` §2).
+ * host_ref: src/gateway/sessions-patch.ts:702-730 — the in-host
+ *   `allowFreetext === false` membership guard, mirrored here.
+ */
+async function handleAnswer(
+  ctx: PluginCommandContext,
+  input: CreatePlanSlashCommandInput,
+  tail: string,
+): Promise<PluginCommandResult> {
+  if (!ctx.sessionKey) {
+    return reply(
+      "`/plan answer` requires a session context. Send it from inside an active session.",
+    );
+  }
+  if (!tail) {
+    return reply(
+      "`/plan answer` requires an answer. Usage: `/plan answer <one of the offered options>` (or any text when the agent enabled free-text).",
+    );
+  }
+  // Read the pending-question slot. `readSnapshot` is non-locking
+  // (the store's docstring is explicit). The store handler we
+  // dispatch to does the authoritative lock+clear via
+  // `clearPendingQuestion`; this read is for the prompt-side guard.
+  let snap: Awaited<ReturnType<PlanModeStore["readSnapshot"]>>;
+  try {
+    snap = await input.store.readSnapshot(ctx.sessionKey);
+  } catch (err) {
+    return reply(
+      `/plan answer failed: ${(err as Error).message ?? "unexpected error"}`,
+    );
+  }
+  const pending = snap?.pendingQuestion;
+  if (!pending) {
+    return reply(
+      "No pending question for this session. `/plan answer` only works when the agent has asked a question via `ask_user_question`.",
+    );
+  }
+  // Membership guard — mirror in-host sessions-patch.ts:721-732. If
+  // the agent disabled free-text, the answer text must match one of
+  // the offered options EXACTLY. Pre-W1-F5 this was unenforceable
+  // (no slash-side answering); now it ships with the parity check.
+  if (!pending.allowFreetext) {
+    if (
+      pending.options.length > 0 &&
+      !pending.options.includes(tail)
+    ) {
+      return reply(
+        `Your answer "${tail}" is not in the offered options. The agent disabled free-text for this question. Pick one of: ${pending.options
+          .map((o) => `"${o}"`)
+          .join(", ")}.`,
+      );
+    }
+  }
+  // Dispatch `plan.answer` with the resolved payload. Reuses the
+  // same handler the sidebar buttons call — no re-implementation.
+  const dispatchResult = await dispatchAction(
+    input.actions,
+    "plan.answer",
+    ctx,
+    {
+      questionId: pending.questionId,
+      questionPrompt: pending.questionPrompt,
+      selectedOption: tail,
+    },
+  );
+  // Clear the slot ONLY when the dispatch succeeded. A failure
+  // (handler threw / returned ok:false) leaves the question armed so
+  // the user can retry without losing the question state.
+  //
+  // `dispatchAction` returns `reply(...)` with text like
+  // "/plan answer failed: ..." on failure; we detect by inspecting
+  // the text. The cleaner contract would be a {ok, text} return,
+  // but matching the existing dispatcher shape keeps this hunk
+  // small. (The friendly map's "plan.answer" entry below makes the
+  // success text deterministic.)
+  if (!dispatchResult.text?.startsWith("/plan answer failed:")) {
+    try {
+      await input.store.clearPendingQuestion({
+        sessionKey: ctx.sessionKey,
+        expectedQuestionId: pending.questionId,
+      });
+    } catch {
+      // Non-fatal: the injection-writer's idempotency key
+      // (smarter-claw:question_answer:<questionId>) prevents a
+      // duplicate dispatch on retry even if clear fails. The user's
+      // answer already landed; this is housekeeping.
+    }
+  }
+  return dispatchResult;
 }
 
 async function dispatchAction(
@@ -372,6 +534,7 @@ async function dispatchAction(
     "plan.edit": "Plan approved with edits — agent will execute the edited body.",
     "plan.reject": "Plan rejected — agent will revise based on your feedback.",
     "plan.cancel": "Exited plan mode — back to normal session.",
+    "plan.answer": "Answer recorded — agent will resume with your response.",
     "plan.auto.toggle": "Auto-approve toggled.",
   };
   return {

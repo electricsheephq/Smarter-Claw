@@ -89,6 +89,88 @@ export interface PlanStep {
 }
 
 /**
+ * Persisted pending `ask_user_question` state. Mirrors the in-host
+ * `PendingInteraction` union's `kind: "question"` variant
+ * (`src/config/sessions/types.ts:113-124` at commit `ea04ea52c7`),
+ * but plugin-side and pruned to what the plugin actually needs to
+ * resolve a `/plan answer <text>` cross-surface dispatch.
+ *
+ * # Why the plugin needs this (W1-F5)
+ *
+ * In-host: `ask_user_question` tool fires → runtime emits a
+ * `kind: "plugin"` approval event → gateway's
+ * `plan-snapshot-persister.ts:184-209` writes
+ * `entry.pendingInteraction = { kind: "question", approvalId,
+ * questionId, ... }`. `/plan answer` in
+ * `src/auto-reply/reply/commands-plan.ts:312-318` reads
+ * `liveSessionEntry.pendingInteraction.approvalId/questionId` and
+ * dispatches `sessions.patch { planApproval: { action: "answer",
+ * answer, approvalId, questionId } }`.
+ *
+ * In the plugin: the host's `pendingInteraction` is host-owned —
+ * the plugin cannot write it (the runtime fields belong to the
+ * plan-snapshot-persister, which subscribes to the `approval`
+ * stream that is `bundled-plugin-only`; see
+ * `docs/audits/parity-refresh/blocker-W1-F1.md` §2). So the
+ * plugin stores its OWN question-state under
+ * `pluginExtensions["smarter-claw"]["plan-mode"].pendingQuestion`,
+ * written by the `ask_user_question` tool body directly. The plugin
+ * never reads the host's `pendingInteraction` and never claims to.
+ *
+ * # Lifecycle
+ *
+ * - WRITE: by `ask_user_question` tool's `execute()` body on a
+ *   `status: "question_submitted"` result, AFTER the tool's input
+ *   validation passes. The `questionId` is the deterministic
+ *   `q-${toolCallId}` (already minted on line 135 of
+ *   `src/tools/ask-user-question.ts`).
+ * - READ: by the `/plan answer` slash-command handler in
+ *   `src/ui/slash-commands.ts` — looks up
+ *   `store.readSnapshot(sessionKey).pendingQuestion` and uses the
+ *   `questionId` + `questionPrompt` to build the `plan.answer`
+ *   session-action payload.
+ * - CLEAR: cleared on (a) successful `plan.answer` dispatch
+ *   (idempotency — answering twice should be a no-op), (b)
+ *   `exit_plan_mode` (the question is implicitly resolved when the
+ *   agent proceeds to propose a plan), (c) `cancelPlanMode` /
+ *   `exitPlanMode` (state reset).
+ *
+ * # Idempotency invariant
+ *
+ * Answering an already-answered question must be a no-op, not a
+ * duplicate inject. Implementation: the `/plan answer` handler
+ * checks `pendingQuestion` is present BEFORE dispatching; on
+ * dispatch success the store CLEARS `pendingQuestion`. A second
+ * `/plan answer` finds an empty slot → returns
+ * "No pending question" instead of re-injecting.
+ *
+ * The injection-writer already deduplicates by
+ * `idempotencyKey: smarter-claw:question_answer:<questionId>` (see
+ * `src/runtime/injection-writer.ts:293`); the store-side clear is
+ * the user-visible idempotency, the injection-side dedup is the
+ * defense-in-depth.
+ */
+export interface PendingQuestion {
+  /**
+   * Deterministic question id minted as `q-${toolCallId}` by the
+   * `ask_user_question` tool. Stable across replays, so the
+   * `enqueueQuestionAnswerInjection` idempotency key
+   * `smarter-claw:question_answer:<questionId>` is stable too.
+   */
+  questionId: string;
+  /** The original question text, for re-rendering in `/plan answer` help. */
+  questionPrompt: string;
+  /** The N selectable options the agent offered. UI may render them
+   *  inline; `/plan answer` validates against this set when
+   *  `allowFreetext=false`. */
+  options: string[];
+  /** When true, accept any text as the answer; else only one of `options`. */
+  allowFreetext: boolean;
+  /** Unix ms timestamp of when the question was persisted. */
+  askedAt: number;
+}
+
+/**
  * The full plan-mode session-extension payload. Stored under
  * `pluginExtensions["smarter-claw"]["plan-mode"]` on the host's session
  * row. UI clients read this via the session-extension projector
@@ -221,6 +303,25 @@ export interface PlanModeSessionState {
    *   auto-mode wiring).
    */
   autoApprove?: boolean;
+
+  /**
+   * Pending `ask_user_question` interaction state. Written by the
+   * `ask_user_question` tool body; read by the `/plan answer`
+   * slash-command handler. See `PendingQuestion` for the full
+   * lifecycle + idempotency invariant.
+   *
+   * Wave-1 W1-F5 fix (2026-05-20): closes the cross-surface
+   * `/plan answer` gap for Telegram/Slack. Before this field
+   * existed, the `/plan answer` slash command returned the
+   * "known gap" message because the session-action's required
+   * `{ questionId, questionPrompt, selectedOption }` payload had no
+   * source. With this field populated by `ask_user_question`, the
+   * slash command can build the payload from the persisted state.
+   *
+   * host_ref: `src/config/sessions/types.ts:104-124` (the in-host's
+   *   `PendingInteraction` union — same shape, plugin-side mirror).
+   */
+  pendingQuestion?: PendingQuestion;
 }
 
 /**

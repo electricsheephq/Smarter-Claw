@@ -3,7 +3,7 @@
  *
  * Covers the command dispatcher: subcommand routing, the `/plan enter`
  * store path, the dispatcher's try/catch error guard, and the
- * `/plan answer` known-gap message.
+ * `/plan answer` cross-surface flow (Wave-1 W1-F5).
  */
 
 import { describe, expect, it, vi } from "vitest";
@@ -281,17 +281,268 @@ describe("/plan enter — store path", () => {
   });
 });
 
-describe("/plan answer — known-gap message", () => {
-  it("/plan answer does NOT dispatch and returns the known-gap message", async () => {
-    const input = makeInput({
-      actions: new Map<string, ActionHandler>([
-        ["plan.answer", vi.fn(async () => ({ ok: true as const })) as ActionHandler],
-      ]),
-    });
+describe("/plan answer — W1-F5 cross-surface answer", () => {
+  // Helper: build a store stub with a configurable pendingQuestion
+  // and clear semantics.
+  function storeWithPendingQuestion(pending?: {
+    questionId: string;
+    questionPrompt: string;
+    options: string[];
+    allowFreetext: boolean;
+  }) {
+    const clearCalls: Array<{ sessionKey: string; expectedQuestionId?: string }> = [];
+    return {
+      store: {
+        readSnapshot: vi.fn(async () => {
+          if (!pending) return undefined;
+          return {
+            mode: "plan" as const,
+            approval: "none" as const,
+            rejectionCount: 0,
+            pendingQuestion: { ...pending, askedAt: Date.now() },
+          };
+        }),
+        clearPendingQuestion: vi.fn(async (input: { sessionKey: string; expectedQuestionId?: string }) => {
+          clearCalls.push(input);
+          return { kind: "cleared" as const, state: {} as never };
+        }),
+        enterPlanMode: vi.fn(async () => ({
+          kind: "entered" as const,
+          state: {} as never,
+        })),
+      } as unknown as PlanModeStore,
+      clearCalls,
+    };
+  }
+
+  it("with no pending question, returns a friendly 'no pending' reply and does NOT dispatch", async () => {
+    const { store } = storeWithPendingQuestion(undefined);
+    const planAnswer = vi.fn(async () => ({ ok: true as const })) as ActionHandler;
+    const input = {
+      actions: new Map<string, ActionHandler>([["plan.answer", planAnswer]]),
+      store,
+    };
     const cmd = createPlanSlashCommand(input);
-    const r = await cmd.handler(cmdCtx("answer option one"));
-    expect(r.text).toMatch(/approval card/);
-    expect(input.actions.get("plan.answer")).not.toHaveBeenCalled();
+    const r = await cmd.handler(cmdCtx("answer something"));
+    expect(r.text).toMatch(/No pending question/);
+    expect(planAnswer).not.toHaveBeenCalled();
+  });
+
+  it("requires a non-empty tail (the answer text)", async () => {
+    const { store } = storeWithPendingQuestion({
+      questionId: "q-abc",
+      questionPrompt: "Pick a color",
+      options: ["red", "blue"],
+      allowFreetext: false,
+    });
+    const planAnswer = vi.fn(async () => ({ ok: true as const })) as ActionHandler;
+    const input = {
+      actions: new Map<string, ActionHandler>([["plan.answer", planAnswer]]),
+      store,
+    };
+    const cmd = createPlanSlashCommand(input);
+    const r = await cmd.handler(cmdCtx("answer"));
+    expect(r.text).toMatch(/requires an answer/);
+    expect(planAnswer).not.toHaveBeenCalled();
+  });
+
+  it("requires a session context", async () => {
+    const { store } = storeWithPendingQuestion({
+      questionId: "q-abc",
+      questionPrompt: "Pick a color",
+      options: ["red", "blue"],
+      allowFreetext: false,
+    });
+    const planAnswer = vi.fn(async () => ({ ok: true as const })) as ActionHandler;
+    const input = {
+      actions: new Map<string, ActionHandler>([["plan.answer", planAnswer]]),
+      store,
+    };
+    const cmd = createPlanSlashCommand(input);
+    const r = await cmd.handler(cmdCtx("answer red", { noSession: true }));
+    expect(r.text).toMatch(/requires a session context/);
+    expect(planAnswer).not.toHaveBeenCalled();
+  });
+
+  it("when allowFreetext=false, rejects an answer NOT in the offered options", async () => {
+    const { store } = storeWithPendingQuestion({
+      questionId: "q-abc",
+      questionPrompt: "Pick a color",
+      options: ["red", "blue"],
+      allowFreetext: false,
+    });
+    const planAnswer = vi.fn(async () => ({ ok: true as const })) as ActionHandler;
+    const input = {
+      actions: new Map<string, ActionHandler>([["plan.answer", planAnswer]]),
+      store,
+    };
+    const cmd = createPlanSlashCommand(input);
+    const r = await cmd.handler(cmdCtx("answer purple"));
+    expect(r.text).toMatch(/not in the offered options/);
+    expect(r.text).toMatch(/"red"/);
+    expect(r.text).toMatch(/"blue"/);
+    expect(planAnswer).not.toHaveBeenCalled();
+  });
+
+  it("when allowFreetext=true, accepts an arbitrary answer", async () => {
+    const { store } = storeWithPendingQuestion({
+      questionId: "q-abc",
+      questionPrompt: "Describe the bug",
+      options: ["short", "long"],
+      allowFreetext: true,
+    });
+    const planAnswer = vi.fn(async () => ({
+      ok: true as const,
+      continueAgent: true,
+    })) as ActionHandler;
+    const input = {
+      actions: new Map<string, ActionHandler>([["plan.answer", planAnswer]]),
+      store,
+    };
+    const cmd = createPlanSlashCommand(input);
+    const r = await cmd.handler(cmdCtx("answer the parser drops trailing newlines"));
+    expect(r.text).toMatch(/Answer recorded/);
+    expect(planAnswer).toHaveBeenCalledOnce();
+    expect(planAnswer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actionId: "plan.answer",
+        payload: expect.objectContaining({
+          questionId: "q-abc",
+          selectedOption: "the parser drops trailing newlines",
+        }),
+      }),
+    );
+  });
+
+  it("dispatches plan.answer with the correct payload on a valid option choice", async () => {
+    const { store, clearCalls } = storeWithPendingQuestion({
+      questionId: "q-abc",
+      questionPrompt: "Pick a color",
+      options: ["red", "blue"],
+      allowFreetext: false,
+    });
+    const planAnswer = vi.fn(async () => ({
+      ok: true as const,
+      continueAgent: true,
+    })) as ActionHandler;
+    const input = {
+      actions: new Map<string, ActionHandler>([["plan.answer", planAnswer]]),
+      store,
+    };
+    const cmd = createPlanSlashCommand(input);
+    const r = await cmd.handler(cmdCtx("answer red"));
+    expect(planAnswer).toHaveBeenCalledOnce();
+    expect(planAnswer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actionId: "plan.answer",
+        sessionKey: SESSION_KEY,
+        payload: {
+          questionId: "q-abc",
+          questionPrompt: "Pick a color",
+          selectedOption: "red",
+        },
+      }),
+    );
+    expect(r.text).toMatch(/Answer recorded/);
+    // On success, the pending-question slot is cleared
+    // (idempotency layer (a)).
+    expect(clearCalls).toEqual([
+      { sessionKey: SESSION_KEY, expectedQuestionId: "q-abc" },
+    ]);
+  });
+
+  it("idempotency: a second /plan answer finds the slot cleared and returns 'no pending'", async () => {
+    // Simulate two-call sequence by toggling the pending state between
+    // calls. After the first /plan answer resolves, real production
+    // clears the slot via clearPendingQuestion; we simulate that by
+    // returning undefined from readSnapshot on the second call.
+    let callCount = 0;
+    const pending = {
+      questionId: "q-abc",
+      questionPrompt: "Pick a color",
+      options: ["red", "blue"],
+      allowFreetext: false,
+    };
+    const store = {
+      readSnapshot: vi.fn(async () => {
+        callCount += 1;
+        if (callCount === 1) {
+          return {
+            mode: "plan" as const,
+            approval: "none" as const,
+            rejectionCount: 0,
+            pendingQuestion: { ...pending, askedAt: Date.now() },
+          };
+        }
+        return undefined; // second call: cleared
+      }),
+      clearPendingQuestion: vi.fn(async () => ({
+        kind: "cleared" as const,
+        state: {} as never,
+      })),
+      enterPlanMode: vi.fn(async () => ({
+        kind: "entered" as const,
+        state: {} as never,
+      })),
+    } as unknown as PlanModeStore;
+    const planAnswer = vi.fn(async () => ({
+      ok: true as const,
+      continueAgent: true,
+    })) as ActionHandler;
+    const input = {
+      actions: new Map<string, ActionHandler>([["plan.answer", planAnswer]]),
+      store,
+    };
+    const cmd = createPlanSlashCommand(input);
+    const r1 = await cmd.handler(cmdCtx("answer red"));
+    expect(r1.text).toMatch(/Answer recorded/);
+    const r2 = await cmd.handler(cmdCtx("answer red"));
+    expect(r2.text).toMatch(/No pending question/);
+    // The session-action handler fires ONLY for the first call.
+    expect(planAnswer).toHaveBeenCalledOnce();
+  });
+
+  it("on dispatch failure, does NOT clear the pending-question slot", async () => {
+    const { store, clearCalls } = storeWithPendingQuestion({
+      questionId: "q-abc",
+      questionPrompt: "Pick a color",
+      options: ["red", "blue"],
+      allowFreetext: false,
+    });
+    const failing: ActionHandler = vi.fn(async () => {
+      throw new Error("handler exploded");
+    });
+    const input = {
+      actions: new Map<string, ActionHandler>([["plan.answer", failing]]),
+      store,
+    };
+    const cmd = createPlanSlashCommand(input);
+    const r = await cmd.handler(cmdCtx("answer red"));
+    expect(r.text).toMatch(/\/plan answer failed/);
+    // Question state preserved → user can retry without losing the
+    // question context.
+    expect(clearCalls).toEqual([]);
+  });
+
+  it("accepts the `/plan ans` short alias", async () => {
+    const { store } = storeWithPendingQuestion({
+      questionId: "q-abc",
+      questionPrompt: "Pick a color",
+      options: ["red", "blue"],
+      allowFreetext: false,
+    });
+    const planAnswer = vi.fn(async () => ({
+      ok: true as const,
+      continueAgent: true,
+    })) as ActionHandler;
+    const input = {
+      actions: new Map<string, ActionHandler>([["plan.answer", planAnswer]]),
+      store,
+    };
+    const cmd = createPlanSlashCommand(input);
+    const r = await cmd.handler(cmdCtx("ans red"));
+    expect(planAnswer).toHaveBeenCalledOnce();
+    expect(r.text).toMatch(/Answer recorded/);
   });
 });
 
