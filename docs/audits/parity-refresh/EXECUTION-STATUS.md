@@ -62,7 +62,7 @@ time, not a rushed pass.
 | W1-S18-1 Telegram menu | moderate | `channels` filter so `/plan` survives the 100-cmd cap |
 | W1-F4 `/plan auto` dead toggle | moderate | wire the auto-approve runtime, or hide the toggle |
 | W1-F2 plan-persistence honesty | moderate | write the `plan-*.md` file, or de-claim it in the prompt |
-| W1-F1 action-required notification | **investigation** | needs a notification surface design |
+| W1-F1 action-required notification | **deferred — SDK blocker** | see `blocker-W1-F1.md`; every push-to-channel SDK seam is bundled-only |
 | W1-E6 retry tool-call signal | **investigation** | needs the `messages[]` shape reverse-engineered |
 | W1-E1 turn-limit watchdog | **investigation** | needs `registerSessionSchedulerJob` wiring + once-only semantics |
 

@@ -606,6 +606,24 @@ export function createExitPlanModeTool(opts: CreateExitPlanModeToolInput) {
       // host_ref: src/agents/pi-embedded-subscribe.handlers.tools.ts:1925-1949
       //   (in-host trigger: dispatchPlanArchetypeAttachment fires
       //   immediately after emitAgentApprovalEvent, void-wrapped)
+      //
+      // W1-F1 (P0) **deferred / SDK-blocked** (2026-05-20): the
+      // in-host's `dispatchPlanArchetypeAttachment` also calls
+      // `sendDocumentTelegram(dctx.to, absPath, { caption, parseMode:
+      // "HTML" })` to push the persisted markdown to Telegram as the
+      // user's action-required signal. The plugin port stops at the
+      // PERSIST half — the push half is unimplementable on SDK
+      // `2026.5.18` because `api.session.workflow.sendSessionAttachment`
+      // rejects 3P plugins (`host-hook-attachments.ts:216-218` —
+      // `if (origin !== "bundled") return { ok: false, error:
+      // "session attachments are restricted to bundled plugins" }`).
+      // Every other SDK push surface (`emitAgentEvent` on `approval`
+      // stream, `scheduleSessionTurn`, etc.) is also unavailable —
+      // see `docs/audits/parity-refresh/blocker-W1-F1.md` for the
+      // full investigation. The persisted markdown WRITTEN below is
+      // the building block a future host-side or bundled-capability
+      // notifier would attach. Today, Telegram/Slack users get no
+      // signal — the same gap the in-host has on non-Telegram channels.
       if (r.kind === "persisted") {
         await persistPlanArchetypeIfConfigured({
           opts,
