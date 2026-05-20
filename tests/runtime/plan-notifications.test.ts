@@ -145,6 +145,41 @@ describe("plan notifications", () => {
     });
   });
 
+  it("dispatches Telegram cancel callbacks through plan.cancel with approvalId", async () => {
+    const { api, store, sendSessionAttachment, getHandler } = build();
+    const cancel = vi.fn(async () => ({ ok: true as const, continueAgent: false }));
+    const notifications = createPlanModeNotifications({
+      api: api as never,
+      store,
+      actions: new Map([["plan.cancel", cancel]]),
+    });
+    await notifications.notifyPlanApproval({
+      sessionKey: SESSION_KEY,
+      approvalId: "plan-11111111-1111-4111-8111-111111111111",
+      title: "Ship plan",
+      plan: [{ step: "Run focused tests", status: "pending" }],
+    });
+    const value = firstButtonValue(sendSessionAttachment.mock.calls[0]?.[0], "Cancel");
+    const payload = value.slice(`${TELEGRAM_PLAN_INTERACTIVE_NAMESPACE}:`.length);
+    const ctx = telegramCtx(payload);
+
+    await getHandler()?.(ctx);
+
+    expect(cancel).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actionId: "plan.cancel",
+        sessionKey: SESSION_KEY,
+        payload: {
+          approvalId: "plan-11111111-1111-4111-8111-111111111111",
+        },
+      }),
+    );
+    expect(ctx.respond.clearButtons).toHaveBeenCalledOnce();
+    expect(ctx.respond.reply).toHaveBeenCalledWith({
+      text: "Plan mode cancelled.",
+    });
+  });
+
   it("rejects stale Telegram approval callbacks without dispatching the action", async () => {
     const { gw, api, store, sendSessionAttachment, getHandler } = build();
     const accept = vi.fn(async () => ({ ok: true as const }));

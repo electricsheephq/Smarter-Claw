@@ -370,7 +370,7 @@ async function handleApprovalCallback(input: {
               approvalId: input.entry.approvalId,
               feedback: "Rejected from Telegram.",
             }
-          : {};
+          : { approvalId: input.entry.approvalId };
   const result = await dispatchSessionAction(
     input.actions,
     actionId,
