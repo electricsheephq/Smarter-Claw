@@ -21,7 +21,7 @@ complete, quality at-or-above Codex / Claude Code plan mode.
 | 1 | Parity re-audit + build-specs + Codex/CC benchmark | ✅ **merged (PR #98)** |
 | 2 | Parity harness Layer 1 (mechanical drift CI gate) | ⏳ needs isolated re-run |
 | 3 | Fix all P0/P1 findings | ▶ **in progress** — batch 1 merged-pending (PR #99) |
-| 4 | Cross-platform build (Telegram + Slack) | ⬜ pending |
+| 4 | Cross-platform build (Telegram + Slack) | ▶ **in progress** — F5 implemented, F3 deferred (SDK blocker, same as F1) |
 | 5 | Webchat inline UI + patcher | ⬜ pending (upstream-blocked) |
 | 6 | Final adversarial + 3-channel smoke + release | ⬜ pending |
 
@@ -81,8 +81,28 @@ Fix sequentially, one focused PR per cluster. IDs reference
 | ui | W1-S9-1 (sidebar schema omits 5 fields), W1-S18-1 (Telegram 100-cmd menu hides `/plan`), W1-B4 (accept-edits trigger has no CI test) | `src/ui/*`, `index.ts` |
 | benchmark gaps | W1-F1 (no action-required notification — P0), W1-F2 (prompt promises a `plan-*.md` no code writes — P0), W1-F4 (`/plan auto` dead toggle) | `src/ui/session-actions.ts`, `src/prompt/*`, `index.ts` |
 
-**Deferred to Wave 4** (cross-platform, not Wave-3 port-bugs): W1-F3
-(multi-surface approval), W1-F5 (`/plan answer` cross-surface).
+**Wave 4 (cross-platform — Telegram + Slack)** status as of 2026-05-20:
+- W1-F3 (multi-surface approval push) — **deferred — SDK blocker (same
+  as W1-F1)**. See `blocker-W1-F3.md`. Every push-to-channel SDK seam
+  is `bundled-plugin-only` on `2026.5.18`. Resolution path (`/plan
+  accept|reject|cancel|edit|answer`) ALREADY works on every channel
+  via the universal text pipeline; the gap is the PROACTIVE PUSH (the
+  "your plan is ready" message), which needs the same upstream SDK
+  change as F1 (R1/R2/R3). Files updated upstream issue: one PR
+  covers both findings.
+- W1-F5 (`/plan answer` cross-surface) — **IMPLEMENTED**. Added
+  `PendingQuestion` field to `PlanModeSessionState`; added
+  `PlanModeStore.persistPendingQuestion` + `clearPendingQuestion`
+  mutators; wired `ask_user_question` tool body to persist on
+  success; wired `/plan answer <text>` in `slash-commands.ts` to
+  read persisted state + dispatch `plan.answer`. Idempotency: store
+  clears slot on dispatch success; injection-writer dedups on
+  `questionId`. Membership guard (`allowFreetext === false` →
+  answer must be in `options`) mirrors in-host
+  `sessions-patch.ts:721-732`. New tests: store +9, slash-commands
+  +8 (replacing 1 known-gap test), ask-user-question +6. 868 total
+  tests green.
+
 **~30 P2s**: triage during/after Wave 3 — fix-now vs defer-with-issue.
 
 ---

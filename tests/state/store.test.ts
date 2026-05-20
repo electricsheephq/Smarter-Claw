@@ -1164,3 +1164,179 @@ describe("PlanModeStore — W1-C1: expectedApprovalId stale-event guard threadin
     expect(gw.peek(SESSION_KEY)?.approval).toBe("pending");
   });
 });
+
+describe("W1-F5 PlanModeStore — pending question persist / clear", () => {
+  let gw: InMemoryGateway;
+  let store: PlanModeStore;
+  let audit: AuditEmitter;
+
+  beforeEach(() => {
+    gw = new InMemoryGateway();
+    audit = vi.fn();
+    store = new PlanModeStore(gw, undefined, audit);
+  });
+
+  it("persistPendingQuestion lazy-inits a normal-mode payload when none exists", async () => {
+    const r = await store.persistPendingQuestion({
+      sessionKey: SESSION_KEY,
+      questionId: "q-call-1",
+      questionPrompt: "Pick a color",
+      options: ["red", "blue"],
+      allowFreetext: false,
+    });
+    expect(r.kind).toBe("persisted");
+    const written = gw.peek(SESSION_KEY)!;
+    expect(written.mode).toBe("normal");
+    expect(written.pendingQuestion).toBeDefined();
+    expect(written.pendingQuestion?.questionId).toBe("q-call-1");
+    expect(written.pendingQuestion?.options).toEqual(["red", "blue"]);
+    expect(written.pendingQuestion?.allowFreetext).toBe(false);
+    expect(audit).toHaveBeenCalledOnce();
+  });
+
+  it("persistPendingQuestion preserves existing plan-mode state", async () => {
+    gw.seed(
+      SESSION_KEY,
+      planModeSession({
+        mode: "plan",
+        approval: "pending",
+        approvalId: APPROVAL_ID,
+        title: "Bump deps",
+        lastPlanSteps: [{ step: "step 1", status: "pending" }],
+      }),
+    );
+    const r = await store.persistPendingQuestion({
+      sessionKey: SESSION_KEY,
+      questionId: "q-call-2",
+      questionPrompt: "Major or minor bump?",
+      options: ["major", "minor"],
+      allowFreetext: false,
+    });
+    expect(r.kind).toBe("persisted");
+    const written = gw.peek(SESSION_KEY)!;
+    expect(written.mode).toBe("plan");
+    expect(written.approval).toBe("pending");
+    expect(written.approvalId).toBe(APPROVAL_ID);
+    expect(written.title).toBe("Bump deps");
+    expect(written.lastPlanSteps).toEqual([{ step: "step 1", status: "pending" }]);
+    expect(written.pendingQuestion?.questionId).toBe("q-call-2");
+  });
+
+  it("persistPendingQuestion OVERWRITES a prior pending question", async () => {
+    await store.persistPendingQuestion({
+      sessionKey: SESSION_KEY,
+      questionId: "q-first",
+      questionPrompt: "First Q",
+      options: ["a", "b"],
+      allowFreetext: false,
+    });
+    await store.persistPendingQuestion({
+      sessionKey: SESSION_KEY,
+      questionId: "q-second",
+      questionPrompt: "Second Q",
+      options: ["x", "y"],
+      allowFreetext: true,
+    });
+    const written = gw.peek(SESSION_KEY)!;
+    expect(written.pendingQuestion?.questionId).toBe("q-second");
+    expect(written.pendingQuestion?.allowFreetext).toBe(true);
+  });
+
+  it("clearPendingQuestion clears the slot and returns kind:cleared", async () => {
+    await store.persistPendingQuestion({
+      sessionKey: SESSION_KEY,
+      questionId: "q-call-1",
+      questionPrompt: "Pick",
+      options: ["a", "b"],
+      allowFreetext: false,
+    });
+    const r = await store.clearPendingQuestion({ sessionKey: SESSION_KEY });
+    expect(r.kind).toBe("cleared");
+    const written = gw.peek(SESSION_KEY)!;
+    expect(written.pendingQuestion).toBeUndefined();
+  });
+
+  it("clearPendingQuestion is a no-op when no pending question (idempotency)", async () => {
+    const r = await store.clearPendingQuestion({ sessionKey: SESSION_KEY });
+    expect(r.kind).toBe("noop");
+    // Calling on a session that has plan-mode state but no question
+    // is also a no-op.
+    gw.seed(SESSION_KEY, planModeSession({ mode: "plan", approval: "none" }));
+    const r2 = await store.clearPendingQuestion({ sessionKey: SESSION_KEY });
+    expect(r2.kind).toBe("noop");
+  });
+
+  it("clearPendingQuestion with expectedQuestionId returns stale on mismatch", async () => {
+    await store.persistPendingQuestion({
+      sessionKey: SESSION_KEY,
+      questionId: "q-current",
+      questionPrompt: "Pick",
+      options: ["a", "b"],
+      allowFreetext: false,
+    });
+    const r = await store.clearPendingQuestion({
+      sessionKey: SESSION_KEY,
+      expectedQuestionId: "q-stale",
+    });
+    expect(r.kind).toBe("stale");
+    if (r.kind === "stale") {
+      expect(r.persistedQuestionId).toBe("q-current");
+    }
+    // Slot preserved on stale.
+    expect(gw.peek(SESSION_KEY)?.pendingQuestion?.questionId).toBe("q-current");
+  });
+
+  it("clearPendingQuestion with matching expectedQuestionId clears", async () => {
+    await store.persistPendingQuestion({
+      sessionKey: SESSION_KEY,
+      questionId: "q-call-1",
+      questionPrompt: "Pick",
+      options: ["a", "b"],
+      allowFreetext: false,
+    });
+    const r = await store.clearPendingQuestion({
+      sessionKey: SESSION_KEY,
+      expectedQuestionId: "q-call-1",
+    });
+    expect(r.kind).toBe("cleared");
+    expect(gw.peek(SESSION_KEY)?.pendingQuestion).toBeUndefined();
+  });
+
+  it("exitPlanMode clears pendingQuestion (state reset hygiene)", async () => {
+    gw.seed(
+      SESSION_KEY,
+      planModeSession({
+        mode: "plan",
+        approval: "pending",
+        approvalId: APPROVAL_ID,
+        pendingQuestion: {
+          questionId: "q-call-1",
+          questionPrompt: "Pick",
+          options: ["a", "b"],
+          allowFreetext: false,
+          askedAt: 1_700_000_000_000,
+        },
+      }),
+    );
+    const r = await store.exitPlanMode({ sessionKey: SESSION_KEY });
+    expect(r.kind).toBe("exited");
+    const written = gw.peek(SESSION_KEY)!;
+    expect(written.mode).toBe("normal");
+    expect(written.pendingQuestion).toBeUndefined();
+  });
+
+  it("readSnapshot returns pendingQuestion when present", async () => {
+    await store.persistPendingQuestion({
+      sessionKey: SESSION_KEY,
+      questionId: "q-call-1",
+      questionPrompt: "Pick a color",
+      options: ["red", "blue"],
+      allowFreetext: false,
+    });
+    const snap = await store.readSnapshot(SESSION_KEY);
+    expect(snap?.pendingQuestion?.questionId).toBe("q-call-1");
+    expect(snap?.pendingQuestion?.options).toEqual(["red", "blue"]);
+    expect(snap?.pendingQuestion?.allowFreetext).toBe(false);
+    expect(typeof snap?.pendingQuestion?.askedAt).toBe("number");
+  });
+});

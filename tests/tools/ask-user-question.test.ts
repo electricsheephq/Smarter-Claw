@@ -4,9 +4,12 @@
  * Covers input validation + structured result shape. The full
  * question→answer wiring (pendingAgentInjections write on user reply)
  * lands at P-11 and is exercised by Eva live-smoke #3.
+ *
+ * Wave-1 W1-F5 extension: persist-pending-question tests
+ * (`createAskUserQuestionTool({ store, logger })` path).
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createAskUserQuestionTool } from "../../src/tools/ask-user-question.js";
 
 const SESSION_KEY = "agent:main:main";
@@ -184,5 +187,145 @@ describe("P-8 ask_user_question — happy path", () => {
       options: ["a", "b", "c"],
     });
     expect(r.content[0]?.text).toMatch(/Question submitted to user.*Pick one.*3 options/);
+  });
+});
+
+describe("W1-F5 ask_user_question — pending-question persistence", () => {
+  // Helper: a minimal in-memory store stub that captures
+  // persistPendingQuestion calls without running the real gateway.
+  function stubStore() {
+    const calls: Array<{
+      sessionKey: string;
+      questionId: string;
+      questionPrompt: string;
+      options: string[];
+      allowFreetext: boolean;
+    }> = [];
+    return {
+      store: {
+        persistPendingQuestion: async (params: typeof calls[number]) => {
+          calls.push(params);
+          return { kind: "persisted" as const, state: {} as never };
+        },
+      },
+      calls,
+    };
+  }
+
+  it("when store + sessionKey wired, persists pending question on success", async () => {
+    const { store, calls } = stubStore();
+    const warn = vi.fn();
+    const factory = createAskUserQuestionTool({
+      store: store as never,
+      logger: { warn },
+    });
+    const t = factory({ sessionKey: SESSION_KEY });
+    const r = await t.execute("call-1", {
+      question: "Major or minor bump?",
+      options: ["major", "minor"],
+      allowFreetext: false,
+    });
+    expect((r.details as { status: string }).status).toBe("question_submitted");
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual({
+      sessionKey: SESSION_KEY,
+      questionId: "q-call-1",
+      questionPrompt: "Major or minor bump?",
+      options: ["major", "minor"],
+      allowFreetext: false,
+    });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("when store wired but no sessionKey, skips persist and logs warn", async () => {
+    const { store, calls } = stubStore();
+    const warn = vi.fn();
+    const factory = createAskUserQuestionTool({
+      store: store as never,
+      logger: { warn },
+    });
+    const t = factory({}); // no sessionKey
+    const r = await t.execute("call-1", {
+      question: "Q?",
+      options: ["a", "b"],
+    });
+    expect((r.details as { status: string }).status).toBe("question_submitted");
+    expect(calls).toEqual([]); // skipped
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls[0]?.[0]).toMatch(/no sessionKey/);
+  });
+
+  it("when store omitted, skips persist and logs warn (input-validation path)", async () => {
+    const warn = vi.fn();
+    const factory = createAskUserQuestionTool({ logger: { warn } });
+    const t = factory({ sessionKey: SESSION_KEY });
+    const r = await t.execute("call-1", {
+      question: "Q?",
+      options: ["a", "b"],
+    });
+    expect((r.details as { status: string }).status).toBe("question_submitted");
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls[0]?.[0]).toMatch(/no store wired/);
+  });
+
+  it("does NOT persist on invalid input (tool returns invalid-input before persist branch)", async () => {
+    const { store, calls } = stubStore();
+    const warn = vi.fn();
+    const factory = createAskUserQuestionTool({
+      store: store as never,
+      logger: { warn },
+    });
+    const t = factory({ sessionKey: SESSION_KEY });
+    const r = await t.execute("call-1", {
+      // Missing options → invalid-input
+      question: "Q?",
+    });
+    expect((r.details as { status: string }).status).toBe("invalid-input");
+    expect(calls).toEqual([]);
+  });
+
+  it("persist failure is non-fatal: tool result is unaffected, error is logged", async () => {
+    const warn = vi.fn();
+    const storeWithError = {
+      persistPendingQuestion: async () => ({
+        kind: "failed" as const,
+        error: new Error("disk full"),
+      }),
+    };
+    const factory = createAskUserQuestionTool({
+      store: storeWithError as never,
+      logger: { warn },
+    });
+    const t = factory({ sessionKey: SESSION_KEY });
+    const r = await t.execute("call-1", {
+      question: "Q?",
+      options: ["a", "b"],
+    });
+    // Tool succeeds even though persist failed — matches the
+    // "best-effort persist" contract documented in the tool body.
+    expect((r.details as { status: string }).status).toBe("question_submitted");
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls[0]?.[0]).toMatch(/persistPendingQuestion failed.*disk full/);
+  });
+
+  it("persist throwing is also caught (defense-in-depth)", async () => {
+    const warn = vi.fn();
+    const storeThatThrows = {
+      persistPendingQuestion: async () => {
+        throw new Error("gateway exploded");
+      },
+    };
+    const factory = createAskUserQuestionTool({
+      store: storeThatThrows as never,
+      logger: { warn },
+    });
+    const t = factory({ sessionKey: SESSION_KEY });
+    const r = await t.execute("call-1", {
+      question: "Q?",
+      options: ["a", "b"],
+    });
+    expect((r.details as { status: string }).status).toBe("question_submitted");
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls[0]?.[0]).toMatch(/persistPendingQuestion threw.*gateway exploded/);
   });
 });

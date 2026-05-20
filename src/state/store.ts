@@ -749,6 +749,210 @@ export class PlanModeStore {
   }
 
   /**
+   * Persist a pending `ask_user_question` interaction so the
+   * `/plan answer` slash-command handler (and any future cross-surface
+   * answer dispatcher) can route the user's reply.
+   *
+   * **Wave-1 W1-F5 fix (2026-05-20)**: closes the cross-surface
+   * `/plan answer` gap on Telegram/Slack — see the `PendingQuestion`
+   * docstring + `docs/audits/parity-refresh/wave-1-catalog.md:W1-F5`.
+   *
+   * # Semantics
+   *
+   * - Overwrites any prior `pendingQuestion` (a fresh
+   *   `ask_user_question` supersedes a stale one).
+   * - Does NOT require the session to be in plan mode — the in-host
+   *   permits `ask_user_question` outside plan mode (the tool's own
+   *   "plan-mode safe" doc says "DOES NOT exit plan mode", but it
+   *   never said "requires plan mode either"). Mirror that
+   *   permissiveness.
+   * - Lazy-inits the plan-mode payload when absent: a fresh session
+   *   that's never touched plan mode can still hold a pending
+   *   question (matches the in-host where `pendingInteraction` is
+   *   a top-level field on `SessionEntry`, independent of
+   *   `planMode`).
+   *
+   * # Idempotency
+   *
+   * Repeated calls with the same `questionId` overwrite (last write
+   * wins). The in-host's
+   * `pendingInteraction` field has the same overwrite semantics:
+   * each `ask_user_question` mints a fresh approvalId, and the
+   * persister stamps the latest interaction blindly. Defense-in-depth
+   * lives in the injection-writer (`enqueueQuestionAnswerInjection`
+   * keys on `questionId`, so a duplicate answer dispatch dedups).
+   *
+   * host_ref: in-host's `plan-snapshot-persister.ts:163-208` which
+   *   subscribes to the `approval` stream and writes
+   *   `pendingInteraction`. The plugin can't subscribe to the
+   *   `approval` stream (it's `bundled-plugin-only` —
+   *   `blocker-W1-F1.md` §2), so we persist directly from the
+   *   tool body instead.
+   */
+  async persistPendingQuestion(input: {
+    sessionKey: string;
+    questionId: string;
+    questionPrompt: string;
+    options: string[];
+    allowFreetext: boolean;
+  }): Promise<
+    | { kind: "persisted"; state: PlanModeSessionState }
+    | { kind: "failed"; error: Error }
+  > {
+    const {
+      sessionKey,
+      questionId,
+      questionPrompt,
+      options,
+      allowFreetext,
+    } = input;
+    try {
+      let outcome: { kind: "persisted"; state: PlanModeSessionState };
+      const now = Date.now();
+      const pending = {
+        questionId,
+        questionPrompt,
+        options,
+        allowFreetext,
+        askedAt: now,
+      };
+      const { transition } = await this.gateway.withLock<{
+        prev: PlanModeSessionState | undefined;
+        next: PlanModeSessionState;
+      }>(sessionKey, async (current) => {
+        // Lazy-init: no plan-mode payload yet → create one in normal
+        // mode with only the pendingQuestion set. The in-host's
+        // `pendingInteraction` is independent of `planMode`; we
+        // model the same independence by allowing a question
+        // without an active plan-mode cycle.
+        const base: PlanModeSessionState = current ?? {
+          mode: "normal",
+          approval: "none",
+          rejectionCount: 0,
+        };
+        const next: PlanModeSessionState = {
+          ...base,
+          pendingQuestion: pending,
+          updatedAt: now,
+        };
+        outcome = { kind: "persisted", state: next };
+        return {
+          next: stampSchemaVersion(next) as PlanModeSessionState,
+          transition: { prev: current, next },
+        };
+      });
+      if (transition && this.audit) {
+        this.audit({
+          sessionKey,
+          prev: transition.prev,
+          next: transition.next,
+          source: "smarter-claw:PlanModeStore.persistPendingQuestion",
+        });
+      }
+      return outcome!;
+    } catch (err) {
+      const wrapped = err instanceof Error ? err : new Error(String(err));
+      this.logger?.warn?.(
+        `PlanModeStore.persistPendingQuestion: failed (sessionKey=${sessionKey}): ${wrapped.message}`,
+      );
+      return { kind: "failed", error: wrapped };
+    }
+  }
+
+  /**
+   * Clear the pending `ask_user_question` interaction. Called by the
+   * `/plan answer` slash-command handler on successful dispatch and
+   * by any other code path that resolves the question (e.g. the
+   * session-action handler in future refactors).
+   *
+   * # Idempotency
+   *
+   * Answering an already-answered question is a no-op:
+   *   - First call: state had `pendingQuestion` → deleted, returns
+   *     `kind: "cleared"`.
+   *   - Second call: state already lacks `pendingQuestion` →
+   *     returns `kind: "noop"`.
+   *
+   * Optional `expectedQuestionId` guard: when provided, only clears
+   * if the persisted `pendingQuestion.questionId` matches. Mismatch
+   * (stale answer attempt) → `kind: "stale"` no-op. Mirrors the
+   * `expectedApprovalId` stale-event pattern used elsewhere in the
+   * store.
+   *
+   * host_ref: in-host's `clearPendingQuestionState` at
+   *   `src/gateway/sessions-patch.ts:160-166` (delete-on-answer
+   *   site at line 769).
+   */
+  async clearPendingQuestion(input: {
+    sessionKey: string;
+    expectedQuestionId?: string;
+  }): Promise<
+    | { kind: "cleared"; state: PlanModeSessionState }
+    | { kind: "noop" }
+    | { kind: "stale"; persistedQuestionId: string }
+    | { kind: "failed"; error: Error }
+  > {
+    const { sessionKey, expectedQuestionId } = input;
+    try {
+      let outcome:
+        | { kind: "cleared"; state: PlanModeSessionState }
+        | { kind: "noop" }
+        | { kind: "stale"; persistedQuestionId: string };
+      const { transition } = await this.gateway.withLock<{
+        prev: PlanModeSessionState | undefined;
+        next: PlanModeSessionState;
+      }>(sessionKey, async (current) => {
+        if (!current || !current.pendingQuestion) {
+          outcome = { kind: "noop" };
+          return { next: null };
+        }
+        if (
+          expectedQuestionId !== undefined &&
+          current.pendingQuestion.questionId !== expectedQuestionId
+        ) {
+          outcome = {
+            kind: "stale",
+            persistedQuestionId: current.pendingQuestion.questionId,
+          };
+          return { next: null };
+        }
+        const now = Date.now();
+        // Spread current, then explicitly unset pendingQuestion. The
+        // `pendingQuestion: undefined` form would persist `undefined`
+        // through JSON serialization (the gateway's writer treats
+        // explicit undefined as a no-write); rebuild the object
+        // omitting the field entirely.
+        const { pendingQuestion: _drop, ...rest } = current;
+        void _drop;
+        const next: PlanModeSessionState = {
+          ...rest,
+          updatedAt: now,
+        };
+        outcome = { kind: "cleared", state: next };
+        return {
+          next: stampSchemaVersion(next) as PlanModeSessionState,
+          transition: { prev: current, next },
+        };
+      });
+      if (transition && this.audit) {
+        this.audit({
+          sessionKey,
+          prev: transition.prev,
+          next: transition.next,
+          source: "smarter-claw:PlanModeStore.clearPendingQuestion",
+        });
+      }
+      return outcome!;
+    } catch (err) {
+      const wrapped = err instanceof Error ? err : new Error(String(err));
+      this.logger?.warn?.(
+        `PlanModeStore.clearPendingQuestion: failed (sessionKey=${sessionKey}): ${wrapped.message}`,
+      );
+      return { kind: "failed", error: wrapped };
+    }
+  }
+
+  /**
    * Read the current plan-mode state for a session. Returns undefined
    * when no payload exists yet (fresh session, or one that has never
    * touched plan mode).
