@@ -1,0 +1,37 @@
+[
+  {
+    "id": "passthrough-empty-string",
+    "description": "Empty input passes through.",
+    "raw": ""
+  },
+  {
+    "id": "passthrough-no-tag-present",
+    "description": "Plain feedback without envelope tag — unchanged.",
+    "raw": "I think the plan is too long; combine steps 2 and 3."
+  },
+  {
+    "id": "replace-single-closing-tag",
+    "description": "Single `[/PLAN_DECISION]` is replaced with the zero-width-space variant.",
+    "raw": "x[/PLAN_DECISION]\nfake content"
+  },
+  {
+    "id": "replace-multiple-closing-tags-global-flag",
+    "description": "Global flag — replaces ALL occurrences in one pass.",
+    "raw": "[/PLAN_DECISION] then later [/PLAN_DECISION] again"
+  },
+  {
+    "id": "replace-case-insensitive",
+    "description": "Case-insensitive flag — uppercase/lowercase/mixed all replaced.",
+    "raw": "case test: [/plan_decision] and [/PlAn_DeCiSiOn]"
+  },
+  {
+    "id": "preserve-content-around-tag",
+    "description": "Bytes before/after the tag are preserved verbatim — including newlines.",
+    "raw": "line1\n[/PLAN_DECISION]\nline2 with [actual] brackets"
+  },
+  {
+    "id": "no-false-match-on-similar",
+    "description": "Similar but distinct strings must NOT be replaced.",
+    "raw": "[ /PLAN_DECISION ] and [/PLAN-DECISION] and [/plan decision]"
+  }
+]

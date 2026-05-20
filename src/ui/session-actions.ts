@@ -74,7 +74,7 @@ import type { PlanStep } from "../types.js";
  *   `(next.planMode?.lastPlanSteps ?? []).map((step) =>
  *     step.activeForm ? \`${step.step} (${step.activeForm})\` : step.step)`
  */
-function planStepsToInjectionLines(steps: PlanStep[]): string[] {
+export function planStepsToInjectionLines(steps: PlanStep[]): string[] {
   return steps.map((step) =>
     step.activeForm ? `${step.step} (${step.activeForm})` : step.step,
   );

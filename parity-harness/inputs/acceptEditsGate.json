@@ -1,0 +1,195 @@
+[
+  {
+    "id": "allow-non-destructive-exec",
+    "description": "exec ls — fail-open default for unmatched read-only commands.",
+    "toolName": "exec",
+    "execCommand": "ls -la"
+  },
+  {
+    "id": "allow-non-path-writer-tool",
+    "description": "read tool with no exec/path — fail-open default.",
+    "toolName": "read",
+    "filePath": "/Users/dev/project/README.md"
+  },
+  {
+    "id": "block-destructive-prefix-rm",
+    "description": "exec rm — destructive prefix block.",
+    "toolName": "exec",
+    "execCommand": "rm -f /tmp/junk"
+  },
+  {
+    "id": "block-destructive-prefix-rmdir",
+    "description": "exec rmdir — destructive prefix block; rmdir distinct from rm.",
+    "toolName": "exec",
+    "execCommand": "rmdir /tmp/junk"
+  },
+  {
+    "id": "block-destructive-prefix-shred",
+    "description": "exec shred — destructive prefix block.",
+    "toolName": "exec",
+    "execCommand": "shred -u secret.txt"
+  },
+  {
+    "id": "block-destructive-prefix-truncate",
+    "description": "exec truncate — destructive prefix block.",
+    "toolName": "exec",
+    "execCommand": "truncate -s 0 /var/log/access.log"
+  },
+  {
+    "id": "block-destructive-prefix-diskutil-erasedisk",
+    "description": "macOS-specific diskutil erasedisk — destructive prefix block.",
+    "toolName": "exec",
+    "execCommand": "diskutil erasedisk JHFS+ Mac /dev/disk2"
+  },
+  {
+    "id": "block-bash-rm",
+    "description": "bash rm — same as exec rm.",
+    "toolName": "bash",
+    "execCommand": "rm -rf /tmp/build"
+  },
+  {
+    "id": "block-sql-drop-table",
+    "description": "DROP TABLE inside exec — SQL pattern block.",
+    "toolName": "exec",
+    "execCommand": "psql -c \"DROP TABLE users\""
+  },
+  {
+    "id": "block-sql-delete-from",
+    "description": "DELETE FROM inside exec — SQL pattern block.",
+    "toolName": "exec",
+    "execCommand": "sqlite3 db.sqlite \"DELETE FROM sessions\""
+  },
+  {
+    "id": "block-sql-truncate-table-keyword",
+    "description": "TRUNCATE TABLE — SQL pattern block (matches `truncate` keyword in SQL context).",
+    "toolName": "exec",
+    "execCommand": "psql -c \"TRUNCATE TABLE foo\""
+  },
+  {
+    "id": "block-redis-flushall",
+    "description": "FLUSHALL inside exec — Redis destructive pattern.",
+    "toolName": "exec",
+    "execCommand": "redis-cli FLUSHALL"
+  },
+  {
+    "id": "block-find-delete-flag",
+    "description": "find with -delete flag — destructive find-flag block.",
+    "toolName": "exec",
+    "execCommand": "find . -name '*.tmp' -delete"
+  },
+  {
+    "id": "block-find-exec-rm",
+    "description": "find ... -exec rm — destructive find-flag block.",
+    "toolName": "exec",
+    "execCommand": "find /tmp -type f -exec rm {} ;"
+  },
+  {
+    "id": "block-escape-env-var-indirection",
+    "description": "C4 escape detection: $RM file — env-var indirection on destructive verb.",
+    "toolName": "exec",
+    "execCommand": "$RM /tmp/file"
+  },
+  {
+    "id": "block-escape-subshell-backtick",
+    "description": "C4 escape detection: `echo rm` file — backtick subshell with destructive verb.",
+    "toolName": "exec",
+    "execCommand": "`echo rm` -rf /tmp"
+  },
+  {
+    "id": "block-escape-subshell-dollar-paren",
+    "description": "C4 escape detection: $(echo rm) file — $(...) subshell with destructive verb.",
+    "toolName": "exec",
+    "execCommand": "$(echo rm) -rf /tmp"
+  },
+  {
+    "id": "block-escape-hex-encoded",
+    "description": "C4 escape detection: \\x72m — hex-encoded byte escape.",
+    "toolName": "exec",
+    "execCommand": "\\x72m -rf /tmp"
+  },
+  {
+    "id": "block-self-restart-openclaw-gateway",
+    "description": "openclaw gateway restart — self-restart block.",
+    "toolName": "exec",
+    "execCommand": "openclaw gateway restart"
+  },
+  {
+    "id": "block-self-restart-launchctl-openclaw",
+    "description": "launchctl kickstart on ai.openclaw — self-restart block.",
+    "toolName": "exec",
+    "execCommand": "launchctl kickstart -k system/ai.openclaw.gateway"
+  },
+  {
+    "id": "block-self-restart-pkill-openclaw",
+    "description": "pkill openclaw — self-restart block.",
+    "toolName": "exec",
+    "execCommand": "pkill openclaw"
+  },
+  {
+    "id": "block-self-restart-kill-with-pgrep-pipe",
+    "description": "pgrep openclaw | xargs kill — pipe-chained termination, pgrep+openclaw pattern catches it.",
+    "toolName": "exec",
+    "execCommand": "pgrep openclaw | xargs kill"
+  },
+  {
+    "id": "block-self-restart-script",
+    "description": "scripts/restart-mac.sh — bundled operator helper.",
+    "toolName": "exec",
+    "execCommand": "bash scripts/restart-mac.sh"
+  },
+  {
+    "id": "block-config-change-openclaw-set",
+    "description": "openclaw config set — config-change block.",
+    "toolName": "exec",
+    "execCommand": "openclaw config set agents.defaults.planMode.enabled true"
+  },
+  {
+    "id": "block-config-change-doctor-fix",
+    "description": "openclaw doctor --fix — config-change block.",
+    "toolName": "exec",
+    "execCommand": "openclaw doctor --fix"
+  },
+  {
+    "id": "block-write-protected-path-openclaw-tilde",
+    "description": "write to ~/.openclaw/config.toml — protected-path block (tilde form).",
+    "toolName": "write",
+    "filePath": "~/.openclaw/config.toml"
+  },
+  {
+    "id": "block-write-protected-path-claude-tilde",
+    "description": "write to ~/.claude/config — protected-path block (tilde form).",
+    "toolName": "write",
+    "filePath": "~/.claude/config"
+  },
+  {
+    "id": "block-edit-protected-path-etc-openclaw",
+    "description": "edit /etc/openclaw/... — protected-path block (absolute prefix).",
+    "toolName": "edit",
+    "filePath": "/etc/openclaw/config.toml"
+  },
+  {
+    "id": "block-apply-patch-additional-paths",
+    "description": "apply_patch with additionalPaths containing a protected path — multi-path check.",
+    "toolName": "apply_patch",
+    "filePath": "/Users/dev/project/safe.txt",
+    "additionalPaths": ["~/.openclaw/config.toml"]
+  },
+  {
+    "id": "allow-write-non-protected-path",
+    "description": "write to a non-protected path — fail-open default.",
+    "toolName": "write",
+    "filePath": "/Users/dev/project/main.ts"
+  },
+  {
+    "id": "allow-exec-cat",
+    "description": "exec cat README.md — non-destructive, non-restart, non-config.",
+    "toolName": "exec",
+    "execCommand": "cat README.md"
+  },
+  {
+    "id": "allow-exec-grep",
+    "description": "exec grep — non-destructive, non-restart, non-config.",
+    "toolName": "exec",
+    "execCommand": "grep -r 'foo' src/"
+  }
+]

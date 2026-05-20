@@ -71,6 +71,21 @@ jobs:
           fi
           echo "vitest discovered $numTests tests"
 
+      # Wave-2 hard gate: Layer-1 parity harness. Pins ~100+ plugin
+      # surfaces against the in-host source-of-truth at commit
+      # `ea04ea52c7`. Any byte-level drift fails the build.
+      #
+      # IMPORTANT: NO `| tee ...` here — the Wave 0 audit found that
+      # piping through tee MASKED the exit code (tee always returns 0)
+      # and let failing tests ship green. `set -eo pipefail` is set as
+      # belt-and-suspenders; the command is unpiped so a non-zero exit
+      # from `pnpm parity-harness` propagates directly to the step's
+      # exit status.
+      - name: Layer-1 parity harness
+        run: |
+          set -eo pipefail
+          pnpm parity-harness
+
       # Pack the package as users would receive it. Verifies the
       # tarball contains the expected files for direct-install
       # consumption.
