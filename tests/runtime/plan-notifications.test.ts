@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  __getPlanNotificationTokenCountForTest,
   __resetPlanNotificationTokensForTest,
   createPlanModeNotifications,
   TELEGRAM_PLAN_INTERACTIVE_NAMESPACE,
@@ -145,6 +146,34 @@ describe("plan notifications", () => {
     });
   });
 
+  it("invalidates Telegram approval callback tokens after first use", async () => {
+    const { api, store, sendSessionAttachment, getHandler } = build();
+    const accept = vi.fn(async () => ({ ok: true as const, continueAgent: true }));
+    const notifications = createPlanModeNotifications({
+      api: api as never,
+      store,
+      actions: new Map([["plan.accept", accept]]),
+    });
+    await notifications.notifyPlanApproval({
+      sessionKey: SESSION_KEY,
+      approvalId: "plan-11111111-1111-4111-8111-111111111111",
+      title: "Ship plan",
+      plan: [{ step: "Run focused tests", status: "pending" }],
+    });
+    const value = firstButtonValue(sendSessionAttachment.mock.calls[0]?.[0], "Approve");
+    const payload = value.slice(`${TELEGRAM_PLAN_INTERACTIVE_NAMESPACE}:`.length);
+
+    await getHandler()?.(telegramCtx(payload));
+    const replayCtx = telegramCtx(payload);
+    await getHandler()?.(replayCtx);
+
+    expect(accept).toHaveBeenCalledTimes(1);
+    expect(replayCtx.respond.clearButtons).toHaveBeenCalledOnce();
+    expect(replayCtx.respond.reply).toHaveBeenCalledWith({
+      text: "That plan action has expired. Use /plan status for the current state.",
+    });
+  });
+
   it("dispatches Telegram cancel callbacks through plan.cancel with approvalId", async () => {
     const { api, store, sendSessionAttachment, getHandler } = build();
     const cancel = vi.fn(async () => ({ ok: true as const, continueAgent: false }));
@@ -253,5 +282,25 @@ describe("plan notifications", () => {
     );
     expect((await store.readSnapshot(SESSION_KEY))?.pendingQuestion).toBeUndefined();
     expect(ctx.respond.clearButtons).toHaveBeenCalledOnce();
+  });
+
+  it("discards callback tokens when attachment delivery fails", async () => {
+    const { api, store, sendSessionAttachment } = build();
+    sendSessionAttachment.mockResolvedValueOnce({
+      ok: false,
+      error: "host rejected active-session attachments",
+    });
+    await createPlanModeNotifications({
+      api: api as never,
+      store,
+      actions: new Map(),
+    }).notifyPlanApproval({
+      sessionKey: SESSION_KEY,
+      approvalId: "plan-11111111-1111-4111-8111-111111111111",
+      title: "Ship plan",
+      plan: [{ step: "Run focused tests", status: "pending" }],
+    });
+
+    expect(__getPlanNotificationTokenCountForTest()).toBe(0);
   });
 });

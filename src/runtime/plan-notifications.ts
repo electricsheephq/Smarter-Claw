@@ -106,6 +106,10 @@ export function __resetPlanNotificationTokensForTest(): void {
   tokens.clear();
 }
 
+export function __getPlanNotificationTokenCountForTest(): number {
+  return tokens.size;
+}
+
 function createToken(entry: NewTokenEntry): string {
   const now = Date.now();
   for (const [token, existing] of tokens) {
@@ -121,14 +125,20 @@ function createToken(entry: NewTokenEntry): string {
   return token;
 }
 
-function readToken(token: string): TokenEntry | undefined {
+function consumeToken(token: string): TokenEntry | undefined {
   const entry = tokens.get(token);
   if (!entry) return undefined;
+  tokens.delete(token);
   if (entry.expiresAt <= Date.now()) {
-    tokens.delete(token);
     return undefined;
   }
   return entry;
+}
+
+function discardTokens(values: string[]): void {
+  for (const token of values) {
+    tokens.delete(token);
+  }
 }
 
 function callbackValue(action: string, token: string): string {
@@ -161,7 +171,7 @@ function renderPlanPresentation(input: {
   summary?: string;
   plan: PlanStep[];
   persistedPlan?: PersistPlanArchetypeMarkdownResult;
-}): MessagePresentation {
+}): { presentation: MessagePresentation; tokens: string[] } {
   const accept = createToken({
     kind: "approval",
     sessionKey: input.sessionKey,
@@ -191,49 +201,52 @@ function renderPlanPresentation(input: {
     .map((step, index) => `${index + 1}. ${step.step}`)
     .join("\n");
   return {
-    title: input.title,
-    tone: "warning",
-    blocks: [
-      ...(input.summary ? [{ type: "text" as const, text: input.summary }] : []),
-      ...(firstSteps ? [{ type: "context" as const, text: firstSteps }] : []),
-      ...(input.persistedPlan
-        ? [
+    tokens: [accept, revise, reject, cancel],
+    presentation: {
+      title: input.title,
+      tone: "warning",
+      blocks: [
+        ...(input.summary ? [{ type: "text" as const, text: input.summary }] : []),
+        ...(firstSteps ? [{ type: "context" as const, text: firstSteps }] : []),
+        ...(input.persistedPlan
+          ? [
+              {
+                type: "context" as const,
+                text: `Markdown artifact: ${input.persistedPlan.filename}`,
+              },
+            ]
+          : []),
+        {
+          type: "buttons",
+          buttons: [
             {
-              type: "context" as const,
-              text: `Markdown artifact: ${input.persistedPlan.filename}`,
+              label: "Approve",
+              value: callbackValue("a", accept),
+              style: "success",
+              priority: 100,
             },
-          ]
-        : []),
-      {
-        type: "buttons",
-        buttons: [
-          {
-            label: "Approve",
-            value: callbackValue("a", accept),
-            style: "success",
-            priority: 100,
-          },
-          {
-            label: "Revise",
-            value: callbackValue("v", revise),
-            style: "primary",
-            priority: 90,
-          },
-          {
-            label: "Reject",
-            value: callbackValue("r", reject),
-            style: "danger",
-            priority: 80,
-          },
-          {
-            label: "Cancel",
-            value: callbackValue("c", cancel),
-            style: "secondary",
-            priority: 70,
-          },
-        ],
-      },
-    ],
+            {
+              label: "Revise",
+              value: callbackValue("v", revise),
+              style: "primary",
+              priority: 90,
+            },
+            {
+              label: "Reject",
+              value: callbackValue("r", reject),
+              style: "danger",
+              priority: 80,
+            },
+            {
+              label: "Cancel",
+              value: callbackValue("c", cancel),
+              style: "secondary",
+              priority: 70,
+            },
+          ],
+        },
+      ],
+    },
   };
 }
 
@@ -242,51 +255,58 @@ function renderQuestionPresentation(input: {
   questionId: string;
   questionPrompt: string;
   options: string[];
-}): MessagePresentation {
+}): { presentation: MessagePresentation; tokens: string[] } {
+  const mintedTokens: string[] = [];
   return {
-    title: "Question",
-    tone: "info",
-    blocks: [
-      { type: "text", text: input.questionPrompt },
-      {
-        type: "buttons",
-        buttons: input.options.map((option, index) => {
-          const token = createToken({
-            kind: "question",
-            sessionKey: input.sessionKey,
-            questionId: input.questionId,
-            questionPrompt: input.questionPrompt,
-            selectedOption: option,
-          });
-          return {
-            label: option,
-            value: callbackValue("q", token),
-            style: index === 0 ? "primary" : "secondary",
-            priority: 100 - index,
-          };
-        }),
-      },
-    ],
+    tokens: mintedTokens,
+    presentation: {
+      title: "Question",
+      tone: "info",
+      blocks: [
+        { type: "text", text: input.questionPrompt },
+        {
+          type: "buttons",
+          buttons: input.options.map((option, index) => {
+            const token = createToken({
+              kind: "question",
+              sessionKey: input.sessionKey,
+              questionId: input.questionId,
+              questionPrompt: input.questionPrompt,
+              selectedOption: option,
+            });
+            mintedTokens.push(token);
+            return {
+              label: option,
+              value: callbackValue("q", token),
+              style: index === 0 ? "primary" : "secondary",
+              priority: 100 - index,
+            };
+          }),
+        },
+      ],
+    },
   };
 }
 
 async function sendPresentation(
   api: OpenClawPluginApiWithRuntimeNotifications,
   params: SessionAttachmentParams,
-): Promise<void> {
+): Promise<boolean> {
   const sendSessionAttachment = api.session?.workflow?.sendSessionAttachment;
   if (!sendSessionAttachment) {
     api.logger.warn(
       "[smarter-claw] plan notification skipped: host has no session.workflow.sendSessionAttachment runtime seam",
     );
-    return;
+    return false;
   }
   const result = await sendSessionAttachment(params as unknown);
   if (!result.ok) {
     api.logger.warn(
       `[smarter-claw] plan notification delivery skipped: ${result.error}`,
     );
+    return false;
   }
+  return true;
 }
 
 async function reply(ctx: TelegramInteractiveContext, text: string): Promise<void> {
@@ -483,7 +503,7 @@ export function createPlanModeNotifications(input: {
         await reply(ctx, "Invalid plan action payload.");
         return { handled: true };
       }
-      const entry = readToken(token);
+      const entry = consumeToken(token);
       if (!entry) {
         await clearButtons(ctx);
         await reply(ctx, "That plan action has expired. Use /plan status for the current state.");
@@ -513,28 +533,46 @@ export function createPlanModeNotifications(input: {
 
   return {
     async notifyPlanApproval(params) {
-      await sendPresentation(api, {
-        sessionKey: params.sessionKey,
-        files: params.persistedPlan ? [{ path: params.persistedPlan.absPath }] : [],
-        text: renderPlanText(params),
-        presentation: renderPlanPresentation(params),
-        forceDocument: params.persistedPlan ? true : undefined,
-        captionFormat: "plain",
-        channelHints: {
-          telegram: {
-            disableNotification: false,
+      const rendered = renderPlanPresentation(params);
+      try {
+        const delivered = await sendPresentation(api, {
+          sessionKey: params.sessionKey,
+          files: params.persistedPlan ? [{ path: params.persistedPlan.absPath }] : [],
+          text: renderPlanText(params),
+          presentation: rendered.presentation,
+          forceDocument: params.persistedPlan ? true : undefined,
+          captionFormat: "plain",
+          channelHints: {
+            telegram: {
+              disableNotification: false,
+            },
           },
-        },
-      });
+        });
+        if (!delivered) {
+          discardTokens(rendered.tokens);
+        }
+      } catch (error) {
+        discardTokens(rendered.tokens);
+        throw error;
+      }
     },
     async notifyQuestion(params) {
-      await sendPresentation(api, {
-        sessionKey: params.sessionKey,
-        files: [],
-        text: `Question: ${params.questionPrompt}`,
-        presentation: renderQuestionPresentation(params),
-        captionFormat: "plain",
-      });
+      const rendered = renderQuestionPresentation(params);
+      try {
+        const delivered = await sendPresentation(api, {
+          sessionKey: params.sessionKey,
+          files: [],
+          text: `Question: ${params.questionPrompt}`,
+          presentation: rendered.presentation,
+          captionFormat: "plain",
+        });
+        if (!delivered) {
+          discardTokens(rendered.tokens);
+        }
+      } catch (error) {
+        discardTokens(rendered.tokens);
+        throw error;
+      }
     },
   };
 }
