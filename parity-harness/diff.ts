@@ -1,139 +1,83 @@
 /**
- * Parity diff CLI. Runs both runners over `inputs/persistApprovalRequest.json`,
- * compares per-case outcomes, prints a report, exits non-zero on any
- * divergence.
+ * Parity diff CLI — Layer 1.
+ *
+ * Drives a registered list of checks (each pinning one plugin surface
+ * against an in-host reference), aggregates results, prints a
+ * structured report, and exits non-zero on any divergence.
  *
  * Usage:
  *   pnpm parity-harness
  *
- * The vitest integration test (`tests/parity/parity-harness.test.ts`)
- * runs the same diff and fails CI on divergence; this CLI is for
+ * The vitest wrapper (`tests/parity/parity-harness.test.ts`) runs the
+ * same `runParityCheck()` and fails CI on divergence. The CLI is for
  * humans debugging locally.
+ *
+ * # Adding a check
+ *
+ * 1. Build `parity-harness/checks/<name>.ts` exporting a `ParityCheck`.
+ * 2. Add it to `ALL_CHECKS` below.
+ * 3. Re-run `pnpm parity-harness`. The new check's cases must pass.
+ *
+ * # When a check goes RED
+ *
+ * Two paths:
+ *   - Drift in `src/` → fix `src/` to match the in-host reference.
+ *   - Drift in the in-host source itself → re-capture the vendored
+ *     reference (or snapshot file) from `git -C ... show ea04ea52c7:...`
+ *     and commit the new bytes alongside the plugin's matching update.
+ *
+ * NEVER edit a vendored reference / snapshot to match a buggy plugin —
+ * that defeats the parity check.
  */
 
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
-import { runReferenceCases } from "./runners/host-reference.js";
-import { runPluginCases } from "./runners/plugin-under-test.js";
-import type { ParityCase, ParityOutcome } from "./runners/shared.js";
+import { acceptEditsGateCheck } from "./checks/accept-edits-gate.js";
+import { escalatingRetryCheck } from "./checks/escalating-retry.js";
+import { mutationGateCheck } from "./checks/mutation-gate.js";
+import { persistApprovalRequestCheck } from "./checks/persist-approval-request.js";
+import { promptsCheck } from "./checks/prompts.js";
+import { resolvePlanApprovalCheck } from "./checks/resolve-plan-approval.js";
+import { runtimeRejectAndPlanStepsCheck } from "./checks/runtime-reject-and-plan-steps.js";
+import { sanitizeAndApprovalIdCheck } from "./checks/sanitize-and-approval-id.js";
+import type { CheckReport, ParityCheck } from "./checks/types.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
-
-export function loadCases(): ParityCase[] {
-  const path = join(__dirname, "inputs", "persistApprovalRequest.json");
-  return JSON.parse(readFileSync(path, "utf8")) as ParityCase[];
-}
+const ALL_CHECKS: ParityCheck[] = [
+  persistApprovalRequestCheck,
+  resolvePlanApprovalCheck,
+  acceptEditsGateCheck,
+  escalatingRetryCheck,
+  sanitizeAndApprovalIdCheck,
+  promptsCheck,
+  mutationGateCheck,
+  // Bonus targets (W1-D1 + W1-D2):
+  runtimeRejectAndPlanStepsCheck,
+];
 
 export interface ParityReport {
   totalCases: number;
   passingCases: number;
   failingCases: number;
-  failures: Array<{
-    caseId: string;
-    description: string;
-    reference: ParityOutcome;
-    plugin: ParityOutcome;
-    diffSummary: string;
-  }>;
+  checkReports: CheckReport[];
 }
 
 export async function runParityCheck(): Promise<ParityReport> {
-  const cases = loadCases();
-  const referenceOutcomes = runReferenceCases(cases);
-  const pluginOutcomes = await runPluginCases(cases);
-
-  const failures: ParityReport["failures"] = [];
-  for (let i = 0; i < cases.length; i++) {
-    const ref = referenceOutcomes[i]!;
-    const plug = pluginOutcomes[i]!;
-    const diff = computeDiff(ref, plug);
-    if (diff) {
-      failures.push({
-        caseId: cases[i]!.id,
-        description: cases[i]!.description,
-        reference: ref,
-        plugin: plug,
-        diffSummary: diff,
-      });
+  const checkReports = await Promise.all(
+    ALL_CHECKS.map(async (c) => c.run()),
+  );
+  let totalCases = 0;
+  let passingCases = 0;
+  let failingCases = 0;
+  for (const r of checkReports) {
+    for (const c of r.cases) {
+      totalCases++;
+      if (c.ok) passingCases++;
+      else failingCases++;
     }
   }
-
-  return {
-    totalCases: cases.length,
-    passingCases: cases.length - failures.length,
-    failingCases: failures.length,
-    failures,
-  };
+  return { totalCases, passingCases, failingCases, checkReports };
 }
 
-/**
- * Compare two parity outcomes. Returns null when identical, or a
- * human-readable diff summary string.
- *
- * NOT a full structural diff — we look at the specific fields that
- * matter for parity:
- *   - result.kind
- *   - result.approvalId
- *   - result.reason (for skipped)
- *   - stateAfter (deep equality)
- *   - auditEmitted
- */
-function computeDiff(
-  ref: ParityOutcome,
-  plug: ParityOutcome,
-): string | null {
-  const issues: string[] = [];
-  if (ref.result.kind !== plug.result.kind) {
-    issues.push(`kind: reference=${ref.result.kind}, plugin=${plug.result.kind}`);
-  }
-  if (ref.result.approvalId !== plug.result.approvalId) {
-    issues.push(
-      `approvalId: reference=${ref.result.approvalId}, plugin=${plug.result.approvalId}`,
-    );
-  }
-  if (
-    ref.result.kind === "skipped" &&
-    plug.result.kind === "skipped" &&
-    ref.result.reason !== plug.result.reason
-  ) {
-    issues.push(
-      `skipped reason: reference=${ref.result.reason}, plugin=${plug.result.reason}`,
-    );
-  }
-  if (ref.auditEmitted !== plug.auditEmitted) {
-    issues.push(
-      `auditEmitted: reference=${ref.auditEmitted}, plugin=${plug.auditEmitted}`,
-    );
-  }
-  if (!deepEqual(ref.stateAfter, plug.stateAfter)) {
-    issues.push(
-      `stateAfter differs:\n      reference=${JSON.stringify(ref.stateAfter)}\n      plugin   =${JSON.stringify(plug.stateAfter)}`,
-    );
-  }
-  return issues.length > 0 ? issues.join("\n    ") : null;
-}
-
-function deepEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (a == null || b == null) return false;
-  if (typeof a !== "object" || typeof b !== "object") return false;
-  if (Array.isArray(a) !== Array.isArray(b)) return false;
-  if (Array.isArray(a) && Array.isArray(b)) {
-    if (a.length !== b.length) return false;
-    return a.every((v, i) => deepEqual(v, b[i]));
-  }
-  const ak = Object.keys(a as object).sort();
-  const bk = Object.keys(b as object).sort();
-  if (ak.length !== bk.length) return false;
-  if (!ak.every((k, i) => k === bk[i])) return false;
-  return ak.every((k) =>
-    deepEqual(
-      (a as Record<string, unknown>)[k],
-      (b as Record<string, unknown>)[k],
-    ),
-  );
+function summarizeFailure(checkName: string, caseId: string, description: string, diff: string): string {
+  return `  ✗ [${checkName}] ${caseId}: ${description}\n    ${diff}`;
 }
 
 // ────────────────────────────────────────────────────────────────────
@@ -146,16 +90,26 @@ if (isCliRun) {
     .then((report) => {
       if (report.failingCases === 0) {
         console.log(
-          `[parity-harness] ✓ ${report.passingCases}/${report.totalCases} cases parity-clean`,
+          `[parity-harness] ✓ ${report.passingCases}/${report.totalCases} cases parity-clean across ${report.checkReports.length} checks`,
         );
+        for (const r of report.checkReports) {
+          console.log(`  ✓ ${r.name}: ${r.cases.length} cases`);
+        }
         process.exit(0);
       }
       console.log(
         `[parity-harness] ✗ ${report.failingCases}/${report.totalCases} cases diverged:`,
       );
-      for (const f of report.failures) {
-        console.log(`  - ${f.caseId}: ${f.description}`);
-        console.log(`    ${f.diffSummary}`);
+      for (const r of report.checkReports) {
+        const failing = r.cases.filter((c) => !c.ok);
+        if (failing.length === 0) {
+          console.log(`  ✓ ${r.name}: ${r.cases.length}/${r.cases.length}`);
+          continue;
+        }
+        console.log(`  ✗ ${r.name}: ${failing.length}/${r.cases.length} failing`);
+        for (const f of failing) {
+          console.log(summarizeFailure(r.name, f.caseId, f.description, f.diff));
+        }
       }
       process.exit(1);
     })

@@ -1,0 +1,95 @@
+[
+  {
+    "id": "runtimeReject:no-feedback-one-line",
+    "description": "No feedback → single-line `[PLAN_DECISION]: rejected` (W1-D1 byte-pin).",
+    "kind": "runtimeReject",
+    "feedback": null
+  },
+  {
+    "id": "runtimeReject:empty-feedback-string-one-line",
+    "description": "Empty-string feedback also collapses to single-line (falsy after sanitize).",
+    "kind": "runtimeReject",
+    "feedback": ""
+  },
+  {
+    "id": "runtimeReject:plain-feedback-two-line",
+    "description": "Plain feedback → 2-line form, raw (NOT JSON-quoted).",
+    "kind": "runtimeReject",
+    "feedback": "combine steps 2 and 3"
+  },
+  {
+    "id": "runtimeReject:multiline-feedback-preserved-raw",
+    "description": "Feedback with embedded newlines flows through raw (no JSON-quote escaping).",
+    "kind": "runtimeReject",
+    "feedback": "Line one of feedback.\nLine two with more detail."
+  },
+  {
+    "id": "runtimeReject:channel-broadcast-mention-stripped",
+    "description": "`@channel` is neutralized to `@﹫channel` (U+FE6B SMALL COMMERCIAL AT).",
+    "kind": "runtimeReject",
+    "feedback": "Please @channel review this plan."
+  },
+  {
+    "id": "runtimeReject:here-mention-stripped",
+    "description": "`@here` likewise stripped.",
+    "kind": "runtimeReject",
+    "feedback": "@here we need to talk"
+  },
+  {
+    "id": "runtimeReject:everyone-mention-stripped",
+    "description": "`@everyone` likewise stripped.",
+    "kind": "runtimeReject",
+    "feedback": "@everyone please look"
+  },
+  {
+    "id": "runtimeReject:user-mention-zwsp-inserted",
+    "description": "`<@U123>` user-mention syntax neutralized via U+200B ZWSP between < and @.",
+    "kind": "runtimeReject",
+    "feedback": "ping <@U12345> here"
+  },
+  {
+    "id": "runtimeReject:case-insensitive-channel",
+    "description": "Channel-broadcast match is case-insensitive (`@CHANNEL`).",
+    "kind": "runtimeReject",
+    "feedback": "shouting at @CHANNEL"
+  },
+  {
+    "id": "planSteps:empty-array-empty-lines",
+    "description": "Empty steps → empty array.",
+    "kind": "planSteps",
+    "steps": []
+  },
+  {
+    "id": "planSteps:no-activeform-just-step-text",
+    "description": "Step without activeForm → bare `step` text only.",
+    "kind": "planSteps",
+    "steps": [{ "step": "Bump eslint to 9.x", "status": "pending" }]
+  },
+  {
+    "id": "planSteps:activeform-appended-in-parens",
+    "description": "Step with activeForm → `<step> (<activeForm>)` (W1-D2 byte-pin).",
+    "kind": "planSteps",
+    "steps": [
+      { "step": "Bump eslint", "status": "in_progress", "activeForm": "Bumping eslint" }
+    ]
+  },
+  {
+    "id": "planSteps:mix-with-and-without-activeform",
+    "description": "Mixed list — some with activeForm, some without.",
+    "kind": "planSteps",
+    "steps": [
+      { "step": "Bump eslint", "status": "pending", "activeForm": "Bumping eslint" },
+      { "step": "Run tests", "status": "pending" },
+      { "step": "Ship it", "status": "pending", "activeForm": "Shipping" }
+    ]
+  },
+  {
+    "id": "planSteps:status-enum-must-not-leak",
+    "description": "W1-D2 explicit regression: status enum (in_progress/completed) must NOT appear in lines — only activeForm or bare step.",
+    "kind": "planSteps",
+    "steps": [
+      { "step": "Verify build", "status": "in_progress" },
+      { "step": "Cleanup", "status": "completed" }
+    ]
+  }
+]

@@ -1,0 +1,151 @@
+[
+  {
+    "id": "approve-pending-clears-feedback-and-rejectioncount",
+    "description": "Approve a pending plan with prior rejection history. Should flip mode→normal, approval→approved, clear feedback, reset rejectionCount to 0.",
+    "state_before": {
+      "mode": "plan",
+      "approval": "pending",
+      "rejectionCount": 2,
+      "approvalId": "plan-aaaaaaaa-bbbb-4ccc-9ddd-eeeeeeeeeeee",
+      "feedback": "earlier complaint"
+    },
+    "action": "approve"
+  },
+  {
+    "id": "edit-pending-treated-as-approval",
+    "description": "Edit counts as approval — same field resets as approve, but approval=edited.",
+    "state_before": {
+      "mode": "plan",
+      "approval": "pending",
+      "rejectionCount": 1,
+      "approvalId": "plan-aaaaaaaa-bbbb-4ccc-9ddd-eeeeeeeeeeee",
+      "feedback": "stale"
+    },
+    "action": "edit"
+  },
+  {
+    "id": "reject-pending-increments-and-stores-feedback",
+    "description": "Reject a pending plan with new feedback. Mode stays plan, approval→rejected, rejectionCount+1, feedback replaced.",
+    "state_before": {
+      "mode": "plan",
+      "approval": "pending",
+      "rejectionCount": 0,
+      "approvalId": "plan-aaaaaaaa-bbbb-4ccc-9ddd-eeeeeeeeeeee"
+    },
+    "action": "reject",
+    "feedback": "combine steps 2 and 3"
+  },
+  {
+    "id": "reject-rejected-state-re-rejection-preserves-existing-feedback-when-none-supplied",
+    "description": "Reject again (currently rejected). No new feedback → keep existing feedback. rejectionCount increments.",
+    "state_before": {
+      "mode": "plan",
+      "approval": "rejected",
+      "rejectionCount": 1,
+      "approvalId": "plan-aaaaaaaa-bbbb-4ccc-9ddd-eeeeeeeeeeee",
+      "feedback": "original feedback"
+    },
+    "action": "reject"
+  },
+  {
+    "id": "approve-rejected-flips-back-to-approved",
+    "description": "User changes mind: re-approve from rejected state. mode→normal, approval→approved, feedback cleared, rejectionCount reset to 0.",
+    "state_before": {
+      "mode": "plan",
+      "approval": "rejected",
+      "rejectionCount": 3,
+      "approvalId": "plan-aaaaaaaa-bbbb-4ccc-9ddd-eeeeeeeeeeee",
+      "feedback": "old complaint"
+    },
+    "action": "approve"
+  },
+  {
+    "id": "timeout-pending-flips-to-timed_out",
+    "description": "Timeout on a pending plan: mode stays plan, approval→timed_out, feedback cleared.",
+    "state_before": {
+      "mode": "plan",
+      "approval": "pending",
+      "rejectionCount": 0,
+      "approvalId": "plan-aaaaaaaa-bbbb-4ccc-9ddd-eeeeeeeeeeee"
+    },
+    "action": "timeout"
+  },
+  {
+    "id": "terminal-state-approved-blocks-action",
+    "description": "Approved is terminal. Any further action is a no-op.",
+    "state_before": {
+      "mode": "normal",
+      "approval": "approved",
+      "rejectionCount": 0,
+      "approvalId": "plan-aaaaaaaa-bbbb-4ccc-9ddd-eeeeeeeeeeee"
+    },
+    "action": "reject",
+    "feedback": "too late, already approved"
+  },
+  {
+    "id": "terminal-state-edited-blocks-action",
+    "description": "Edited is terminal. Any further action is a no-op.",
+    "state_before": {
+      "mode": "normal",
+      "approval": "edited",
+      "rejectionCount": 0,
+      "approvalId": "plan-aaaaaaaa-bbbb-4ccc-9ddd-eeeeeeeeeeee"
+    },
+    "action": "approve"
+  },
+  {
+    "id": "terminal-state-timed_out-blocks-action",
+    "description": "timed_out is terminal — requires a fresh exit_plan_mode before a new action can apply.",
+    "state_before": {
+      "mode": "plan",
+      "approval": "timed_out",
+      "rejectionCount": 0,
+      "approvalId": "plan-aaaaaaaa-bbbb-4ccc-9ddd-eeeeeeeeeeee"
+    },
+    "action": "approve"
+  },
+  {
+    "id": "none-state-blocks-action-without-token",
+    "description": "PR-D review fix: state 'none' (no pending approval to act on) blocks the action when no expectedApprovalId is supplied. Prevents out-of-sequence callbacks from flipping into terminal states.",
+    "state_before": {
+      "mode": "plan",
+      "approval": "none",
+      "rejectionCount": 0
+    },
+    "action": "approve"
+  },
+  {
+    "id": "stale-event-guard-mismatched-token-is-noop",
+    "description": "expectedApprovalId provided but does not match current approvalId. Action ignored.",
+    "state_before": {
+      "mode": "plan",
+      "approval": "pending",
+      "rejectionCount": 0,
+      "approvalId": "plan-aaaaaaaa-bbbb-4ccc-9ddd-eeeeeeeeeeee"
+    },
+    "action": "approve",
+    "expectedApprovalId": "plan-bbbbbbbb-cccc-4ddd-9eee-ffffffffffff"
+  },
+  {
+    "id": "stale-event-guard-missing-current-approvalid-is-noop",
+    "description": "expectedApprovalId provided but current state has no approvalId at all. Action ignored (the failsafe added to prevent fail-open on cleared/undefined approvalId).",
+    "state_before": {
+      "mode": "plan",
+      "approval": "pending",
+      "rejectionCount": 0
+    },
+    "action": "approve",
+    "expectedApprovalId": "plan-bbbbbbbb-cccc-4ddd-9eee-ffffffffffff"
+  },
+  {
+    "id": "timeout-from-rejected-is-noop",
+    "description": "Timeout only fires from pending. From rejected state it must be a no-op.",
+    "state_before": {
+      "mode": "plan",
+      "approval": "rejected",
+      "rejectionCount": 1,
+      "approvalId": "plan-aaaaaaaa-bbbb-4ccc-9ddd-eeeeeeeeeeee"
+    },
+    "action": "timeout"
+  }
+]

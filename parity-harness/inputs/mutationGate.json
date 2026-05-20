@@ -1,0 +1,216 @@
+[
+  {
+    "id": "normal-mode-allows-everything",
+    "description": "Normal mode (not plan): nothing blocked, even rm.",
+    "toolName": "exec",
+    "currentMode": "normal",
+    "execCommand": "rm -rf /tmp"
+  },
+  {
+    "id": "allowlist-read",
+    "description": "Plan mode + allowlisted tool 'read'.",
+    "toolName": "read",
+    "currentMode": "plan"
+  },
+  {
+    "id": "allowlist-update-plan",
+    "description": "Plan mode + 'update_plan' allowed.",
+    "toolName": "update_plan",
+    "currentMode": "plan"
+  },
+  {
+    "id": "allowlist-exit-plan-mode",
+    "description": "Plan mode + 'exit_plan_mode' allowed.",
+    "toolName": "exit_plan_mode",
+    "currentMode": "plan"
+  },
+  {
+    "id": "allowlist-ask-user-question",
+    "description": "Plan mode + 'ask_user_question' allowed (PR-10 fix).",
+    "toolName": "ask_user_question",
+    "currentMode": "plan"
+  },
+  {
+    "id": "allowlist-sessions-spawn",
+    "description": "Plan mode + 'sessions_spawn' allowed (PR-10 review fix #3105169112).",
+    "toolName": "sessions_spawn",
+    "currentMode": "plan"
+  },
+  {
+    "id": "allowlist-sessions-yield",
+    "description": "Plan mode + 'sessions_yield' allowed (PR #68939 follow-up).",
+    "toolName": "sessions_yield",
+    "currentMode": "plan"
+  },
+  {
+    "id": "allowlist-lcm-grep",
+    "description": "Plan mode + 'lcm_grep' allowed (PR #68939 follow-up).",
+    "toolName": "lcm_grep",
+    "currentMode": "plan"
+  },
+  {
+    "id": "blocklist-edit",
+    "description": "Plan mode + 'edit' blocked.",
+    "toolName": "edit",
+    "currentMode": "plan"
+  },
+  {
+    "id": "blocklist-write",
+    "description": "Plan mode + 'write' blocked.",
+    "toolName": "write",
+    "currentMode": "plan"
+  },
+  {
+    "id": "blocklist-apply-patch",
+    "description": "Plan mode + 'apply_patch' blocked.",
+    "toolName": "apply_patch",
+    "currentMode": "plan"
+  },
+  {
+    "id": "exec-readonly-cat",
+    "description": "Plan mode + exec cat (read-only prefix) — allowed.",
+    "toolName": "exec",
+    "currentMode": "plan",
+    "execCommand": "cat README.md"
+  },
+  {
+    "id": "exec-readonly-ls",
+    "description": "Plan mode + exec ls (read-only prefix) — allowed.",
+    "toolName": "exec",
+    "currentMode": "plan",
+    "execCommand": "ls -la"
+  },
+  {
+    "id": "bash-readonly-grep",
+    "description": "Plan mode + bash grep — allowed.",
+    "toolName": "bash",
+    "currentMode": "plan",
+    "execCommand": "grep foo src/"
+  },
+  {
+    "id": "exec-shell-operator-pipe-blocked",
+    "description": "exec cat | grep — pipe operator blocks even with readonly prefix.",
+    "toolName": "exec",
+    "currentMode": "plan",
+    "execCommand": "cat README.md | grep foo"
+  },
+  {
+    "id": "exec-shell-operator-semicolon-blocked",
+    "description": "exec ls ; rm — semicolon operator blocked.",
+    "toolName": "exec",
+    "currentMode": "plan",
+    "execCommand": "ls ; rm -rf /tmp"
+  },
+  {
+    "id": "exec-shell-operator-backtick-blocked",
+    "description": "exec ls `whoami` — backtick subshell blocked.",
+    "toolName": "exec",
+    "currentMode": "plan",
+    "execCommand": "ls `whoami`"
+  },
+  {
+    "id": "exec-shell-operator-dollar-paren-blocked",
+    "description": "exec ls $(whoami) — $() subshell blocked.",
+    "toolName": "exec",
+    "currentMode": "plan",
+    "execCommand": "ls $(whoami)"
+  },
+  {
+    "id": "exec-redirect-blocked",
+    "description": "exec ls > /tmp/foo — redirect blocked.",
+    "toolName": "exec",
+    "currentMode": "plan",
+    "execCommand": "ls > /tmp/foo"
+  },
+  {
+    "id": "exec-newline-blocked",
+    "description": "exec with embedded newline — blocked.",
+    "toolName": "exec",
+    "currentMode": "plan",
+    "execCommand": "ls\nrm -rf /tmp"
+  },
+  {
+    "id": "exec-dangerous-flag-delete",
+    "description": "find . -delete — dangerous flag blocked even with read-only prefix.",
+    "toolName": "exec",
+    "currentMode": "plan",
+    "execCommand": "find . -delete"
+  },
+  {
+    "id": "exec-dangerous-flag-exec",
+    "description": "find . -exec rm — dangerous flag blocked.",
+    "toolName": "exec",
+    "currentMode": "plan",
+    "execCommand": "find . -exec rm {} ;"
+  },
+  {
+    "id": "exec-dangerous-flag-rf",
+    "description": "rm -rf form — -rf flag matched by dangerous-flag regex even when not initial.",
+    "toolName": "exec",
+    "currentMode": "plan",
+    "execCommand": "find . -rf /tmp"
+  },
+  {
+    "id": "exec-dangerous-flag-fprint",
+    "description": "find . -fprint /tmp/x — write-flag on find blocked (PR-D fix).",
+    "toolName": "exec",
+    "currentMode": "plan",
+    "execCommand": "find . -fprint /tmp/x"
+  },
+  {
+    "id": "exec-dangerous-flag-not-false-match-executable",
+    "description": "find -executable — should NOT match -exec (word-boundary regex).",
+    "toolName": "exec",
+    "currentMode": "plan",
+    "execCommand": "find . -executable"
+  },
+  {
+    "id": "exec-unknown-prefix-blocked",
+    "description": "exec npm install — non-readonly prefix falls through to default-deny.",
+    "toolName": "exec",
+    "currentMode": "plan",
+    "execCommand": "npm install"
+  },
+  {
+    "id": "suffix-mutation-dot-write",
+    "description": "Custom MCP tool 'repo.write' matches '.write' suffix — blocked.",
+    "toolName": "repo.write",
+    "currentMode": "plan"
+  },
+  {
+    "id": "suffix-mutation-dot-edit",
+    "description": "Custom MCP tool 'vault.edit' matches '.edit' suffix — blocked.",
+    "toolName": "vault.edit",
+    "currentMode": "plan"
+  },
+  {
+    "id": "suffix-mutation-dot-delete",
+    "description": "Custom MCP tool 'cache.delete' matches '.delete' suffix — blocked.",
+    "toolName": "cache.delete",
+    "currentMode": "plan"
+  },
+  {
+    "id": "suffix-readonly-dot-read",
+    "description": "Custom MCP tool 'archive.read' matches '.read' suffix — allowed.",
+    "toolName": "archive.read",
+    "currentMode": "plan"
+  },
+  {
+    "id": "suffix-readonly-dot-search",
+    "description": "Custom MCP tool 'docs.search' matches '.search' suffix — allowed.",
+    "toolName": "docs.search",
+    "currentMode": "plan"
+  },
+  {
+    "id": "default-deny-unknown-tool",
+    "description": "Plan mode + unknown tool 'made_up_tool' — default-denied.",
+    "toolName": "made_up_tool",
+    "currentMode": "plan"
+  },
+  {
+    "id": "case-insensitive-blocklist",
+    "description": "Tool name 'EDIT' (uppercase) normalizes to 'edit' and is blocked.",
+    "toolName": "EDIT",
+    "currentMode": "plan"
+  }
+]

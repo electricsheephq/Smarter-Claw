@@ -1,0 +1,68 @@
+[
+  {
+    "id": "planning-retry-attempt-0-standard",
+    "description": "PLANNING_RETRY tier at attempt 0 — standard variant.",
+    "resolver": "planning",
+    "attemptIndex": 0
+  },
+  {
+    "id": "planning-retry-attempt-1-firm",
+    "description": "PLANNING_RETRY tier at attempt 1 — firm variant.",
+    "resolver": "planning",
+    "attemptIndex": 1
+  },
+  {
+    "id": "planning-retry-attempt-2-final",
+    "description": "PLANNING_RETRY tier at attempt 2 — final variant.",
+    "resolver": "planning",
+    "attemptIndex": 2
+  },
+  {
+    "id": "planning-retry-attempt-3-still-final",
+    "description": "PLANNING_RETRY tier at attempt 3+ — clamps to final variant.",
+    "resolver": "planning",
+    "attemptIndex": 3
+  },
+  {
+    "id": "planning-retry-attempt-neg-standard",
+    "description": "PLANNING_RETRY tier at attempt -1 — non-positive clamps to standard.",
+    "resolver": "planning",
+    "attemptIndex": -1
+  },
+  {
+    "id": "plan-ack-only-attempt-0-standard",
+    "description": "PLAN_ACK_ONLY tier at attempt 0 — standard variant.",
+    "resolver": "planAckOnly",
+    "attemptIndex": 0
+  },
+  {
+    "id": "plan-ack-only-attempt-1-firm",
+    "description": "PLAN_ACK_ONLY tier at attempt 1 — firm variant.",
+    "resolver": "planAckOnly",
+    "attemptIndex": 1
+  },
+  {
+    "id": "plan-ack-only-attempt-2-still-firm",
+    "description": "PLAN_ACK_ONLY tier at attempt 2+ — clamps to firm.",
+    "resolver": "planAckOnly",
+    "attemptIndex": 2
+  },
+  {
+    "id": "plan-yield-attempt-0-standard",
+    "description": "PLAN_YIELD tier at attempt 0 — standard variant.",
+    "resolver": "planYield",
+    "attemptIndex": 0
+  },
+  {
+    "id": "plan-yield-attempt-1-firm",
+    "description": "PLAN_YIELD tier at attempt 1 — firm variant.",
+    "resolver": "planYield",
+    "attemptIndex": 1
+  },
+  {
+    "id": "plan-yield-attempt-2-still-firm",
+    "description": "PLAN_YIELD tier at attempt 2+ — clamps to firm.",
+    "resolver": "planYield",
+    "attemptIndex": 2
+  }
+]

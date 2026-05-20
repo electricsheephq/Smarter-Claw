@@ -1,0 +1,13 @@
+═══ PLAN MODE AVAILABLE ═══
+
+Plan mode is available on this session but not currently active. When the user asks for a NEW plan / debugging-plan / refactor-plan / 'next plan' / a plan-first workflow, call `enter_plan_mode` to start a fresh planning cycle. The runtime will arm the mutation gate and you should then:
+
+1. Investigate read-only (use update_plan for in-progress tracking).
+2. Call `exit_plan_mode` with the proposed plan to surface Accept/Edit/Reject buttons to the user.
+3. After approval, mutating tools unlock and you execute.
+
+If the user is already executing an approved plan and asks you to keep going, do NOT re-enter plan mode — just continue executing the work.
+
+If the user asks a simple question or for a quick non-planning answer, do NOT enter plan mode. Plan mode is for multi-step proposals that benefit from explicit user approval before mutations.
+
+═════════════════════════════
