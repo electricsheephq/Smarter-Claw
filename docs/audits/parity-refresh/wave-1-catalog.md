@@ -146,6 +146,25 @@ seam. Also the content-hashed bundle names already rotated
 `loader-DdN5GTsW.js`). The patcher MUST be regenerated and may need
 re-porting when `#80982` merges.
 
+**Wave 5 status: deferred → `blocker-W1-S17-webchat-ui.md`.** Wave-5
+consolidation (2026-05-20) re-verified: PR #80982 still OPEN, no
+review decision, last touched 2026-05-12 — unchanged since the
+catalog tip. SDK at `2026.5.18` exposes only the
+`"session" | "tool" | "run" | "settings"` Control-UI surfaces
+(`node_modules/openclaw/dist/plugin-sdk/src/plugins/host-hooks.d.ts:72-74`);
+no `chat-message`/`chat-input-bar`/`chat-input-toolbar-chip`, no
+`registerChatStreamRenderer`. Existing patcher manifest targets
+`loader-DdN5GTsW.js` + `protocol-BBwaRnfZ.js` — neither file exists
+in the installed `2026.5.18` (both renamed via content-hash). Work
+is upstream-blocked, tracked in
+[electricsheephq/Smarter-Claw#78](https://github.com/electricsheephq/Smarter-Claw/issues/78).
+**Interim posture**: the sidebar `PluginControlUiDescriptor`
+(Wave 3, `src/ui/sidebar-descriptor.ts`) renders the approval card
+on webchat/desktop; cross-surface `/plan` commands (Wave 3,
+`src/ui/slash-commands.ts`) resolve a pending plan from any channel;
+W3-F2 plan-markdown persistence is shipped. The webchat-inline gap
+is a UX enhancement, not a correctness blocker.
+
 ### S18 — per-channel /plan routing (`buildspec-S18-S9-commands-ui.md`)
 
 `/plan` works on webchat YES, Telegram YES (text pipeline, Path A),
