@@ -4,12 +4,16 @@ Plan Mode plugin for [OpenClaw](https://github.com/openclaw/openclaw) — plan-t
 
 ## Status
 
-**`1.0.0-port.14` — v0.x internal-release prep (2026-05-12).**
+**`1.0.0-port.16` — parity-refresh release candidate (2026-05-20).**
 
-End of the backend-first ladder. All 14 backend PRs (P-1 through P-14)
-have shipped to `main` via [PR #80](https://github.com/electricsheephq/Smarter-Claw/pull/80). The plugin is **internally usable** against
-`openclaw@2026.5.10-beta.5`+; sidebar UI + slash commands work
-end-to-end. **585 tests pass across 30 test files** (551 unit + 34 Eva live-smoke integration; all green on Ubuntu CI).
+The 6-wave parity refresh closed all 2 P0 + 14/17 P1 Wave-1 findings,
+built a 156-case mechanical parity-harness CI gate, and bumped the
+minimum host version to `openclaw@2026.5.18`. The plugin is
+**release-ready** against `openclaw@2026.5.18`+; sidebar UI + slash
+commands work end-to-end. **868 unit tests + 4 Eva-live-smokes pass;
+parity-harness 156+/156+ cases parity-clean across 8+ checks; all
+green on Ubuntu CI**. See [`docs/audits/parity-refresh/FINAL-REPORT.md`](./docs/audits/parity-refresh/FINAL-REPORT.md)
+for the full ship-readiness account.
 
 `v1.0` public release is gated on the upstream OpenClaw chat-stream renderer
 SDK seam — see [RELEASE_NOTES.md](./RELEASE_NOTES.md) "deferred to v1.0" +
@@ -48,17 +52,30 @@ The mutation gate (`before_tool_call`) works without this flag, but most
 of the plugin requires it. An advisory message fires on every new session
 start when the flag is missing.
 
-Minimum host version: `openclaw >= 2026.5.10-beta.5` (declared via
+Minimum host version: `openclaw >= 2026.5.18` (declared via
 `minHostVersion` in `openclaw.plugin.json`).
 
 ## Optional: chat-stream seam patch (for inline UI before upstream merges)
 
 The plugin's v0.x sidebar UI works out of the box. For the v1.0 **inline UI** (mode-switcher chip, inline plan cards, input-bar suppression on pending approval), Smarter-Claw needs SDK seams that aren't in the upstream openclaw release yet — they're filed as draft PR [openclaw/openclaw#80982](https://github.com/openclaw/openclaw/pull/80982).
 
-Until that merges, you can tactically apply the seam to your local `node_modules/openclaw/` via a small, reversible patcher:
+> **Status: upstream-blocked.** The patcher targets the `2026.5.10-beta.5`
+> baseline; on the current `minHostVersion` (`2026.5.18`) the content-hashed
+> bundle filenames the manifest keys on have rotated (`loader-DdN5GTsW.js`
+> → `loader-CxUWY2_6.js`; `protocol-BBwaRnfZ.js` → `protocol-CdYy0xVK.js`
+> + `protocol-B17omF7t.js`), so the patcher's SHA pre-flight refuses to
+> apply (`process.exitCode === 3` / `4`). **Operators on `2026.5.18`
+> should skip this section** — sidebar UI + `/plan` slash commands cover
+> the supported UX. See [`docs/audits/parity-refresh/blocker-W1-S17-webchat-ui.md`](./docs/audits/parity-refresh/blocker-W1-S17-webchat-ui.md)
+> for the full investigation and the upstream tracking
+> ([electricsheephq/Smarter-Claw#78](https://github.com/electricsheephq/Smarter-Claw/issues/78)).
+> Instructions below remain for completeness and for operators on the
+> legacy `2026.5.10-beta.5` host baseline.
+
+Until upstream PR [openclaw/openclaw#80982](https://github.com/openclaw/openclaw/pull/80982) merges + a regenerated manifest ships, you can (on a `2026.5.10-beta.5` host only) tactically apply the seam to your local `node_modules/openclaw/` via a small, reversible patcher:
 
 ```bash
-# From the Smarter-Claw clone directory:
+# From the Smarter-Claw clone directory (host MUST be openclaw@2026.5.10-beta.5):
 npm run patch:chat-stream-seam              # apply patch (with SHA pre-flight)
 npm run patch:chat-stream-seam:verify       # check applied state
 npm run patch:chat-stream-seam:uninstall    # restore originals
@@ -71,16 +88,16 @@ node scripts/install-chat-stream-seam.mjs --host /path/to/your/openclaw
 ```
 
 What the patcher does:
-- Validates the installed openclaw version matches the patcher's manifest (refuses on mismatch)
+- Validates the installed openclaw version matches the patcher's manifest (refuses on mismatch — `2026.5.18` exits 3)
 - SHA256-checks the 2 dist files that will be replaced against the manifest's expected baseline (refuses on drift — use `--force` to override at your own risk)
 - Backs up the originals into `node_modules/openclaw/.smarter-claw-backups/`
 - Replaces 2 compiled JS bundle files with seam-built equivalents (~370KB total; ~80 lines of new code inside larger bundles)
 - Writes a sentinel at `node_modules/openclaw/.smarter-claw-chat-stream-seam-applied.json`
 - The plugin's startup advisory reports whether the patch is applied
 
-The patch is a **temporary tactical unblock**. When upstream openclaw merges PR #80982 into a published release, we'll bump `peerDependencies.openclaw` + drop the patcher.
+The patch is a **temporary tactical unblock for the legacy `2026.5.10-beta.5` baseline**. When upstream openclaw merges PR #80982 into a published release, we'll bump `peerDependencies.openclaw` + drop the patcher.
 
-## What works in 1.0.0-port.14
+## What works in 1.0.0-port.16
 
 | Feature | Status |
 |---|---|
@@ -163,7 +180,8 @@ pnpm build           # tsc → dist/
 
 | OpenClaw | Smarter Claw |
 |---|---|
-| `2026.5.10-beta.5` and later | `1.0.0-port.14` (current v0.x dev) |
+| `2026.5.18` and later | `1.0.0-port.16` (current parity-refresh RC) |
+| `2026.5.10-beta.5` ... `<2026.5.18` | `1.0.0-port.15` (legacy; chat-stream patcher applies here only) |
 
 `minHostVersion` is enforced via `openclaw.plugin.json`. Earlier host
 versions don't have the required SDK seams.

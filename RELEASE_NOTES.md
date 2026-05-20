@@ -1,5 +1,82 @@
 # Smarter-Claw Release Notes
 
+## 1.0.0-port.16 — parity refresh, host bump to 2026.5.18, Wave-6 finding fixes (2026-05-20)
+
+The 6-wave Parity-Refresh closed the audit cycle and brought the plugin
+to release-ready: 2/2 P0 + 14/17 P1 Wave-1 findings shipped (3 P1
+deferred to documented upstream SDK blockers), 1.0.0-port.15's host
+bumped from `openclaw@2026.5.10-beta.5` to `openclaw@2026.5.18`,
+156-case Layer-1 parity-harness CI gate built around 8 load-bearing
+surfaces, and the Wave-6 P1 findings (`wave-6-findings.md`) addressed
+in this bump.
+
+See [`docs/audits/parity-refresh/FINAL-REPORT.md`](./docs/audits/parity-refresh/FINAL-REPORT.md)
+for the full ship-readiness account and per-wave summary.
+
+### What changed since `1.0.0-port.15`
+
+- **Host minimum bumped to `openclaw@2026.5.18`** (Wave-0; #97). Plugin
+  is typecheck-clean + test-clean against the new SDK.
+- **Parity-harness CI gate landed** (Wave-2; #118). 8 checks pin
+  ~156 cases against vendored in-host references / byte fixtures at
+  commit `ea04ea52c7`.
+- **All Wave-3 fixes shipped** (#99, #108–#117). Closes W1-A1/A3/A5,
+  W1-B4, W1-C1, W1-D1/D2, W1-E2, W1-F4/F5, W1-S9-1/S9-2, W1-S18-1 and
+  both P0s (W1-F1 deferred-to-SDK; W1-F2 implemented).
+- **Cross-surface build** (Wave-4; #119). W1-F5 closed via
+  `PendingQuestion` store field + `/plan answer` cross-surface wiring.
+- **Wave-6 P1 fixes** (this release):
+  - **W6-1**: README + RELEASE_NOTES version drift corrected;
+    chat-stream patcher framed honestly as upstream-blocked on
+    `2026.5.18`; new CI assertion (`scripts/check-host-version-parity.mjs`)
+    locks `openclaw.plugin.json` `minHostVersion` to `package.json`
+    `devDependencies.openclaw`.
+  - **W6-2**: `plan-render.ts` added to the parity-harness with a new
+    `plan-render` byte-fixture check that diffs the plugin's
+    `renderFullPlanArchetypeMarkdown` against a vendored in-host
+    reference across a curated input matrix. Closes the
+    "byte-faithful claim, no byte-fixture pin" antipattern.
+
+### Test footprint at `1.0.0-port.16`
+
+`pnpm test`: 868+ tests pass across 39+ test files; parity-harness
+9+ checks / 160+ cases parity-clean against in-host `ea04ea52c7`.
+
+### Known limitations
+
+Carried over from `1.0.0-port.15`:
+
+1. **W1-F1 / W1-F3 (push notifications)** — `bundled-plugin-only` SDK
+   seams; resolution path works on every channel via `/plan` commands,
+   but the proactive push is blocked. See [`blocker-W1-F1.md`](./docs/audits/parity-refresh/blocker-W1-F1.md)
+   and [`blocker-W1-F3.md`](./docs/audits/parity-refresh/blocker-W1-F3.md).
+2. **W1-S17 (webchat inline UI)** — upstream PR #80982 still open +
+   drifted; chat-stream patcher does NOT apply on `2026.5.18`
+   (content-hashed bundle names rotated). Sidebar approval card +
+   `/plan` slash commands are the supported UX. See
+   [`blocker-W1-S17-webchat-ui.md`](./docs/audits/parity-refresh/blocker-W1-S17-webchat-ui.md).
+3. **W1-E6 (incomplete-turn detector)** — SDK declares `messages?: unknown[]`
+   on `before_agent_finalize` but the runtime does NOT populate it;
+   status-quo `stopHookActive` proxy stays (wastes a turn on tool-using
+   turns; doesn't break correctness). See [`blocker-W1-E6.md`](./docs/audits/parity-refresh/blocker-W1-E6.md).
+4. **W6 P2 carryovers** — `grantLedger.get()` still unconsumed (W6-5 /
+   E-11), escalating-retry `attemptIndex` never plumbed (W6-7 / E-10),
+   `event.provider`/`event.model` not threaded through `TurnSignal`
+   (W6-6 / E-4), `register(api)` not invoked in CI (W6-4 / E-9),
+   grant-ledger pruned on `rejected` despite re-approvable state
+   (W6-3, latent). All non-blocking; tracked for next maintenance
+   cycle. See [`wave-6-findings.md`](./docs/audits/parity-refresh/wave-6-findings.md).
+
+### Recommendation
+
+**PROCEED to live-gateway smoke + tag.** The release candidate is
+parity-clean against the in-host source-of-truth on every load-bearing
+surface the harness covers, including the new `plan-render.ts` pin
+added in this release. All P0 / P1 Wave-1 + Wave-6 findings that can
+be addressed without new SDK seams are closed.
+
+---
+
 ## 1.0.0-port.15 — surgical re-port to byte-identical in-host parity (2026-05-12)
 
 Five surgical PRs (#86, #87, #88, #89, #90) re-ported load-bearing

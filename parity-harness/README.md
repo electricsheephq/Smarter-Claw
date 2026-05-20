@@ -5,12 +5,15 @@ reference at `rebase/pr70071-onto-main-2026-04-25` tip `ea04ea52c7`.
 
 ## Layers
 
-- **Layer 1 (Wave 2 — here)**: unit-level diff. ~155+ cases across 8
-  checks pin the plugin's plan-mode surface against an in-host
+- **Layer 1 (Wave 2 / Wave 6 — here)**: unit-level diff. ~160+ cases
+  across 9 checks pin the plugin's plan-mode surface against an in-host
   reference. Reference comes from EITHER (a) a vendored snapshot of
   in-host code committed alongside the harness, OR (b) a byte fixture
   captured from the in-host source via `git show`. Any unexplained
-  diff fails the CI gate (`pnpm parity-harness`).
+  diff fails the CI gate (`pnpm parity-harness`). The harness also
+  runs `scripts/check-host-version-parity.mjs` as a pre-step to lock
+  `openclaw.plugin.json` `minHostVersion` to `package.json`
+  `devDependencies.openclaw` (closes W6-1 silent-drift class).
 
 - **Layer 2 (future, P-5)**: scenario-level diff. YAML scenarios drive
   both a host gateway session AND a plugin-loaded session; trace
@@ -35,7 +38,8 @@ parity-harness/
 │   ├── sanitize-and-approval-id.ts             — Wave-2
 │   ├── prompts.ts                              — Wave-2 (CLOSES W1-D3)
 │   ├── mutation-gate.ts                        — Wave-2
-│   └── runtime-reject-and-plan-steps.ts        — Wave-2 bonus (W1-D1 + W1-D2 byte-pins)
+│   ├── runtime-reject-and-plan-steps.ts        — Wave-2 bonus (W1-D1 + W1-D2 byte-pins)
+│   └── plan-render.ts                          — Wave-6 (CLOSES W6-2 — byte-fixture pin for W1-F2 persister renderer)
 ├── inputs/
 │   ├── persistApprovalRequest.json
 │   ├── resolvePlanApproval.json
@@ -43,7 +47,8 @@ parity-harness/
 │   ├── escalatingRetry.json
 │   ├── sanitize.json
 │   ├── mutationGate.json
-│   └── runtimeRejectAndPlanSteps.json
+│   ├── runtimeRejectAndPlanSteps.json
+│   └── planRender.json                         — Wave-6 (6 curated input cases for the byte-fixture diff)
 ├── runners/
 │   ├── shared.ts                               — persist-approval shared types
 │   ├── host-reference.ts                       — persist-approval host port
@@ -53,7 +58,8 @@ parity-harness/
 │   ├── mutation-gate.reference.ts              — VENDORED in-host file (git show)
 │   ├── escalating-retry.reference.ts           — constants + resolvers verbatim from in-host
 │   ├── sanitize-and-approval-id.reference.ts   — verbatim port of in-host sanitize + shape regex
-│   └── runtime-reject-and-plan-steps.reference.ts — verbatim port of in-host sessions-patch helpers
+│   ├── runtime-reject-and-plan-steps.reference.ts — verbatim port of in-host sessions-patch helpers
+│   └── plan-render.reference.ts                — verbatim port of in-host renderFullPlanArchetypeMarkdown + helpers
 └── host-snapshots/
     ├── README.md                               — snapshot-file directory
     ├── capture.ts                              — tsx script: pulls bytes from in-host via `git show`
@@ -75,7 +81,7 @@ the CI gate fails when parity breaks. The standalone script
 
 ```bash
 npx tsx parity-harness/diff.ts
-# → [parity-harness] ✓ 156/156 cases parity-clean across 8 checks
+# → [parity-harness] ✓ 162/162 cases parity-clean across 9 checks
 ```
 
 ## CI gate
