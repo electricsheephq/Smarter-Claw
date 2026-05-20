@@ -239,8 +239,9 @@ describe("W1-F5 ask_user_question — pending-question persistence", () => {
 
   it("when notification sink is wired, sends native question options after persist", async () => {
     const { store, calls } = stubStore();
+    const callsSeenAtNotify: number[] = [];
     const notifyQuestion = vi.fn(async () => {
-      expect(calls).toHaveLength(1);
+      callsSeenAtNotify.push(calls.length);
     });
     const factory = createAskUserQuestionTool({
       store: store as never,
@@ -253,6 +254,7 @@ describe("W1-F5 ask_user_question — pending-question persistence", () => {
     });
 
     expect((r.details as { status: string }).status).toBe("question_submitted");
+    expect(callsSeenAtNotify).toEqual([1]);
     expect(notifyQuestion).toHaveBeenCalledWith({
       sessionKey: SESSION_KEY,
       questionId: "q-call-1",
