@@ -574,6 +574,9 @@ describe("exit_plan_mode — W1-F2 markdown persister", () => {
         plan: [{ step: "do thing", status: "pending" }],
         persistedPlan: expect.objectContaining({
           filename: expect.stringMatching(/^plan-\d{4}-\d{2}-\d{2}-notify-plan\.md$/),
+          absPath: expect.stringMatching(
+            /\/plans\/plan-\d{4}-\d{2}-\d{2}-notify-plan\.md$/,
+          ),
         }),
       }),
     );

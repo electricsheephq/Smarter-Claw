@@ -101,7 +101,7 @@ What the patcher does:
 
 The patch is a **temporary tactical unblock for the legacy `2026.5.10-beta.5` baseline**. When upstream openclaw merges PR #80982 into a published release, we'll bump `peerDependencies.openclaw` + drop the patcher.
 
-## What works in 1.0.0-port.16
+## What works in 1.0.0-port.17
 
 | Feature | Status |
 |---|---|

@@ -238,8 +238,10 @@ describe("W1-F5 ask_user_question — pending-question persistence", () => {
   });
 
   it("when notification sink is wired, sends native question options after persist", async () => {
-    const { store } = stubStore();
-    const notifyQuestion = vi.fn(async () => {});
+    const { store, calls } = stubStore();
+    const notifyQuestion = vi.fn(async () => {
+      expect(calls).toHaveLength(1);
+    });
     const factory = createAskUserQuestionTool({
       store: store as never,
       notifications: { notifyQuestion },

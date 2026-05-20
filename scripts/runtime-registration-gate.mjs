@@ -15,9 +15,9 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-const repoRoot = resolve(new URL(".", import.meta.url).pathname, "..");
+const repoRoot = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 
 function readJson(path) {
   return JSON.parse(readFileSync(resolve(repoRoot, path), "utf8"));
@@ -144,7 +144,7 @@ if (typeof entry?.register !== "function") {
   fail("built plugin entry has no register(api) function");
 }
 
-entry.register(api);
+await entry.register(api);
 
 for (const tool of requiredTools) {
   if (!captures.tools.has(tool)) {
