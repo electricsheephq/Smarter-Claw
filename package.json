@@ -1,6 +1,6 @@
 {
   "name": "@electricsheephq/smarter-claw",
-  "version": "1.0.0-port.17",
+  "version": "1.0.0-port.18",
   "description": "Smarter-Claw — Plan-Mode plugin for OpenClaw. Parity-refresh release candidate. Source-of-truth parity at openclaw-pr70071-rebase tip ea04ea52c7. v1.0 public release gated on upstream chat-stream SDK seam.",
   "type": "module",
   "main": "dist/src/index.js",
@@ -33,14 +33,14 @@
   ],
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "openclaw": "2026.5.18",
+    "openclaw": "2026.5.19",
     "tsx": "4.20.6",
     "typebox": "^1.1.38",
     "typescript": "^5.6.0",
     "vitest": "^3.2.0"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.5.18"
+    "openclaw": ">=2026.5.19"
   },
   "keywords": [
     "openclaw",
@@ -66,8 +66,8 @@
       "./dist/src/index.js"
     ],
     "install": {
-      "minHostVersion": ">=2026.5.18",
-      "npmSpec": "@electricsheephq/smarter-claw@1.0.0-port.17"
+      "minHostVersion": ">=2026.5.19",
+      "npmSpec": "@electricsheephq/smarter-claw@1.0.0-port.18"
     },
     "build": {
       "command": "pnpm build",
@@ -76,6 +76,6 @@
     }
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.19.0"
   }
 }

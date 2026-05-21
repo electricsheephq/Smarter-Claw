@@ -1,5 +1,24 @@
 # Smarter-Claw Release Notes
 
+## 1.0.0-port.18 — OpenClaw 26.5.19 latest-stable bump (2026-05-21)
+
+This maintenance pass moves the recovery candidate from stable
+`openclaw@2026.5.18` to npm `latest`, `openclaw@2026.5.19`.
+
+### What changed since `1.0.0-port.17`
+
+- Bumped the SDK/test target to `openclaw@2026.5.19`.
+- Bumped `openclaw.plugin.json` `minHostVersion` to `2026.5.19`.
+- Bumped canonical `package.json#openclaw.install.minHostVersion` to
+  `>=2026.5.19` and `peerDependencies.openclaw` to `>=2026.5.19`.
+- Bumped the package candidate to `1.0.0-port.18`.
+- Raised the package Node engine floor to `>=22.19.0`, matching
+  OpenClaw 2026.5.19's published package engine requirement.
+- Kept the same compatibility truth: stock `openclaw@2026.5.19` still
+  rejects third-party active-session attachments, so typed `/plan`
+  commands and persisted Markdown paths remain the stable fallback until
+  the trusted host seam lands.
+
 ## 1.0.0-port.17 — OpenClaw 26.5.18 recovery candidate (2026-05-20)
 
 This recovery pass makes the plugin honest and testable on stable
