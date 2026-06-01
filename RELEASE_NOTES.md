@@ -1,5 +1,33 @@
 # Smarter-Claw Release Notes
 
+## 1.0.0-port.20 — GitHub-tarball install spec for OpenClaw v2026.6.1-beta.1 (2026-06-01)
+
+This follow-up release keeps the `v2026.6.1-beta.1` runtime target from
+`1.0.0-port.19` and fixes the distribution metadata: the package is not
+published to npm in this environment, so `package.json#openclaw.install.npmSpec`
+now points at the GitHub release tarball instead of the absent npm package.
+
+Install spec:
+
+```text
+https://github.com/electricsheephq/Smarter-Claw/releases/download/v1.0.0-port.20/electricsheephq-smarter-claw-1.0.0-port.20.tgz
+```
+
+### What changed since `1.0.0-port.19`
+
+- Bumped the package to `1.0.0-port.20`.
+- Replaced `package.json#openclaw.install.npmSpec` with the GitHub release
+  tarball URL so OpenClaw-compatible installers can fetch the exact artifact
+  without npm registry credentials.
+- Added release metadata coverage so a GitHub-only release fails CI if it
+  points at an unpublished npm package again.
+
+### Validation
+
+- Release gating for this port is the release PR plus final tag checks:
+  host-version parity, release metadata tests, runtime gate, full Vitest, build,
+  pack, extracted tarball metadata smoke, and GitHub PR checks before tagging.
+
 ## 1.0.0-port.19 — OpenClaw v2026.6.1-beta.1 release target (2026-06-01)
 
 This maintenance pass moves the recovery line from `2026.5.x` to the

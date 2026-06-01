@@ -144,6 +144,26 @@ if (pkgOpenClaw?.install?.minHostVersion !== expectedInstallFloor) {
   process.exit(2);
 }
 
+const installSpec = pkgOpenClaw?.install?.npmSpec;
+if (typeof installSpec !== "string" || installSpec.length === 0) {
+  console.error(
+    "[host-version-parity] package.json openclaw.install.npmSpec must be a non-empty npm-compatible install spec.",
+  );
+  process.exit(2);
+}
+if (!npmPackageAvailable) {
+  const expectedGitHubTarball = `https://github.com/electricsheephq/Smarter-Claw/releases/download/v${pkg.version}/electricsheephq-smarter-claw-${pkg.version}.tgz`;
+  if (installSpec !== expectedGitHubTarball) {
+    console.error(
+      `[host-version-parity] GitHub-only target must use release tarball install spec "${expectedGitHubTarball}"; got ${JSON.stringify(installSpec)}.`,
+    );
+    console.error(
+      "  The package is not on npm, so an npm package spec would be an unreleasable install path.",
+    );
+    process.exit(2);
+  }
+}
+
 if (pkgOpenClaw?.build?.command !== "pnpm build") {
   console.error(
     `[host-version-parity] package.json openclaw.build.command must be "pnpm build"; got ${JSON.stringify(pkgOpenClaw?.build?.command)}.`,

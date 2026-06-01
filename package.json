@@ -1,6 +1,6 @@
 {
   "name": "@electricsheephq/smarter-claw",
-  "version": "1.0.0-port.19",
+  "version": "1.0.0-port.20",
   "description": "Smarter-Claw — Plan-Mode plugin for OpenClaw v2026.6.1-beta.1 with explicit host seam gates for active-session attachments and chat-stream inline UI.",
   "type": "module",
   "main": "dist/src/index.js",
@@ -55,7 +55,7 @@
   "license": "SEE LICENSE IN LICENSE",
   "repository": {
     "type": "git",
-    "url": "https://github.com/electricsheephq/Smarter-Claw.git"
+    "url": "git+https://github.com/electricsheephq/Smarter-Claw.git"
   },
   "homepage": "https://github.com/electricsheephq/Smarter-Claw#readme",
   "bugs": {
@@ -80,7 +80,7 @@
     },
     "install": {
       "minHostVersion": ">=2026.6.1-beta.1",
-      "npmSpec": "@electricsheephq/smarter-claw@1.0.0-port.19"
+      "npmSpec": "https://github.com/electricsheephq/Smarter-Claw/releases/download/v1.0.0-port.20/electricsheephq-smarter-claw-1.0.0-port.20.tgz"
     },
     "build": {
       "command": "pnpm build",

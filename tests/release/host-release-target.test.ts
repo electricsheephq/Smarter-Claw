@@ -17,7 +17,7 @@ describe("OpenClaw v2026.6.1-beta.1 release target metadata", () => {
       install?: Record<string, unknown>;
     };
 
-    expect(pkg.version).toBe("1.0.0-port.19");
+    expect(pkg.version).toBe("1.0.0-port.20");
     expect(manifest.minHostVersion).toBe("2026.6.1-beta.1");
     expect(openclaw.target).toEqual(
       expect.objectContaining({
@@ -29,6 +29,9 @@ describe("OpenClaw v2026.6.1-beta.1 release target metadata", () => {
       }),
     );
     expect(openclaw.install?.minHostVersion).toBe(">=2026.6.1-beta.1");
+    expect(openclaw.install?.npmSpec).toBe(
+      "https://github.com/electricsheephq/Smarter-Claw/releases/download/v1.0.0-port.20/electricsheephq-smarter-claw-1.0.0-port.20.tgz",
+    );
     expect((pkg.peerDependencies as Record<string, unknown>).openclaw).toBe(
       ">=2026.6.1-beta.1",
     );
