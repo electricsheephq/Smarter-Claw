@@ -7,6 +7,7 @@ import type {
 import type { PersistPlanArchetypeMarkdownResult } from "../plan-mode/plan-archetype-persist.js";
 import type { PlanModeStore } from "../state/store.js";
 import type { PlanStep } from "../types.js";
+import { classifyPlanNotificationDeliveryFailure } from "./host-seam-gates.js";
 
 export const TELEGRAM_PLAN_INTERACTIVE_NAMESPACE = "smarter-claw-plan";
 
@@ -301,8 +302,11 @@ async function sendPresentation(
   }
   const result = await sendSessionAttachment(params as unknown);
   if (!result.ok) {
+    const gate = classifyPlanNotificationDeliveryFailure(result.error);
     api.logger.warn(
-      `[smarter-claw] plan notification delivery skipped: ${result.error}`,
+      `[smarter-claw] plan notification delivery skipped (${gate.code}${
+        gate.releaseGate ? "; release-gated host seam" : ""
+      }): ${gate.message} Fallback: ${gate.fallback}.`,
     );
     return false;
   }

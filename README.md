@@ -4,25 +4,31 @@ Plan Mode plugin for [OpenClaw](https://github.com/openclaw/openclaw) — plan-t
 
 ## Status
 
-**`1.0.0-port.18` — OpenClaw 26.5.19 recovery candidate (2026-05-21).**
+**`1.0.0-port.19` — OpenClaw `v2026.6.1-beta.1` release-target candidate (2026-06-01).**
 
 The 6-wave parity refresh closed all 2 P0 + 14/17 P1 Wave-1 findings,
-built a 156-case mechanical parity-harness CI gate, and bumped the
-minimum host version to `openclaw@2026.5.19`. Port `.18` keeps the
-stable-load contracts from `.17`, updates the SDK/test target to the
-current npm `latest`, and tracks OpenClaw's Node 22.19 runtime floor.
-Port `.17` adds the
-stable-load contracts (`contracts.tools`), explicit CLI descriptors,
-the runtime registration gate, and Telegram-native plan/question button
-wiring. On stock `openclaw@2026.5.19`, the typed `/plan` fallback and
-persisted Markdown plan path remain authoritative; Markdown attachment
-delivery and native Telegram buttons activate when the host includes the
-trusted `contracts.sessionAttachments: ["active-session"]` SDK seam.
+built a 156-case mechanical parity-harness CI gate, and now targets the
+OpenClaw GitHub release [`v2026.6.1-beta.1`](https://github.com/openclaw/openclaw/releases/tag/v2026.6.1-beta.1)
+at commit `2fc497e67b9cf40b2c12a9355afd785e7f8672dc`. The matching
+`openclaw@2026.6.1-beta.1` npm package is not published, so package
+install/typecheck uses the nearest published beta SDK
+`openclaw@2026.5.31-beta.4` while `package.json#openclaw.target`,
+`openclaw.plugin.json#minHostVersion`, the peer dependency, and the
+install floor all pin the real 6.1 beta host target.
+
+Port `.19` keeps the stable-load contracts from `.17`/`.18`, adds explicit
+release-gate classification for the stock host's active-session attachment
+block, and mirrors pending plan approval state into OpenClaw's managed
+TaskFlow runtime when that 6.1 surface is available. On stock
+`v2026.6.1-beta.1`, typed `/plan` commands, sidebar actions, persisted
+Markdown plan paths, and TaskFlow/workboard visibility are the supported
+fallback; Markdown attachment delivery and native Telegram buttons activate
+only when the host allows trusted third-party active-session attachments.
 See [`docs/audits/parity-refresh/FINAL-REPORT.md`](./docs/audits/parity-refresh/FINAL-REPORT.md)
 for the full ship-readiness account.
 
-`v1.0` public release is gated on the upstream OpenClaw chat-stream renderer
-SDK seam — see [RELEASE_NOTES.md](./RELEASE_NOTES.md) "deferred to v1.0" +
+Inline chat-stream UI remains gated on the upstream OpenClaw chat-stream
+renderer SDK seam — see [RELEASE_NOTES.md](./RELEASE_NOTES.md) "deferred to v1.0" +
 [upstream draft PR `openclaw/openclaw#80982`](https://github.com/openclaw/openclaw/pull/80982).
 
 For implementation history + the architecture rationale see
@@ -58,7 +64,7 @@ The mutation gate (`before_tool_call`) works without this flag, but most
 of the plugin requires it. An advisory message fires on every new session
 start when the flag is missing.
 
-Minimum host version: `openclaw >= 2026.5.19` (declared via the canonical
+Minimum host version: `openclaw >= 2026.6.1-beta.1` (declared via the canonical
 `package.json#openclaw.install.minHostVersion` floor and mirrored in
 `openclaw.plugin.json` for runtime metadata).
 
@@ -67,11 +73,11 @@ Minimum host version: `openclaw >= 2026.5.19` (declared via the canonical
 The plugin's v0.x sidebar UI works out of the box. For the v1.0 **inline UI** (mode-switcher chip, inline plan cards, input-bar suppression on pending approval), Smarter-Claw needs SDK seams that aren't in the upstream openclaw release yet — they're filed as draft PR [openclaw/openclaw#80982](https://github.com/openclaw/openclaw/pull/80982).
 
 > **Status: upstream-blocked.** The patcher targets the `2026.5.10-beta.5`
-> baseline; on the current `minHostVersion` (`2026.5.19`) the content-hashed
+> baseline; on the current `minHostVersion` (`2026.6.1-beta.1`) the content-hashed
 > bundle filenames the manifest keys on have rotated (`loader-DdN5GTsW.js`
 > → `loader-CxUWY2_6.js`; `protocol-BBwaRnfZ.js` → `protocol-CdYy0xVK.js`
 > + `protocol-B17omF7t.js`), so the patcher's SHA pre-flight refuses to
-> apply (`process.exitCode === 3` / `4`). **Operators on `2026.5.19`
+> apply (`process.exitCode === 3` / `4`). **Operators on `v2026.6.1-beta.1`
 > should skip this section** — sidebar UI + `/plan` slash commands cover
 > the supported UX. See [`docs/audits/parity-refresh/blocker-W1-S17-webchat-ui.md`](./docs/audits/parity-refresh/blocker-W1-S17-webchat-ui.md)
 > for the full investigation and the upstream tracking
@@ -104,7 +110,7 @@ What the patcher does:
 
 The patch is a **temporary tactical unblock for the legacy `2026.5.10-beta.5` baseline**. When upstream openclaw merges PR #80982 into a published release, we'll bump `peerDependencies.openclaw` + drop the patcher.
 
-## What works in 1.0.0-port.18
+## What works in 1.0.0-port.19
 
 | Feature | Status |
 |---|---|
@@ -126,8 +132,9 @@ The patch is a **temporary tactical unblock for the legacy `2026.5.10-beta.5` ba
 | `autoApprove` toggle (state mutator) | ✅ |
 | Approval grant ledger + structured debug log | ✅ |
 | Parity harness (Layer 1, 2, 3-cron) | ✅ |
-| Telegram-native approval/question buttons | ✅ with OpenClaw active-session attachment seam; `/plan` fallback on stock `26.5.19` |
-| Markdown plan artifact persistence + attachment | ✅ persisted on stock `26.5.19`; attached when host seam is available |
+| Managed TaskFlow/workboard visibility for pending plan approvals | ✅ when OpenClaw exposes `runtime.tasks.managedFlows`; no-op fallback otherwise |
+| Telegram-native approval/question buttons | ✅ with OpenClaw active-session attachment seam; `/plan` fallback on stock `v2026.6.1-beta.1` |
+| Markdown plan artifact persistence + attachment | ✅ persisted on stock `v2026.6.1-beta.1`; attached when host seam is available |
 
 ## Deferred to v1.0 (upstream-blocked)
 
@@ -172,8 +179,9 @@ at the in-host code it mirrors (see `host_ref:` comments in each file).
 | `api.session.controls.registerSessionAction` (×6) | `plan.accept` / `plan.edit` / `plan.reject` / `plan.cancel` / `plan.answer` / `plan.auto.toggle` |
 | `api.session.controls.registerControlUiDescriptor` | Sidebar widget descriptor |
 | `api.session.workflow.enqueueNextTurnInjection` | `[PLAN_DECISION]:` and `[QUESTION_ANSWER]:` writers |
+| `api.runtime.tasks.managedFlows` / legacy `api.runtime.taskFlow` | Best-effort managed TaskFlow bridge for pending plan approval visibility |
 | `api.registerInteractiveHandler` | `smarter-claw-plan` Telegram callback namespace for approve/revise/reject/cancel and option answers |
-| `api.session.workflow.sendSessionAttachment` | Best-effort active-session plan/question presentation delivery; falls back when stock `26.5.19` blocks third-party attachments |
+| `api.session.workflow.sendSessionAttachment` | Best-effort active-session plan/question presentation delivery; falls back when stock `v2026.6.1-beta.1` blocks third-party attachments |
 | `api.registerCli` | `openclaw plan-clear` rollback drain command |
 
 ## Develop
@@ -192,7 +200,8 @@ pnpm build           # tsc → dist/
 
 | OpenClaw | Smarter Claw |
 |---|---|
-| `2026.5.19` and later | `1.0.0-port.18` (current recovery RC) |
+| `v2026.6.1-beta.1` GitHub release | `1.0.0-port.19` (current 6.1 beta target RC; npm SDK fallback `2026.5.31-beta.4`) |
+| `2026.5.19` and later | `1.0.0-port.18` (recovery RC) |
 | `2026.5.18` and later | `1.0.0-port.17` (stable-load + Telegram bridge consumer RC) |
 | `2026.5.18` and later | `1.0.0-port.16` (parity-refresh RC; no Telegram-native button bridge) |
 | `2026.5.10-beta.5` ... `<2026.5.18` | `1.0.0-port.15` (legacy; chat-stream patcher applies here only) |

@@ -239,7 +239,7 @@ export interface CreateExitPlanModeToolInput {
   /**
    * Optional rich-channel notification sink. Production wiring sends the
    * persisted Markdown plan and native Telegram approval buttons when the
-   * host permits active-session plugin attachments. On plain 26.5.19 the
+   * host permits active-session plugin attachments. On stock v2026.6.1-beta.1 the
    * host rejects that SDK call, so this path logs and the typed `/plan`
    * fallback remains authoritative.
    */
@@ -623,7 +623,7 @@ export function createExitPlanModeTool(opts: CreateExitPlanModeToolInput) {
       // "HTML" })` to push the persisted markdown to Telegram as the
       // user's action-required signal. The plugin port stops at the
       // PERSIST half — the push half is unimplementable on SDK
-      // `2026.5.19` because `api.session.workflow.sendSessionAttachment`
+      // `v2026.6.1-beta.1` because `api.session.workflow.sendSessionAttachment`
       // rejects 3P plugins (`host-hook-attachments.ts:216-218` —
       // `if (origin !== "bundled") return { ok: false, error:
       // "session attachments are restricted to bundled plugins" }`).

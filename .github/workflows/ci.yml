@@ -124,6 +124,9 @@ jobs:
             if (p.openclaw?.install?.minHostVersion !== '>=' + m.minHostVersion) {
               throw new Error('package openclaw.install.minHostVersion must be >=' + m.minHostVersion);
             }
+            if (p.openclaw?.target?.version !== m.minHostVersion) {
+              throw new Error('package openclaw.target.version must match manifest minHostVersion');
+            }
             const tools = new Set(m.contracts?.tools || []);
             for (const tool of ['enter_plan_mode', 'exit_plan_mode', 'ask_user_question']) {
               if (!tools.has(tool)) throw new Error('manifest contracts.tools missing ' + tool);

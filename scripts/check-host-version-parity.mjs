@@ -4,10 +4,11 @@
  *
  * Closes Wave-6 W6-1 (silent doc-vs-reality drift). Asserts that
  * `openclaw.plugin.json` `minHostVersion` is byte-identical to the
- * literal `openclaw` version string declared in `package.json`'s
- * `devDependencies` (the SDK we typecheck + test against). If a
- * future host bump updates one without the other, this script exits
- * non-zero and CI fails before the drift can ship.
+ * `package.json#openclaw.target.version` host target. When that target
+ * is available on npm, the `devDependencies.openclaw` SDK pin must match.
+ * When the target is a GitHub-only prerelease, the SDK fallback must be
+ * declared explicitly so CI can distinguish a deliberate fallback from
+ * silent doc-vs-reality drift.
  *
  * Why this matters
  * ----------------
@@ -24,11 +25,10 @@
  * Scope (intentional)
  * -------------------
  *
- * Exact string match. Both fields are pinned (not range-spec), so
- * an exact compare is the correct semantics here. If the project
- * ever moves to a range-spec in `devDependencies`, this script must
- * be updated to reflect the new invariant (e.g. "minHostVersion must
- * be satisfied by devDependencies.openclaw range").
+ * Exact string match for manifest/runtime/install/peer target fields.
+ * The devDependency only gets an exact-match exemption when
+ * `openclaw.target.npmPackageAvailable === false` and
+ * `openclaw.sdkValidation.npmFallbackVersion` equals the devDependency.
  *
  * Exit codes
  * ----------
@@ -68,6 +68,8 @@ const pkg = loadJson("package.json");
 const minHostVersion = manifest.minHostVersion;
 const devDepOpenclaw = pkg.devDependencies?.openclaw;
 const pkgOpenClaw = pkg.openclaw;
+const target = pkgOpenClaw?.target;
+const sdkValidation = pkgOpenClaw?.sdkValidation;
 
 if (typeof minHostVersion !== "string" || minHostVersion.length === 0) {
   console.error(
@@ -82,20 +84,59 @@ if (typeof devDepOpenclaw !== "string" || devDepOpenclaw.length === 0) {
   process.exit(1);
 }
 
-if (minHostVersion !== devDepOpenclaw) {
+const targetVersion = target?.version;
+if (typeof targetVersion !== "string" || targetVersion.length === 0) {
   console.error(
-    `[host-version-parity] DRIFT: openclaw.plugin.json minHostVersion="${minHostVersion}" does NOT match package.json devDependencies.openclaw="${devDepOpenclaw}".`,
-  );
-  console.error(
-    "  These MUST be byte-identical. The manifest declares the gateway minimum; the devDep is the SDK we typecheck + test against. A mismatch ships a plugin that promises a version the implementation never compiled or tested on.",
-  );
-  console.error(
-    "  Fix: bump the lagging field to match, re-run `pnpm install`, re-run `pnpm parity-harness`.",
+    "[host-version-parity] package.json missing openclaw.target.version.",
   );
   process.exit(2);
 }
 
-const expectedInstallFloor = `>=${minHostVersion}`;
+if (minHostVersion !== targetVersion) {
+  console.error(
+    `[host-version-parity] DRIFT: openclaw.plugin.json minHostVersion="${minHostVersion}" does NOT match package.json openclaw.target.version="${targetVersion}".`,
+  );
+  console.error(
+    "  These MUST be byte-identical. The manifest declares the gateway minimum; the target records the release this package is claiming compatibility with.",
+  );
+  console.error(
+    "  Fix: bump the lagging field to match, re-run `pnpm parity-harness`.",
+  );
+  process.exit(2);
+}
+
+const npmPackageAvailable = target?.npmPackageAvailable !== false;
+if (npmPackageAvailable && minHostVersion !== devDepOpenclaw) {
+  console.error(
+    `[host-version-parity] DRIFT: target ${minHostVersion} is marked npm-available but devDependencies.openclaw="${devDepOpenclaw}".`,
+  );
+  console.error(
+    "  Fix: set devDependencies.openclaw to the exact target version, re-run `pnpm install`, re-run `pnpm parity-harness`.",
+  );
+  process.exit(2);
+}
+if (!npmPackageAvailable) {
+  if (target.source !== "github-release" || typeof target.tag !== "string" || !target.tag) {
+    console.error(
+      "[host-version-parity] GitHub-only OpenClaw target must declare openclaw.target.source=\"github-release\" and openclaw.target.tag.",
+    );
+    process.exit(2);
+  }
+  if (sdkValidation?.npmFallbackVersion !== devDepOpenclaw) {
+    console.error(
+      `[host-version-parity] GitHub-only target must declare openclaw.sdkValidation.npmFallbackVersion="${devDepOpenclaw}"; got ${JSON.stringify(sdkValidation?.npmFallbackVersion)}.`,
+    );
+    process.exit(2);
+  }
+  if (sdkValidation?.githubReleaseTag !== target.tag) {
+    console.error(
+      `[host-version-parity] openclaw.sdkValidation.githubReleaseTag must match openclaw.target.tag (${target.tag}).`,
+    );
+    process.exit(2);
+  }
+}
+
+const expectedInstallFloor = `>=${targetVersion}`;
 if (pkgOpenClaw?.install?.minHostVersion !== expectedInstallFloor) {
   console.error(
     `[host-version-parity] package.json openclaw.install.minHostVersion="${pkgOpenClaw?.install?.minHostVersion}" must be "${expectedInstallFloor}" for OpenClaw's canonical package install gate.`,
@@ -137,14 +178,14 @@ if (!(manifest.contracts?.sessionAttachments ?? []).includes("active-session")) 
 const peerOpenclaw = pkg.peerDependencies?.openclaw;
 if (typeof peerOpenclaw === "string" && peerOpenclaw.startsWith(">=")) {
   const peerPin = peerOpenclaw.slice(2).trim();
-  if (peerPin !== minHostVersion) {
+  if (peerPin !== targetVersion) {
     console.error(
-      `[host-version-parity] peerDependencies.openclaw="${peerOpenclaw}" pins ">=${peerPin}" but minHostVersion="${minHostVersion}". Convention: peer-dep pin = manifest minHostVersion exactly.`,
+      `[host-version-parity] peerDependencies.openclaw="${peerOpenclaw}" pins ">=${peerPin}" but targetVersion="${targetVersion}". Convention: peer-dep pin = manifest target exactly.`,
     );
     process.exit(2);
   }
 }
 
 console.log(
-  `[host-version-parity] OK — manifest minHostVersion=${minHostVersion} == devDependencies.openclaw=${devDepOpenclaw}${peerOpenclaw ? ` (peer=${peerOpenclaw})` : ""}; package install floor=${expectedInstallFloor}; contracts.tools=${requiredTools.join(",")}; sessionAttachments=active-session`,
+  `[host-version-parity] OK — manifest minHostVersion=${minHostVersion} == target=${targetVersion}; devDependencies.openclaw=${devDepOpenclaw}${npmPackageAvailable ? "" : " (declared SDK fallback)"}${peerOpenclaw ? ` (peer=${peerOpenclaw})` : ""}; package install floor=${expectedInstallFloor}; contracts.tools=${requiredTools.join(",")}; sessionAttachments=active-session`,
 );

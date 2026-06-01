@@ -80,7 +80,7 @@ export interface CreateAskUserQuestionToolInput {
   /**
    * Optional rich-channel notification sink. Production wiring sends
    * Telegram-native question buttons when the host exposes the
-   * active-session presentation seam; stable 26.5.19 falls back to
+   * active-session presentation seam; stock v2026.6.1-beta.1 falls back to
    * typed `/plan answer` when the host returns an unavailable result.
    */
   notifications?: Pick<PlanModeNotificationSink, "notifyQuestion">;

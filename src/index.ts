@@ -61,6 +61,7 @@ import { GrantLedger } from "./runtime/grant-ledger.js";
 import { enqueuePlanApprovedInjection } from "./runtime/injection-writer.js";
 import { createPlanModeNotifications } from "./runtime/plan-notifications.js";
 import { decidePlanTierModel } from "./runtime/plan-tier-model.js";
+import { createPlanModeTaskFlowVisibility } from "./runtime/task-flow-visibility.js";
 import { createAskUserQuestionTool } from "./tools/ask-user-question.js";
 import { createEnterPlanModeTool } from "./tools/enter-plan-mode.js";
 import { createExitPlanModeTool } from "./tools/exit-plan-mode.js";
@@ -249,6 +250,13 @@ export default definePluginEntry({
         "[smarter-claw] SMARTER_CLAW_USE_INMEMORY=1 — state NOT persisted across plugin reload. Dev/test only.",
       );
     }
+    const taskFlowVisibility = createPlanModeTaskFlowVisibility({
+      api,
+      logger: {
+        debug: (msg) => api.logger.debug?.(msg),
+        warn: (msg) => api.logger.warn(msg),
+      },
+    });
     // P-14: grant ledger — in-memory correlation of approvalId →
     // (approvalRunId, sessionKey). Populated on exit_plan_mode persist
     // path; queried in debug-log emit for correlation enrichment.
@@ -279,6 +287,8 @@ export default definePluginEntry({
           event.next,
           event.source,
         );
+
+        void taskFlowVisibility.recordTransition(event);
 
         // P-14: grant-ledger updates on persist-approval transitions
         // (where approvalId rotates) and pruning on terminal states.

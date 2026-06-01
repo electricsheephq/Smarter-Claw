@@ -1,5 +1,61 @@
 # Smarter-Claw Release Notes
 
+## 1.0.0-port.19 — OpenClaw v2026.6.1-beta.1 release target (2026-06-01)
+
+This maintenance pass moves the recovery candidate from the `2026.5.x`
+line to the OpenClaw GitHub release
+[`v2026.6.1-beta.1`](https://github.com/openclaw/openclaw/releases/tag/v2026.6.1-beta.1)
+at commit `2fc497e67b9cf40b2c12a9355afd785e7f8672dc`.
+
+### Compatibility truth
+
+- `openclaw@2026.6.1-beta.1` is not published on npm. The package keeps
+  `package.json#openclaw.target.version`, `openclaw.plugin.json`
+  `minHostVersion`, `peerDependencies.openclaw`, and
+  `package.json#openclaw.install.minHostVersion` pinned to
+  `2026.6.1-beta.1`, while install/typecheck uses the nearest published
+  npm beta SDK, `openclaw@2026.5.31-beta.4`.
+- Stock `v2026.6.1-beta.1` still rejects third-party active-session
+  attachments with `session attachments are restricted to bundled plugins`.
+  Native Telegram buttons and Markdown delivery stay best-effort; typed
+  `/plan` commands, sidebar actions, and persisted Markdown plan paths are
+  the supported fallback.
+- Stock `v2026.6.1-beta.1` does not include the chat-stream renderer seam
+  from upstream PR `openclaw/openclaw#80982`. Inline plan cards, input-bar
+  suppression, and the mode-switcher chip remain upstream-gated.
+
+### What changed since `1.0.0-port.18`
+
+- Bumped the package candidate to `1.0.0-port.19`.
+- Bumped the runtime/install compatibility target to
+  `2026.6.1-beta.1` and added explicit GitHub-release target metadata.
+- Updated the host-version parity gate so a GitHub-only OpenClaw release can
+  use an explicitly declared npm SDK fallback without hiding drift.
+- Added release-gate classification for the stock 6.1 active-session
+  attachment block. The runtime now logs the specific host seam gate and
+  names the `/plan`/Markdown fallback instead of treating the block as a
+  generic delivery failure.
+- Added a best-effort managed TaskFlow bridge. When OpenClaw exposes
+  `api.runtime.tasks.managedFlows` (or the legacy `api.runtime.taskFlow`
+  alias), Smarter-Claw creates a managed TaskFlow for pending plan approval
+  and finishes or updates it when the plan is approved, edited, or rejected.
+  This makes pending plans visible to the 6.1 task/workboard affordances
+  without making TaskFlow availability a hard install requirement.
+- Added focused release-gate tests for target metadata, attachment seam
+  classification, and TaskFlow visibility.
+
+### Release gates still open
+
+1. **Full native active-session attachment parity** requires an OpenClaw
+   host change that lets trusted third-party plugins declaring
+   `contracts.sessionAttachments: ["active-session"]` send active-session
+   presentations.
+2. **Inline chat-stream UI parity** remains blocked on upstream PR
+   `openclaw/openclaw#80982` or an equivalent public renderer seam.
+3. **Full live parity certification** still needs remote GitHub/Crabbox
+   scenario validation against the actual `v2026.6.1-beta.1` host before
+   tagging or publishing.
+
 ## 1.0.0-port.18 — OpenClaw 26.5.19 latest-stable bump (2026-05-21)
 
 This maintenance pass moves the recovery candidate from stable
