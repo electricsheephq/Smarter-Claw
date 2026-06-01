@@ -94,6 +94,8 @@ jobs:
           # yet" without failing the job.
           if [ -f parity-harness/runners/plugin-under-test.ts ]; then
             pnpm exec tsx parity-harness/runners/plugin-under-test.ts || true
+          else
+            pnpm parity-harness || true
           fi
           echo "Plugin runner step complete."
 

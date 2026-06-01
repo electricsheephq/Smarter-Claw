@@ -42,6 +42,7 @@
 
 import { Type } from "typebox";
 import { describeAskUserQuestionTool } from "../plan-mode/tool-descriptions.js";
+import type { PlanModeNotificationSink } from "../runtime/plan-notifications.js";
 import type { PlanModeStore } from "../state/store.js";
 import { ToolInputError, readStringParam } from "./common.js";
 
@@ -76,6 +77,13 @@ export interface CreateAskUserQuestionToolInput {
   logger?: {
     warn?: (message: string) => void;
   };
+  /**
+   * Optional rich-channel notification sink. Production wiring sends
+   * Telegram-native question buttons when the host exposes the
+   * active-session presentation seam; stock v2026.6.1-beta.1 falls back to
+   * typed `/plan answer` when the host returns an unavailable result.
+   */
+  notifications?: Pick<PlanModeNotificationSink, "notifyQuestion">;
 }
 
 const SCHEMA = Type.Object(
@@ -200,6 +208,19 @@ export function createAskUserQuestionTool(
               opts.logger?.warn?.(
                 `ask_user_question: persistPendingQuestion failed (sessionKey=${ctx.sessionKey} questionId=${questionId}): ${result.error.message}`,
               );
+            } else {
+              try {
+                await opts.notifications?.notifyQuestion({
+                  sessionKey: ctx.sessionKey,
+                  questionId,
+                  questionPrompt: question,
+                  options,
+                });
+              } catch (notifyErr) {
+                opts.logger?.warn?.(
+                  `ask_user_question: notifyQuestion failed (sessionKey=${ctx.sessionKey} questionId=${questionId}): ${notifyErr instanceof Error ? notifyErr.message : String(notifyErr)}`,
+                );
+              }
             }
           } catch (persistErr) {
             // Defense-in-depth: persistPendingQuestion already

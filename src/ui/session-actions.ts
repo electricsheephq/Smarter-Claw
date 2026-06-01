@@ -456,11 +456,35 @@ export function createPlanModeSessionActions(
     handler: async (ctx) => {
       const sk = requireSessionKey(ctx);
       if (!sk.ok) return sk.result;
-      const result = await store.exitPlanMode({ sessionKey: sk.sessionKey });
+      const p = readPayload(ctx.payload);
+      if (!p.ok) return p.result;
+      const expectedApprovalId = readStringField(p.value, "approvalId");
+      const result = await store.exitPlanMode({
+        sessionKey: sk.sessionKey,
+        ...(expectedApprovalId !== undefined ? { expectedApprovalId } : {}),
+      });
       if (result.kind === "failed") {
         return err(
           SESSION_ACTION_ERROR_CODES.STORE_ERROR,
           `exitPlanMode failed: ${result.error.message}`,
+        );
+      }
+      if (result.kind === "skipped") {
+        if (result.reason === "stale_approval_id") {
+          return err(
+            SESSION_ACTION_ERROR_CODES.STALE_APPROVAL_ID,
+            "expectedApprovalId did not match current approvalId; event is stale",
+          );
+        }
+        if (result.reason === "no_pending_approval") {
+          return err(
+            SESSION_ACTION_ERROR_CODES.NO_PENDING_APPROVAL,
+            "session has no actionable approval",
+          );
+        }
+        return err(
+          SESSION_ACTION_ERROR_CODES.NOT_IN_PLAN_MODE,
+          "session is not in plan mode",
         );
       }
       log.info(

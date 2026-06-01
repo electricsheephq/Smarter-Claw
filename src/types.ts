@@ -223,7 +223,7 @@ export interface PlanModeSessionState {
    *  primary signal a future turn-limit watchdog would consume to
    *  auto-exit plan mode on a runaway loop. The watchdog itself is
    *  deferred — neither the in-host has a parity reference nor does
-   *  SDK 2026.5.18 expose a fit-for-purpose event-driven scheduler
+   *  SDK 2026.5.19 expose a fit-for-purpose event-driven scheduler
    *  seam (`registerSessionSchedulerJob` is cleanup-only;
    *  `scheduleSessionTurn` is cron-driven). See
    *  `docs/audits/parity-refresh/blocker-W1-E1.md` for the

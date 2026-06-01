@@ -1,8 +1,18 @@
 {
   "id": "smarter-claw",
   "name": "Smarter-Claw",
-  "description": "Plan-Mode plugin for OpenClaw. Plan-then-execute workflow with mutation gate, archetype prompting, escalating retry, and rejection-cycle tracking. v1 port-in-progress (P-1 skeleton).",
-  "minHostVersion": "2026.5.18",
+  "description": "Plan-Mode plugin for OpenClaw v2026.6.1-beta.1. Plan-then-execute workflow with mutation gate, archetype prompting, escalating retry, rejection-cycle tracking, and task-flow visibility for pending approvals.",
+  "minHostVersion": "2026.6.1-beta.1",
+  "contracts": {
+    "tools": [
+      "enter_plan_mode",
+      "exit_plan_mode",
+      "ask_user_question"
+    ],
+    "sessionAttachments": [
+      "active-session"
+    ]
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -47,6 +57,8 @@
     }
   },
   "documentation": {
-    "requiredOperatorConfig": "Smarter-Claw's full plan-mode behavior (archetype injection, auto-continue, escalating retry) requires the conversation-access flag: `plugins.entries.smarter-claw.hooks.allowConversationAccess: true`. The mutation gate works without this flag. See the README's 'Required Operator Config' section."
+    "requiredOperatorConfig": "Smarter-Claw's full plan-mode behavior (archetype injection, auto-continue, escalating retry) requires the conversation-access flag: `plugins.entries.smarter-claw.hooks.allowConversationAccess: true`. The mutation gate works without this flag. See the README's 'Required Operator Config' section.",
+    "releaseTarget": "OpenClaw v2026.6.1-beta.1 (GitHub release tag v2026.6.1-beta.1, commit 2fc497e67b9cf40b2c12a9355afd785e7f8672dc). The matching npm package is not published; SDK fallback validation uses openclaw@2026.5.31-beta.4 plus release-tag seam audits.",
+    "hostSeamGates": "Stock v2026.6.1-beta.1 still restricts active-session attachments to bundled plugins and does not include the chat-stream renderer seam from upstream PR #80982. Smarter-Claw keeps /plan slash commands, sidebar actions, persisted Markdown plan paths, and task-flow visibility as the releasable fallback."
   }
 }

@@ -19,7 +19,7 @@
 import * as fsp from "node:fs/promises";
 import * as os from "node:os";
 import * as nodePath from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createExitPlanModeTool } from "../../src/tools/exit-plan-mode.js";
 import { isPlanApprovalId } from "../../src/helpers/approval-id.js";
 import { InMemoryGateway } from "../../src/state/in-memory-gateway.js";
@@ -497,6 +497,7 @@ describe("exit_plan_mode — W1-F2 markdown persister", () => {
 
   function buildWithPersister(opts?: {
     extraLog?: { info?: string[]; warn?: string[] };
+    notifyPlanApproval?: ReturnType<typeof vi.fn>;
   }) {
     const gw = new InMemoryGateway();
     gw.seed(SESSION_KEY, {
@@ -517,6 +518,9 @@ describe("exit_plan_mode — W1-F2 markdown persister", () => {
           warn: (m) => warn.push(m),
         },
       },
+      ...(opts?.notifyPlanApproval
+        ? { notifications: { notifyPlanApproval: opts.notifyPlanApproval } }
+        : {}),
     });
     return { gw, store, factory, info, warn };
   }
@@ -542,6 +546,40 @@ describe("exit_plan_mode — W1-F2 markdown persister", () => {
     expect(body).toContain("# Refactor websocket reconnect race");
     expect(body).toContain("## Plan");
     expect(body).toContain("- [ ] do thing");
+    expect((result.details as { persistedPlan?: { path?: string; filename?: string } }).persistedPlan).toEqual({
+      path: path.join(plansDir, filename),
+      filename,
+    });
+  });
+
+  it("sends plan approval notifications with the persisted markdown path when wired", async () => {
+    const notifyPlanApproval = vi.fn(async () => {});
+    const { factory } = buildWithPersister({ notifyPlanApproval });
+    const tool = factory({ sessionKey: SESSION_KEY, agentId: "main" });
+    const result = await tool.execute("c1", {
+      title: "Notify plan",
+      summary: "Review before execution.",
+      plan: [{ step: "do thing", status: "pending" }],
+    });
+
+    expect((result.details as { status: string }).status).toBe(
+      "approval-requested",
+    );
+    expect(notifyPlanApproval).toHaveBeenCalledOnce();
+    expect(notifyPlanApproval.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        sessionKey: SESSION_KEY,
+        title: "Notify plan",
+        summary: "Review before execution.",
+        plan: [{ step: "do thing", status: "pending" }],
+        persistedPlan: expect.objectContaining({
+          filename: expect.stringMatching(/^plan-\d{4}-\d{2}-\d{2}-notify-plan\.md$/),
+          absPath: expect.stringMatching(
+            /\/plans\/plan-\d{4}-\d{2}-\d{2}-notify-plan\.md$/,
+          ),
+        }),
+      }),
+    );
   });
 
   it("writes the full archetype (summary + analysis + assumptions + risks + verification + references)", async () => {

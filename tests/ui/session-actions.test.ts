@@ -516,6 +516,44 @@ describe("P-12 session-actions — plan.cancel", () => {
     expect(gw.peek(SESSION_KEY)?.mode).toBe("normal");
   });
 
+  it("transitions to normal mode with a matching approvalId", async () => {
+    const gw = new InMemoryGateway();
+    const store = new PlanModeStore(gw);
+    const { api } = makeStubApi();
+    const actions = createPlanModeSessionActions({ api, store });
+    const handler = actions.find((a) => a.id === "plan.cancel")!.handler;
+    gw.seed(SESSION_KEY, planModeSession());
+
+    const r = await handler({
+      pluginId: "smarter-claw",
+      actionId: "plan.cancel",
+      sessionKey: SESSION_KEY,
+      payload: { approvalId: APPROVAL_ID },
+    });
+    if (!r || !r.ok) throw new Error("expected ok");
+    expect(r.continueAgent).toBe(false);
+    expect(gw.peek(SESSION_KEY)?.mode).toBe("normal");
+  });
+
+  it("rejects with STALE_APPROVAL_ID when approvalId mismatches", async () => {
+    const gw = new InMemoryGateway();
+    const store = new PlanModeStore(gw);
+    const { api } = makeStubApi();
+    const actions = createPlanModeSessionActions({ api, store });
+    const handler = actions.find((a) => a.id === "plan.cancel")!.handler;
+    gw.seed(SESSION_KEY, planModeSession());
+
+    const r = await handler({
+      pluginId: "smarter-claw",
+      actionId: "plan.cancel",
+      sessionKey: SESSION_KEY,
+      payload: { approvalId: "plan-different" },
+    });
+    if (!r || r.ok !== false) throw new Error("expected error");
+    expect(r.code).toBe(SESSION_ACTION_ERROR_CODES.STALE_APPROVAL_ID);
+    expect(gw.peek(SESSION_KEY)?.mode).toBe("plan");
+  });
+
   it("idempotent: no-op when already in normal mode", async () => {
     const gw = new InMemoryGateway();
     const store = new PlanModeStore(gw);

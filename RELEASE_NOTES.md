@@ -1,5 +1,121 @@
 # Smarter-Claw Release Notes
 
+## 1.0.0-port.19 — OpenClaw v2026.6.1-beta.1 release target (2026-06-01)
+
+This maintenance pass moves the recovery candidate from the `2026.5.x`
+line to the OpenClaw GitHub release
+[`v2026.6.1-beta.1`](https://github.com/openclaw/openclaw/releases/tag/v2026.6.1-beta.1)
+at commit `2fc497e67b9cf40b2c12a9355afd785e7f8672dc`.
+
+### Compatibility truth
+
+- `openclaw@2026.6.1-beta.1` is not published on npm. The package keeps
+  `package.json#openclaw.target.version`, `openclaw.plugin.json`
+  `minHostVersion`, `peerDependencies.openclaw`, and
+  `package.json#openclaw.install.minHostVersion` pinned to
+  `2026.6.1-beta.1`, while install/typecheck uses the nearest published
+  npm beta SDK, `openclaw@2026.5.31-beta.4`.
+- Stock `v2026.6.1-beta.1` still rejects third-party active-session
+  attachments with `session attachments are restricted to bundled plugins`.
+  Native Telegram buttons and Markdown delivery stay best-effort; typed
+  `/plan` commands, sidebar actions, and persisted Markdown plan paths are
+  the supported fallback.
+- Stock `v2026.6.1-beta.1` does not include the chat-stream renderer seam
+  from upstream PR `openclaw/openclaw#80982`. Inline plan cards, input-bar
+  suppression, and the mode-switcher chip remain upstream-gated.
+
+### What changed since `1.0.0-port.18`
+
+- Bumped the package candidate to `1.0.0-port.19`.
+- Bumped the runtime/install compatibility target to
+  `2026.6.1-beta.1` and added explicit GitHub-release target metadata.
+- Updated the host-version parity gate so a GitHub-only OpenClaw release can
+  use an explicitly declared npm SDK fallback without hiding drift.
+- Added release-gate classification for the stock 6.1 active-session
+  attachment block. The runtime now logs the specific host seam gate and
+  names the `/plan`/Markdown fallback instead of treating the block as a
+  generic delivery failure.
+- Added a best-effort managed TaskFlow bridge. When OpenClaw exposes
+  `api.runtime.tasks.managedFlows` (or the legacy `api.runtime.taskFlow`
+  alias), Smarter-Claw creates a managed TaskFlow for pending plan approval
+  and finishes or updates it when the plan is approved, edited, or rejected.
+  This makes pending plans visible to the 6.1 task/workboard affordances
+  without making TaskFlow availability a hard install requirement.
+- Added focused release-gate tests for target metadata, attachment seam
+  classification, and TaskFlow visibility.
+
+### Release gates still open
+
+1. **Full native active-session attachment parity** requires an OpenClaw
+   host change that lets trusted third-party plugins declaring
+   `contracts.sessionAttachments: ["active-session"]` send active-session
+   presentations.
+2. **Inline chat-stream UI parity** remains blocked on upstream PR
+   `openclaw/openclaw#80982` or an equivalent public renderer seam.
+3. **Full live parity certification** still needs remote GitHub/Crabbox
+   scenario validation against the actual `v2026.6.1-beta.1` host before
+   tagging or publishing.
+
+## 1.0.0-port.18 — OpenClaw 26.5.19 latest-stable bump (2026-05-21)
+
+This maintenance pass moves the recovery candidate from stable
+`openclaw@2026.5.18` to npm `latest`, `openclaw@2026.5.19`.
+
+### What changed since `1.0.0-port.17`
+
+- Bumped the SDK/test target to `openclaw@2026.5.19`.
+- Bumped `openclaw.plugin.json` `minHostVersion` to `2026.5.19`.
+- Bumped canonical `package.json#openclaw.install.minHostVersion` to
+  `>=2026.5.19` and `peerDependencies.openclaw` to `>=2026.5.19`.
+- Bumped the package candidate to `1.0.0-port.18`.
+- Raised the package Node engine floor to `>=22.19.0`, matching
+  OpenClaw 2026.5.19's published package engine requirement.
+- Kept the same compatibility truth: stock `openclaw@2026.5.19` still
+  rejects third-party active-session attachments, so typed `/plan`
+  commands and persisted Markdown paths remain the stable fallback until
+  the trusted host seam lands.
+
+## 1.0.0-port.17 — OpenClaw 26.5.18 recovery candidate (2026-05-20)
+
+This recovery pass makes the plugin honest and testable on stable
+`openclaw@2026.5.18` while adding the consumer side of the Telegram
+native-button UX.
+
+### What changed since `1.0.0-port.16`
+
+- Added `openclaw.plugin.json` `contracts.tools` for
+  `enter_plan_mode`, `exit_plan_mode`, and `ask_user_question`, plus
+  `contracts.sessionAttachments: ["active-session"]`.
+- Added canonical `package.json#openclaw.install` and
+  `package.json#openclaw.build` metadata. The install floor is the
+  OpenClaw-required semver form `>=2026.5.18`, while the manifest keeps
+  the stable runtime target `2026.5.18`. Added a CI
+  `pnpm runtime-gate` that loads the built plugin and fails on missing
+  tool contracts, CLI descriptors, slash commands, session actions,
+  Control UI, or Telegram interactive handler registrations.
+- Registered `openclaw plan-clear` with explicit descriptor metadata so
+  OpenClaw can lazy-load/advertise it without guessing.
+- Added Telegram interactive namespace `smarter-claw-plan`:
+  approval cards expose Approve, Revise, Reject, Cancel buttons; question
+  cards expose option buttons; callbacks enforce sender authorization and
+  stale approval/question guards, then clear buttons after resolution.
+- `exit_plan_mode` now returns the persisted Markdown plan path in tool
+  details and best-effort sends the Markdown file plus rich approval
+  presentation through `api.session.workflow.sendSessionAttachment`.
+- `ask_user_question` now best-effort sends native option buttons through
+  the same active-session presentation path.
+- Fixed drift-cron's missing `tsx` dependency by using Node 22
+  `--experimental-strip-types` or the existing parity harness path.
+
+### Host compatibility truth
+
+Stock `openclaw@2026.5.18` still blocks third-party active-session
+attachments, so the plugin falls back to persisted Markdown paths and
+typed `/plan` commands there. Full Markdown attachment plus Telegram
+button parity requires the narrow OpenClaw host seam that allows trusted
+plugins declaring `contracts.sessionAttachments: ["active-session"]` to
+send active-session presentations.
+
 ## 1.0.0-port.16 — parity refresh, host bump to 2026.5.18, Wave-6 finding fixes (2026-05-20)
 
 The 6-wave Parity-Refresh closed the audit cycle and brought the plugin

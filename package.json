@@ -1,7 +1,7 @@
 {
   "name": "@electricsheephq/smarter-claw",
-  "version": "1.0.0-port.16",
-  "description": "Smarter-Claw — Plan-Mode plugin for OpenClaw. Parity-refresh release candidate. Source-of-truth parity at openclaw-pr70071-rebase tip ea04ea52c7. v1.0 public release gated on upstream chat-stream SDK seam.",
+  "version": "1.0.0-port.19",
+  "description": "Smarter-Claw — Plan-Mode plugin for OpenClaw v2026.6.1-beta.1. Parity-refresh release candidate with explicit host seam gates for active-session attachments and chat-stream inline UI.",
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
@@ -11,6 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
+    "runtime-gate": "node scripts/runtime-registration-gate.mjs",
     "parity-harness": "node scripts/check-host-version-parity.mjs && vitest run tests/parity/parity-harness.test.ts",
     "patch:chat-stream-seam": "node scripts/install-chat-stream-seam.mjs",
     "patch:chat-stream-seam:verify": "node scripts/verify-chat-stream-seam.mjs",
@@ -24,21 +25,22 @@
     "scripts/verify-chat-stream-seam.mjs",
     "scripts/uninstall-chat-stream-seam.mjs",
     "scripts/check-host-version-parity.mjs",
+    "scripts/runtime-registration-gate.mjs",
     "README.md",
     "LICENSE",
     "TRADEMARK.md",
     "RELEASE_NOTES.md"
   ],
-  "dependencies": {},
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "openclaw": "2026.5.18",
+    "openclaw": "2026.5.31-beta.4",
+    "tsx": "4.20.6",
     "typebox": "^1.1.38",
     "typescript": "^5.6.0",
     "vitest": "^3.2.0"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.5.18"
+    "openclaw": ">=2026.6.1-beta.1"
   },
   "keywords": [
     "openclaw",
@@ -62,9 +64,31 @@
   "openclaw": {
     "extensions": [
       "./dist/src/index.js"
-    ]
+    ],
+    "target": {
+      "version": "2026.6.1-beta.1",
+      "source": "github-release",
+      "tag": "v2026.6.1-beta.1",
+      "commit": "2fc497e67b9cf40b2c12a9355afd785e7f8672dc",
+      "npmPackageAvailable": false
+    },
+    "sdkValidation": {
+      "npmFallbackVersion": "2026.5.31-beta.4",
+      "githubReleaseTag": "v2026.6.1-beta.1",
+      "githubReleaseCommit": "2fc497e67b9cf40b2c12a9355afd785e7f8672dc",
+      "reason": "OpenClaw v2026.6.1-beta.1 is published as a GitHub release but is not available on npm; use the nearest published beta SDK for package install/typecheck and validate runtime seams against the release tag."
+    },
+    "install": {
+      "minHostVersion": ">=2026.6.1-beta.1",
+      "npmSpec": "@electricsheephq/smarter-claw@1.0.0-port.19"
+    },
+    "build": {
+      "command": "pnpm build",
+      "entry": "dist/src/index.js",
+      "manifest": "dist/openclaw.plugin.json"
+    }
   },
   "engines": {
-    "node": ">=22.0.0"
+    "node": ">=22.19.0"
   }
 }

@@ -51,6 +51,9 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Runtime registration gate
+        run: pnpm runtime-gate
+
       # Run vitest. The reporter-JSON-numTests check guards against
       # silent zero-tests-discovered failures.
       #
@@ -114,8 +117,22 @@ jobs:
           # Manifest sanity — ensure version + minHostVersion are present.
           node -e "
             const m = JSON.parse(require('fs').readFileSync('/tmp/sc-extract/package/dist/openclaw.plugin.json','utf8'));
+            const p = JSON.parse(require('fs').readFileSync('/tmp/sc-extract/package/package.json','utf8'));
             if (!m.id || !m.minHostVersion) {
               throw new Error('manifest missing id or minHostVersion: ' + JSON.stringify(m));
+            }
+            if (p.openclaw?.install?.minHostVersion !== '>=' + m.minHostVersion) {
+              throw new Error('package openclaw.install.minHostVersion must be >=' + m.minHostVersion);
+            }
+            if (p.openclaw?.target?.version !== m.minHostVersion) {
+              throw new Error('package openclaw.target.version must match manifest minHostVersion');
+            }
+            const tools = new Set(m.contracts?.tools || []);
+            for (const tool of ['enter_plan_mode', 'exit_plan_mode', 'ask_user_question']) {
+              if (!tools.has(tool)) throw new Error('manifest contracts.tools missing ' + tool);
+            }
+            if (!(m.contracts?.sessionAttachments || []).includes('active-session')) {
+              throw new Error('manifest contracts.sessionAttachments missing active-session');
             }
             console.log('manifest id=' + m.id + ' minHostVersion=' + m.minHostVersion);
           "

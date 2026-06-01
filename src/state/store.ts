@@ -389,24 +389,50 @@ export class PlanModeStore {
    *   In-host the state-transition is wired in the runner; we encode it
    *   in the store directly.
    */
-  async exitPlanMode(input: { sessionKey: string }): Promise<
+  async exitPlanMode(input: { sessionKey: string; expectedApprovalId?: string }): Promise<
     | { kind: "exited"; state: PlanModeSessionState }
     | { kind: "noop"; state: PlanModeSessionState | undefined }
+    | {
+        kind: "skipped";
+        reason: "not_in_plan_mode" | "no_pending_approval" | "stale_approval_id";
+        state: PlanModeSessionState | undefined;
+      }
     | { kind: "failed"; error: Error }
   > {
-    const { sessionKey } = input;
+    const { sessionKey, expectedApprovalId } = input;
     try {
       let outcome:
         | { kind: "exited"; state: PlanModeSessionState }
-        | { kind: "noop"; state: PlanModeSessionState | undefined };
+        | { kind: "noop"; state: PlanModeSessionState | undefined }
+        | {
+            kind: "skipped";
+            reason: "not_in_plan_mode" | "no_pending_approval" | "stale_approval_id";
+            state: PlanModeSessionState | undefined;
+          };
 
       const { transition } = await this.gateway.withLock<{
         prev: PlanModeSessionState | undefined;
         next: PlanModeSessionState;
       }>(sessionKey, async (current) => {
-        // Idempotent: no payload, or already in normal mode.
+        // Idempotent: no payload, or already in normal mode. If the
+        // caller supplied an approval token, preserve the stale/no-pending
+        // distinction inside the same lock so callback races cannot cancel
+        // a newer approval cycle.
         if (!current || current.mode === "normal") {
-          outcome = { kind: "noop", state: current };
+          outcome = expectedApprovalId
+            ? { kind: "skipped", reason: "not_in_plan_mode", state: current }
+            : { kind: "noop", state: current };
+          return { next: null };
+        }
+        if (
+          expectedApprovalId &&
+          (current.approval !== "pending" && current.approval !== "rejected")
+        ) {
+          outcome = { kind: "skipped", reason: "no_pending_approval", state: current };
+          return { next: null };
+        }
+        if (expectedApprovalId && current.approvalId !== expectedApprovalId) {
+          outcome = { kind: "skipped", reason: "stale_approval_id", state: current };
           return { next: null };
         }
         const now = Date.now();
