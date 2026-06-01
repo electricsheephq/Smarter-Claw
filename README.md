@@ -201,9 +201,9 @@ pnpm build           # tsc → dist/
 | OpenClaw | Smarter Claw |
 |---|---|
 | `v2026.6.1-beta.1` GitHub release | `1.0.0-port.19` (current 6.1 beta target RC; npm SDK fallback `2026.5.31-beta.4`) |
-| `2026.5.19` and later | `1.0.0-port.18` (recovery RC) |
-| `2026.5.18` and later | `1.0.0-port.17` (stable-load + Telegram bridge consumer RC) |
-| `2026.5.18` and later | `1.0.0-port.16` (parity-refresh RC; no Telegram-native button bridge) |
+| `2026.5.19` ... `<v2026.6.1-beta.1` | `1.0.0-port.18` (recovery RC) |
+| `2026.5.18` ... `<2026.5.19` | `1.0.0-port.17` (stable-load + Telegram bridge consumer RC) |
+| Historical `2026.5.18` RC, superseded by `1.0.0-port.17` | `1.0.0-port.16` (parity-refresh RC; no Telegram-native button bridge) |
 | `2026.5.10-beta.5` ... `<2026.5.18` | `1.0.0-port.15` (legacy; chat-stream patcher applies here only) |
 
 Install-time compatibility is enforced via

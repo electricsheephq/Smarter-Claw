@@ -24,7 +24,7 @@ type ManagedTaskFlowMutationResultLike = {
 
 type BoundTaskFlowRuntimeLike = {
   createManaged?: (params: JsonRecord) => ManagedTaskFlowRecordLike | null | undefined;
-  list?: () => ManagedTaskFlowRecordLike[];
+  list?: () => unknown;
   setWaiting?: (params: JsonRecord) => ManagedTaskFlowMutationResultLike;
   finish?: (params: JsonRecord) => ManagedTaskFlowMutationResultLike;
 };
@@ -92,11 +92,18 @@ function getFlowId(flow: ManagedTaskFlowRecordLike): string | undefined {
     : undefined;
 }
 
+function listManagedTaskFlows(bound: BoundTaskFlowRuntimeLike): ManagedTaskFlowRecordLike[] {
+  const listed = typeof bound.list === "function" ? bound.list() : [];
+  return Array.isArray(listed)
+    ? listed.filter((flow): flow is ManagedTaskFlowRecordLike => isRecord(flow))
+    : [];
+}
+
 function findFlowForApprovalId(
   bound: BoundTaskFlowRuntimeLike,
   approvalId: string,
 ): ManagedTaskFlowRecordLike | undefined {
-  const flows = typeof bound.list === "function" ? bound.list() : [];
+  const flows = listManagedTaskFlows(bound);
   return flows.find(
     (flow) =>
       flow.controllerId === PLAN_MODE_TASK_FLOW_CONTROLLER_ID &&
@@ -108,7 +115,7 @@ function findActiveFlowForSession(
   bound: BoundTaskFlowRuntimeLike,
   sessionKey: string,
 ): ManagedTaskFlowRecordLike | undefined {
-  const flows = typeof bound.list === "function" ? bound.list() : [];
+  const flows = listManagedTaskFlows(bound);
   return flows.find(
     (flow) =>
       flow.controllerId === PLAN_MODE_TASK_FLOW_CONTROLLER_ID &&

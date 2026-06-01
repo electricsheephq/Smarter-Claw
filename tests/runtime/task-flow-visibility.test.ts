@@ -173,6 +173,47 @@ describe("task-flow visibility bridge", () => {
     );
   });
 
+  it("does not throw when the host returns a malformed task-flow list", async () => {
+    const createManaged = vi.fn();
+    const warn = vi.fn();
+    const visibility = createPlanModeTaskFlowVisibility({
+      api: {
+        runtime: {
+          tasks: {
+            managedFlows: {
+              bindSession: () => ({
+                createManaged,
+                list: () => undefined,
+              }),
+            },
+          },
+        },
+      },
+      logger: { debug: vi.fn(), warn },
+    });
+
+    await visibility.recordTransition({
+      sessionKey: SESSION_KEY,
+      prev: { mode: "plan", approval: "none", rejectionCount: 0 },
+      next: {
+        mode: "plan",
+        approval: "pending",
+        approvalId: APPROVAL_ID,
+        title: "Ship the release",
+        rejectionCount: 0,
+      },
+      source: "persistApprovalRequest",
+    });
+
+    expect(createManaged).toHaveBeenCalledWith(
+      expect.objectContaining({
+        controllerId: "smarter-claw.plan-mode",
+        status: "waiting",
+      }),
+    );
+    expect(warn).not.toHaveBeenCalled();
+  });
+
   it("reuses the session task flow when a rejected plan is revised with a new approval id", async () => {
     const runtime = buildTaskFlowRuntime();
     const visibility = createPlanModeTaskFlowVisibility({
