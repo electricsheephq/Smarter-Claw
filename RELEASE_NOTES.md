@@ -2,8 +2,8 @@
 
 ## 1.0.0-port.19 — OpenClaw v2026.6.1-beta.1 release target (2026-06-01)
 
-This maintenance pass moves the recovery candidate from the `2026.5.x`
-line to the OpenClaw GitHub release
+This maintenance pass moves the recovery line from `2026.5.x` to the
+OpenClaw GitHub release
 [`v2026.6.1-beta.1`](https://github.com/openclaw/openclaw/releases/tag/v2026.6.1-beta.1)
 at commit `2fc497e67b9cf40b2c12a9355afd785e7f8672dc`.
 
@@ -26,7 +26,7 @@ at commit `2fc497e67b9cf40b2c12a9355afd785e7f8672dc`.
 
 ### What changed since `1.0.0-port.18`
 
-- Bumped the package candidate to `1.0.0-port.19`.
+- Bumped the package to `1.0.0-port.19`.
 - Bumped the runtime/install compatibility target to
   `2026.6.1-beta.1` and added explicit GitHub-release target metadata.
 - Updated the host-version parity gate so a GitHub-only OpenClaw release can
@@ -44,7 +44,23 @@ at commit `2fc497e67b9cf40b2c12a9355afd785e7f8672dc`.
 - Added focused release-gate tests for target metadata, attachment seam
   classification, and TaskFlow visibility.
 
-### Release gates still open
+### Validation and remaining host limitations
+
+Release validation completed on merged PR
+[`#124`](https://github.com/electricsheephq/Smarter-Claw/pull/124):
+
+- GitHub `ci`, `installer-roundtrip`, CodeQL, Socket Project Report,
+  Socket Pull Request Alerts, and CodeRabbit passed on the release branch.
+- GitHub Codex and CodeRabbit review threads were fixed and resolved before
+  merge.
+- Local Lexar-backed validation passed from
+  `/Volumes/LEXAR/repos/Smarter-Claw-v2026.6.1-beta.1`: `pnpm runtime-gate`,
+  `pnpm parity-harness`, full Vitest (`43` files / `889` tests), `pnpm pack`,
+  and extracted tarball metadata smoke.
+- Crabbox was built locally and inspected, but no Crabbox provider was
+  available in this environment: Docker/local-container had no daemon, the
+  broker was unauthenticated, and Hetzner direct mode had no
+  `HCLOUD_TOKEN`/`HETZNER_TOKEN`.
 
 1. **Full native active-session attachment parity** requires an OpenClaw
    host change that lets trusted third-party plugins declaring
@@ -52,9 +68,6 @@ at commit `2fc497e67b9cf40b2c12a9355afd785e7f8672dc`.
    presentations.
 2. **Inline chat-stream UI parity** remains blocked on upstream PR
    `openclaw/openclaw#80982` or an equivalent public renderer seam.
-3. **Full live parity certification** still needs remote GitHub/Crabbox
-   scenario validation against the actual `v2026.6.1-beta.1` host before
-   tagging or publishing.
 
 ## 1.0.0-port.18 — OpenClaw 26.5.19 latest-stable bump (2026-05-21)
 

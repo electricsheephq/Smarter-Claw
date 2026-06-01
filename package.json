@@ -1,7 +1,7 @@
 {
   "name": "@electricsheephq/smarter-claw",
   "version": "1.0.0-port.19",
-  "description": "Smarter-Claw — Plan-Mode plugin for OpenClaw v2026.6.1-beta.1. Parity-refresh release candidate with explicit host seam gates for active-session attachments and chat-stream inline UI.",
+  "description": "Smarter-Claw — Plan-Mode plugin for OpenClaw v2026.6.1-beta.1 with explicit host seam gates for active-session attachments and chat-stream inline UI.",
   "type": "module",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
