@@ -1,0 +1,113 @@
+name: release-artifact-scenarios
+
+on:
+  workflow_dispatch:
+    inputs:
+      tarball_url:
+        description: "Published Smarter-Claw release tarball URL. Defaults to package.json#openclaw.install.npmSpec."
+        required: false
+        type: string
+      expected_sha256:
+        description: "Expected SHA256 for the release tarball."
+        required: false
+        type: string
+      expected_version:
+        description: "Expected package version. Defaults to package.json#version."
+        required: false
+        type: string
+      openclaw_ref:
+        description: "Expected OpenClaw release tag recorded by the artifact."
+        required: false
+        default: "v2026.6.1-beta.1"
+        type: string
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/release-artifact-scenarios.yml"
+      - "openclaw.plugin.json"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "scripts/release-artifact-scenario-smoke.mjs"
+      - "src/**"
+      - "tests/eva-live-smokes/**"
+      - "tests/runtime/task-flow-visibility.test.ts"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/release-artifact-scenarios.yml"
+      - "openclaw.plugin.json"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "scripts/release-artifact-scenario-smoke.mjs"
+      - "src/**"
+      - "tests/eva-live-smokes/**"
+      - "tests/runtime/task-flow-visibility.test.ts"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  release-artifact-scenarios:
+    name: release-artifact-scenarios
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Build local artifact for PR/push validation
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.tarball_url == '' }}
+        run: pnpm build
+
+      - name: Smoke local packed artifact
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.tarball_url == '' }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/smarter-claw-pack
+          pnpm pack --pack-destination /tmp/smarter-claw-pack
+          tarball="$(ls /tmp/smarter-claw-pack/*.tgz | head -1)"
+          if [ -z "$tarball" ]; then
+            echo "FAIL: pnpm pack produced no tarball"
+            exit 1
+          fi
+          node scripts/release-artifact-scenario-smoke.mjs --tarball-path "$tarball"
+
+      - name: Smoke published release artifact
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.tarball_url != '' }}
+        env:
+          TARBALL_URL: ${{ inputs.tarball_url }}
+          EXPECTED_SHA256: ${{ inputs.expected_sha256 }}
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+          OPENCLAW_REF: ${{ inputs.openclaw_ref }}
+        run: |
+          set -euo pipefail
+          args=(--tarball-url "$TARBALL_URL")
+          if [ -n "${EXPECTED_SHA256:-}" ]; then
+            args+=(--expected-sha256 "$EXPECTED_SHA256")
+          fi
+          if [ -n "${EXPECTED_VERSION:-}" ]; then
+            args+=(--expected-version "$EXPECTED_VERSION")
+          fi
+          if [ -n "${OPENCLAW_REF:-}" ]; then
+            args+=(--openclaw-ref "$OPENCLAW_REF")
+          fi
+          node scripts/release-artifact-scenario-smoke.mjs "${args[@]}"

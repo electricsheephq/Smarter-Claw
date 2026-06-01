@@ -1,5 +1,37 @@
 # Smarter-Claw Release Notes
 
+## 1.0.0-port.21 — Release-artifact runtime dependency gate for OpenClaw v2026.6.1-beta.1 (2026-06-01)
+
+This follow-up release supersedes `1.0.0-port.20`. The new release-artifact
+scenario smoke found that the published `.20` tarball imported `typebox` at
+runtime while listing it only in `devDependencies`. Source and CI tests passed
+because the workspace had dev dependencies installed, but a production consumer
+could fail while loading the shipped plugin entrypoint.
+
+Install spec:
+
+```text
+https://github.com/electricsheephq/Smarter-Claw/releases/download/v1.0.0-port.21/electricsheephq-smarter-claw-1.0.0-port.21.tgz
+```
+
+### What changed since `1.0.0-port.20`
+
+- Bumped the package to `1.0.0-port.21`.
+- Moved `typebox` to production `dependencies` because the shipped tool modules
+  import it at runtime.
+- Added `scripts/release-artifact-scenario-smoke.mjs`, which validates the
+  packed or published tarball with dev dependencies omitted before importing
+  the shipped `dist/` plugin entrypoint.
+- Added a dispatchable `release-artifact-scenarios` GitHub workflow so the
+  published tarball can be re-smoked remotely by URL.
+
+### Validation
+
+- Release gating for this port includes the source checks from `.20` plus the
+  release-artifact scenario smoke: production dependency install, plugin
+  registration surface, plan approve, reject/revise, cancel, managed TaskFlow
+  visibility, and the OpenClaw 6.1 active-session host-seam release gate.
+
 ## 1.0.0-port.20 — GitHub-tarball install spec for OpenClaw v2026.6.1-beta.1 (2026-06-01)
 
 This follow-up release keeps the `v2026.6.1-beta.1` runtime target from
