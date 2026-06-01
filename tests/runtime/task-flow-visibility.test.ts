@@ -3,6 +3,7 @@ import { createPlanModeTaskFlowVisibility } from "../../src/runtime/task-flow-vi
 
 const SESSION_KEY = "agent:main:main";
 const APPROVAL_ID = "plan-11111111-1111-4111-8111-111111111111";
+const REVISED_APPROVAL_ID = "plan-22222222-2222-4222-8222-222222222222";
 
 function buildTaskFlowRuntime() {
   const flows: Array<Record<string, unknown>> = [];
@@ -19,15 +20,18 @@ function buildTaskFlowRuntime() {
   });
   const setWaiting = vi.fn((input: Record<string, unknown>) => {
     const flow = flows.find((candidate) => candidate.flowId === input.flowId);
-    return flow
-      ? { applied: true, flow: { ...flow, ...input, revision: Number(flow.revision) + 1 } }
-      : { applied: false, code: "not_found" };
+    if (!flow) return { applied: false, code: "not_found" };
+    Object.assign(flow, input, {
+      status: "waiting",
+      revision: Number(flow.revision) + 1,
+    });
+    return { applied: true, flow };
   });
   const finish = vi.fn((input: Record<string, unknown>) => {
     const flow = flows.find((candidate) => candidate.flowId === input.flowId);
-    return flow
-      ? { applied: true, flow: { ...flow, ...input, status: "finished" } }
-      : { applied: false, code: "not_found" };
+    if (!flow) return { applied: false, code: "not_found" };
+    Object.assign(flow, input, { status: "finished" });
+    return { applied: true, flow };
   });
   const bindSession = vi.fn(() => ({
     createManaged,
@@ -82,7 +86,11 @@ describe("task-flow visibility bridge", () => {
       revision: 3,
       syncMode: "managed",
       controllerId: "smarter-claw.plan-mode",
-      stateJson: { kind: "smarter-claw.plan-mode", approvalId: APPROVAL_ID },
+      stateJson: {
+        kind: "smarter-claw.plan-mode",
+        approvalId: APPROVAL_ID,
+        sessionKey: SESSION_KEY,
+      },
     });
     const visibility = createPlanModeTaskFlowVisibility({
       api: { runtime: { taskFlow: { bindSession: runtime.bindSession } } },
@@ -113,6 +121,83 @@ describe("task-flow visibility bridge", () => {
         stateJson: expect.objectContaining({
           approval: "approved",
           source: "recordApproval",
+        }),
+      }),
+    );
+  });
+
+  it("reuses the session task flow when a rejected plan is revised with a new approval id", async () => {
+    const runtime = buildTaskFlowRuntime();
+    const visibility = createPlanModeTaskFlowVisibility({
+      api: { runtime: { tasks: { managedFlows: { bindSession: runtime.bindSession } } } },
+      logger: { debug: vi.fn(), warn: vi.fn() },
+    });
+
+    await visibility.recordTransition({
+      sessionKey: SESSION_KEY,
+      prev: { mode: "plan", approval: "none", rejectionCount: 0 },
+      next: {
+        mode: "plan",
+        approval: "pending",
+        approvalId: APPROVAL_ID,
+        title: "Ship the release",
+        rejectionCount: 0,
+      },
+      source: "persistApprovalRequest",
+    });
+
+    await visibility.recordTransition({
+      sessionKey: SESSION_KEY,
+      prev: {
+        mode: "plan",
+        approval: "pending",
+        approvalId: APPROVAL_ID,
+        rejectionCount: 0,
+      },
+      next: {
+        mode: "plan",
+        approval: "rejected",
+        approvalId: APPROVAL_ID,
+        feedback: "Add a Crabbox smoke",
+        rejectionCount: 1,
+      },
+      source: "recordRejection",
+    });
+
+    await visibility.recordTransition({
+      sessionKey: SESSION_KEY,
+      prev: {
+        mode: "plan",
+        approval: "rejected",
+        approvalId: APPROVAL_ID,
+        feedback: "Add a Crabbox smoke",
+        rejectionCount: 1,
+      },
+      next: {
+        mode: "plan",
+        approval: "pending",
+        approvalId: REVISED_APPROVAL_ID,
+        title: "Ship the revised release",
+        rejectionCount: 1,
+      },
+      source: "persistApprovalRequest",
+    });
+
+    expect(runtime.createManaged).toHaveBeenCalledTimes(1);
+    expect(runtime.flows).toHaveLength(1);
+    expect(runtime.setWaiting).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        flowId: "flow-1",
+        expectedRevision: 2,
+        currentStep: "Awaiting operator approval",
+        waitJson: expect.objectContaining({
+          kind: "plan_approval",
+          approvalId: REVISED_APPROVAL_ID,
+        }),
+        stateJson: expect.objectContaining({
+          approval: "pending",
+          approvalId: REVISED_APPROVAL_ID,
+          sessionKey: SESSION_KEY,
         }),
       }),
     );

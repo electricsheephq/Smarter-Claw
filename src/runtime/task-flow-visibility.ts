@@ -13,6 +13,7 @@ type ManagedTaskFlowRecordLike = {
   flowId?: unknown;
   revision?: unknown;
   controllerId?: unknown;
+  status?: unknown;
   stateJson?: unknown;
 };
 
@@ -69,6 +70,16 @@ function getApprovalIdFromFlow(flow: ManagedTaskFlowRecordLike): string | undefi
   return approvalId;
 }
 
+function getSessionKeyFromFlow(flow: ManagedTaskFlowRecordLike): string | undefined {
+  if (!isRecord(flow.stateJson)) return undefined;
+  const kind = flow.stateJson.kind;
+  const sessionKey = flow.stateJson.sessionKey;
+  if (kind !== "smarter-claw.plan-mode" || typeof sessionKey !== "string") {
+    return undefined;
+  }
+  return sessionKey;
+}
+
 function getRevision(flow: ManagedTaskFlowRecordLike): number | undefined {
   return typeof flow.revision === "number" && Number.isFinite(flow.revision)
     ? flow.revision
@@ -90,6 +101,19 @@ function findFlowForApprovalId(
     (flow) =>
       flow.controllerId === PLAN_MODE_TASK_FLOW_CONTROLLER_ID &&
       getApprovalIdFromFlow(flow) === approvalId,
+  );
+}
+
+function findActiveFlowForSession(
+  bound: BoundTaskFlowRuntimeLike,
+  sessionKey: string,
+): ManagedTaskFlowRecordLike | undefined {
+  const flows = typeof bound.list === "function" ? bound.list() : [];
+  return flows.find(
+    (flow) =>
+      flow.controllerId === PLAN_MODE_TASK_FLOW_CONTROLLER_ID &&
+      flow.status !== "finished" &&
+      getSessionKeyFromFlow(flow) === sessionKey,
   );
 }
 
@@ -139,6 +163,30 @@ export function createPlanModeTaskFlowVisibility(input: {
         if (event.next.approval === "pending" && event.next.approvalId) {
           if (findFlowForApprovalId(bound, event.next.approvalId)) {
             return;
+          }
+          const existingSessionFlow = findActiveFlowForSession(bound, event.sessionKey);
+          const existingFlowId = existingSessionFlow
+            ? getFlowId(existingSessionFlow)
+            : undefined;
+          const expectedRevision = existingSessionFlow
+            ? getRevision(existingSessionFlow)
+            : undefined;
+          if (existingFlowId && expectedRevision !== undefined && bound.setWaiting) {
+            const result = bound.setWaiting({
+              flowId: existingFlowId,
+              expectedRevision,
+              currentStep: "Awaiting operator approval",
+              stateJson: buildStateJson(event),
+              waitJson: {
+                kind: "plan_approval",
+                approvalId: event.next.approvalId,
+                sessionKey: event.sessionKey,
+              },
+            });
+            warnMutationFailure(logger, "setWaiting", result);
+            if (!result || result.applied !== false) {
+              return;
+            }
           }
           bound.createManaged?.({
             controllerId: PLAN_MODE_TASK_FLOW_CONTROLLER_ID,
