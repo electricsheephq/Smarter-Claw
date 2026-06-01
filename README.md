@@ -4,7 +4,7 @@ Plan Mode plugin for [OpenClaw](https://github.com/openclaw/openclaw) — plan-t
 
 ## Status
 
-**`1.0.0-port.20` — OpenClaw `v2026.6.1-beta.1` release target (2026-06-01).**
+**`1.0.0-port.21` — OpenClaw `v2026.6.1-beta.1` release target (2026-06-01).**
 
 The 6-wave parity refresh closed all 2 P0 + 14/17 P1 Wave-1 findings,
 built a 156-case mechanical parity-harness CI gate, and now targets the
@@ -16,7 +16,7 @@ install/typecheck uses the nearest published beta SDK
 `openclaw.plugin.json#minHostVersion`, the peer dependency, and the
 install floor all pin the real 6.1 beta host target.
 
-Port `.20` keeps the stable-load contracts from `.17`/`.18`, adds explicit
+Port `.21` keeps the stable-load contracts from `.17`/`.18`, adds explicit
 release-gate classification for the stock host's active-session attachment
 block, and mirrors pending plan approval state into OpenClaw's managed
 TaskFlow runtime when that 6.1 surface is available. On stock
@@ -116,13 +116,13 @@ The npm package is not published yet. Install this release from its GitHub
 release tarball:
 
 ```text
-https://github.com/electricsheephq/Smarter-Claw/releases/download/v1.0.0-port.20/electricsheephq-smarter-claw-1.0.0-port.20.tgz
+https://github.com/electricsheephq/Smarter-Claw/releases/download/v1.0.0-port.21/electricsheephq-smarter-claw-1.0.0-port.21.tgz
 ```
 
 The same URL is recorded in `package.json#openclaw.install.npmSpec` so
 OpenClaw-compatible installers do not need an npm registry package.
 
-## What works in 1.0.0-port.20
+## What works in 1.0.0-port.21
 
 | Feature | Status |
 |---|---|
@@ -212,7 +212,8 @@ pnpm build           # tsc → dist/
 
 | OpenClaw | Smarter Claw |
 |---|---|
-| `v2026.6.1-beta.1` GitHub release | `1.0.0-port.20` (current 6.1 beta target; GitHub release tarball install; npm SDK fallback `2026.5.31-beta.4`) |
+| `v2026.6.1-beta.1` GitHub release | `1.0.0-port.21` (current 6.1 beta target; GitHub release tarball install; runtime dependency smoke; npm SDK fallback `2026.5.31-beta.4`) |
+| `v2026.6.1-beta.1` GitHub release | `1.0.0-port.20` (superseded by `.21`; `typebox` was dev-only but imported at runtime) |
 | `v2026.6.1-beta.1` GitHub release | `1.0.0-port.19` (superseded by `.20`; install spec pointed at an unpublished npm package) |
 | `2026.5.19` ... `<v2026.6.1-beta.1` | `1.0.0-port.18` (recovery RC) |
 | `2026.5.18` ... `<2026.5.19` | `1.0.0-port.17` (stable-load + Telegram bridge consumer RC) |
