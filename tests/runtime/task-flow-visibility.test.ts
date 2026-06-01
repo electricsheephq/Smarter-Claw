@@ -126,6 +126,53 @@ describe("task-flow visibility bridge", () => {
     );
   });
 
+  it("finishes the matching managed task flow when a pending plan is cancelled", async () => {
+    const runtime = buildTaskFlowRuntime();
+    runtime.flows.push({
+      flowId: "flow-1",
+      revision: 4,
+      syncMode: "managed",
+      status: "waiting",
+      controllerId: "smarter-claw.plan-mode",
+      stateJson: {
+        kind: "smarter-claw.plan-mode",
+        approvalId: APPROVAL_ID,
+        sessionKey: SESSION_KEY,
+      },
+    });
+    const visibility = createPlanModeTaskFlowVisibility({
+      api: { runtime: { tasks: { managedFlows: { bindSession: runtime.bindSession } } } },
+      logger: { debug: vi.fn(), warn: vi.fn() },
+    });
+
+    await visibility.recordTransition({
+      sessionKey: SESSION_KEY,
+      prev: {
+        mode: "plan",
+        approval: "pending",
+        approvalId: APPROVAL_ID,
+        rejectionCount: 0,
+      },
+      next: {
+        mode: "normal",
+        approval: "none",
+        rejectionCount: 0,
+      },
+      source: "exitPlanMode",
+    });
+
+    expect(runtime.finish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        flowId: "flow-1",
+        expectedRevision: 4,
+        stateJson: expect.objectContaining({
+          approval: "none",
+          source: "exitPlanMode",
+        }),
+      }),
+    );
+  });
+
   it("reuses the session task flow when a rejected plan is revised with a new approval id", async () => {
     const runtime = buildTaskFlowRuntime();
     const visibility = createPlanModeTaskFlowVisibility({

@@ -231,7 +231,11 @@ export function createPlanModeTaskFlowVisibility(input: {
           return;
         }
 
-        if (event.next.approval === "approved" || event.next.approval === "edited") {
+        if (
+          event.next.approval === "approved" ||
+          event.next.approval === "edited" ||
+          event.next.approval === "none"
+        ) {
           warnMutationFailure(
             logger,
             "finish",
