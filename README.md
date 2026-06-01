@@ -4,7 +4,7 @@ Plan Mode plugin for [OpenClaw](https://github.com/openclaw/openclaw) — plan-t
 
 ## Status
 
-**`1.0.0-port.19` — OpenClaw `v2026.6.1-beta.1` release-target candidate (2026-06-01).**
+**`1.0.0-port.19` — OpenClaw `v2026.6.1-beta.1` release target (2026-06-01).**
 
 The 6-wave parity refresh closed all 2 P0 + 14/17 P1 Wave-1 findings,
 built a 156-case mechanical parity-harness CI gate, and now targets the
@@ -200,7 +200,7 @@ pnpm build           # tsc → dist/
 
 | OpenClaw | Smarter Claw |
 |---|---|
-| `v2026.6.1-beta.1` GitHub release | `1.0.0-port.19` (current 6.1 beta target RC; npm SDK fallback `2026.5.31-beta.4`) |
+| `v2026.6.1-beta.1` GitHub release | `1.0.0-port.19` (current 6.1 beta target; npm SDK fallback `2026.5.31-beta.4`) |
 | `2026.5.19` ... `<v2026.6.1-beta.1` | `1.0.0-port.18` (recovery RC) |
 | `2026.5.18` ... `<2026.5.19` | `1.0.0-port.17` (stable-load + Telegram bridge consumer RC) |
 | Historical `2026.5.18` RC, superseded by `1.0.0-port.17` | `1.0.0-port.16` (parity-refresh RC; no Telegram-native button bridge) |
